@@ -1,0 +1,6 @@
+This research data file could not be recovered from the current workspace snapshot.
+
+The corrupted original file was archived to:
+.codex_recovery/corrupted_docs_data_20260610_0215/appso_marker_seed_candidates.txt
+
+Restore an older backup here if you need the original candidate list.
