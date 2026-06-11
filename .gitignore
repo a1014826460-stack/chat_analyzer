@@ -6,3 +6,57 @@ __pycache__/
 *.pyc
 .chat_analyzer/
 
+*.exe
+.codex_recovery/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Logs
+*.log
+chat_log.txt
+logs/
+
+# Local env / secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+secrets.*
+
+# Databases / local app data
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+
+# Build outputs / large generated assets
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.bz2
+*.xz
+*.dmg
+*.iso
+*.bin
+*.msi
+*.apk
+*.ipa
+*.dll
+*.so
+*.dylib
+*.pdb
+main.dart.js

@@ -37,9 +37,23 @@ TXT_LINE_PATTERN = re.compile(
 SIMPLE_BET_PATTERN = re.compile(rf"(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)")
 PLAY_TOKENS = tuple(sorted(PLAY_TYPES, key=len, reverse=True))
 NUMBER_TOKEN_AT_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
-DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?")
-RECEIPT_MATCH_WINDOW = timedelta(minutes=2)
-DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=20)
+DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
+RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
+DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
+ZODIAC_GROUP_NAMES = (
+    "白羊座",
+    "金牛座",
+    "双子座",
+    "巨蟹座",
+    "狮子座",
+    "处女座",
+    "天秤座",
+    "天蝎座",
+    "射手座",
+    "摩羯座",
+    "水瓶座",
+    "双鱼座",
+)
 
 
 @dataclass
@@ -56,6 +70,31 @@ class DirectPeriodContext:
     period: str
     start: datetime
     end: datetime
+
+
+@dataclass
+class BetEvent:
+    bettor: str
+    play: str
+    amount: float
+    kind: str
+    source: str = ""
+    order_id: str = ""
+
+
+@dataclass
+class ResolvedBetEvent:
+    group: str
+    username: str
+    sender_id: str
+    ts: datetime
+    period: str
+    bettor: str
+    play: str
+    amount: float
+    kind: str
+    source_kind: str
+    order_id: str = ""
 
 
 class ChatLogService:
@@ -309,39 +348,293 @@ class ChatLogService:
         period_window_end: datetime | None,
         period_interval_sec: int,
     ) -> list[dict[str, object]]:
-        rows: list[dict[str, object]] = []
-        filtered_messages = self.filter_blocked_messages(messages, blocked_names, blocked_ids)
-        group_periods: dict[str, list[tuple[datetime, datetime, str]]] = {}
-        for msg in filtered_messages:
-            group_key = self._normalize_text(msg.group)
-            if group_key in group_periods:
-                continue
-            group_messages = [item for item in filtered_messages if self._normalize_text(item.group) == group_key]
-            group_periods[group_key] = self._build_direct_group_period_ranges(group_messages)
+        blocked_name_set = {self._normalize_text(name) for name in blocked_names}
+        blocked_id_set = {self._normalize_text(item) for item in (blocked_ids or [])}
+        normalized_period_filter = self._normalize_text(period_filter)
+        direct_period_context = self._build_direct_period_context(
+            site=site,
+            period=period_filter,
+            start=period_window_start,
+            end=period_window_end,
+            interval_sec=period_interval_sec,
+        )
+        resolved_events = self._dedupe_resolved_events(
+            self._resolve_group_bet_events(messages, direct_period_context=direct_period_context)
+        )
+        latest: dict[tuple[str, str, str], dict[str, object]] = {}
+        direct_totals: dict[tuple[str, str, str], float] = defaultdict(float)
 
-        for index, msg in enumerate(filtered_messages):
-            for event_index, (play, amount) in enumerate(self._parse_bets(msg.content)):
-                if period_window_start and msg.ts < period_window_start:
-                    continue
-                if period_window_end and msg.ts > period_window_end:
-                    continue
-                resolved_period = period_filter or self._resolve_direct_group_period(
-                    msg.ts,
-                    group_periods.get(self._normalize_text(msg.group), []),
-                )
-                row = {
-                    "time": msg.ts,
-                    "group": msg.group,
-                    "username": msg.username,
-                    "bettor": msg.username,
-                    "play": play,
+        for event in resolved_events:
+            if period_window_start and event.ts < period_window_start:
+                continue
+            if period_window_end and event.ts > period_window_end:
+                continue
+            if self._event_misses_period_filter(event, normalized_period_filter):
+                continue
+            sender_key = self._normalize_text(event.sender_id)
+            if sender_key and sender_key in blocked_id_set:
+                continue
+            group_block_names = self._blocked_names_for_group(event.group)
+            source_name = event.bettor if event.source_kind == "receipt" and event.bettor else event.username
+            normalized_source_name = self._normalize_text(source_name)
+            if normalized_source_name in blocked_name_set:
+                continue
+            if normalized_source_name in group_block_names:
+                continue
+
+            bettor_name = event.bettor or event.username
+            bettor_key = self._normalize_text(bettor_name)
+            period = event.period
+
+            if event.kind == "bet":
+                pk = (bettor_key, period, event.play)
+                if event.source_kind == "direct":
+                    amount = direct_totals.get(pk, 0.0) + float(event.amount)
+                    direct_totals[pk] = amount
+                else:
+                    prev_amount = float(latest.get(pk, {}).get("amount", 0.0))
+                    if float(event.amount) <= prev_amount:
+                        continue
+                    amount = float(event.amount)
+                latest[pk] = {
+                    "group": event.group,
+                    "username": event.username,
+                    "bettor": bettor_name,
+                    "play": event.play,
                     "amount": amount,
+                    "time": event.ts,
+                    "period": period,
+                    "sender_id": event.sender_id,
+                    "row_id": f"{event.group}|{bettor_name}|{period}|{event.play}|LATEST",
                     "kind": "bet",
-                    "period": resolved_period,
-                    "row_id": f"{index}-{event_index}",
+                    "source_kind": event.source_kind,
                 }
-                rows.append(row)
-        return rows
+                continue
+
+            if event.kind != "cancel":
+                continue
+
+            if not period:
+                period = self._find_active_period_by_latest(latest.keys(), bettor_key)
+            if event.play:
+                pk = (bettor_key, period, event.play)
+                latest.pop(pk, None)
+                direct_totals.pop(pk, None)
+                continue
+            to_remove = [key for key in latest if key[0] == bettor_key and key[1] == period]
+            for key in to_remove:
+                latest.pop(key, None)
+                direct_totals.pop(key, None)
+
+        visual_rows = list(latest.values())
+        visual_rows.sort(key=lambda row: (row["time"], row["group"], row["username"], row["bettor"], row["play"]))
+        return visual_rows
+
+    def _build_direct_period_context(
+        self,
+        site: str,
+        period: str,
+        start: datetime | None,
+        end: datetime | None,
+        interval_sec: int,
+    ) -> DirectPeriodContext | None:
+        period_text = str(period or "").strip()
+        if not period_text or end is None:
+            return None
+        if start is None and interval_sec > 0:
+            start = end - timedelta(seconds=interval_sec)
+        if start is None:
+            return None
+        if start >= end:
+            return None
+        return DirectPeriodContext(period=period_text, start=start, end=end)
+
+    def _event_misses_period_filter(self, event: ResolvedBetEvent, normalized_period_filter: str) -> bool:
+        if not normalized_period_filter:
+            return False
+        return self._normalize_text(event.period) != normalized_period_filter
+
+    def _resolve_group_bet_events(
+        self,
+        messages: list[ChatMessage],
+        direct_period_context: DirectPeriodContext | None = None,
+    ) -> list[ResolvedBetEvent]:
+        grouped: dict[str, list[ChatMessage]] = defaultdict(list)
+        for msg in sorted(messages, key=lambda item: (item.ts, int(item.raw_client_time or 0), int(item.raw_rand or 0))):
+            grouped[self._normalize_text(msg.group)].append(msg)
+
+        resolved: list[ResolvedBetEvent] = []
+        for group_messages in grouped.values():
+            resolved.extend(self._resolve_single_group_bet_events(group_messages, direct_period_context))
+        resolved.sort(key=lambda item: (item.ts, item.group, item.username, item.bettor, item.play, item.kind))
+        return resolved
+
+    def _dedupe_resolved_events(self, events: list[ResolvedBetEvent]) -> list[ResolvedBetEvent]:
+        seen: set[tuple[object, ...]] = set()
+        deduped: list[ResolvedBetEvent] = []
+        for event in events:
+            key = (
+                event.group,
+                event.username,
+                event.sender_id,
+                event.ts,
+                event.period,
+                event.bettor,
+                event.play,
+                float(event.amount),
+                event.kind,
+                event.source_kind,
+                event.order_id,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(event)
+        return deduped
+
+    def _resolve_single_group_bet_events(
+        self,
+        messages: list[ChatMessage],
+        direct_period_context: DirectPeriodContext | None = None,
+    ) -> list[ResolvedBetEvent]:
+        if not messages:
+            return []
+        group_name = messages[0].group
+        if self._is_zodiac_group(group_name):
+            return self._resolve_receipt_group_bet_events(messages)
+        return self._resolve_direct_group_bet_events(messages, direct_period_context)
+
+    def _is_zodiac_group(self, group_name: str) -> bool:
+        normalized = self._normalize_text(group_name)
+        return any(name in normalized for name in ZODIAC_GROUP_NAMES)
+
+    def _resolve_receipt_group_bet_events(self, messages: list[ChatMessage]) -> list[ResolvedBetEvent]:
+        pending_by_bettor: dict[str, list[PendingUserMessage]] = defaultdict(list)
+        pending_by_user: dict[str, list[PendingUserMessage]] = defaultdict(list)
+        resolved: list[ResolvedBetEvent] = []
+
+        for msg in messages:
+            period = self._extract_period(msg.content)
+            _content, events = self._parse_bet_events_from_message(msg)
+            if not events:
+                continue
+            for event in events:
+                if event.kind == "cancel":
+                    username, sender_id = self._resolve_receipt_owner(
+                        event,
+                        msg,
+                        period,
+                        pending_by_bettor,
+                        pending_by_user,
+                    )
+                else:
+                    username, sender_id = msg.username, msg.sender_id
+                resolved.append(
+                    ResolvedBetEvent(
+                        group=msg.group,
+                        username=username,
+                        sender_id=sender_id,
+                        ts=msg.ts,
+                        period=period,
+                        bettor=event.bettor or username,
+                        play=event.play,
+                        amount=float(event.amount),
+                        kind=event.kind,
+                        source_kind="receipt",
+                        order_id=event.order_id,
+                    )
+                )
+            pending = PendingUserMessage(
+                username=msg.username,
+                sender_id=msg.sender_id,
+                bettor=msg.username,
+                period=period,
+                ts=msg.ts,
+            )
+            pending_by_user[self._normalize_text(msg.username)].append(pending)
+            for event in events:
+                bettor_key = self._normalize_text(event.bettor or msg.username)
+                pending_by_bettor[bettor_key].append(pending)
+        return resolved
+
+    def _resolve_direct_group_bet_events(
+        self,
+        messages: list[ChatMessage],
+        direct_period_context: DirectPeriodContext | None = None,
+    ) -> list[ResolvedBetEvent]:
+        periods = self._build_direct_group_period_ranges(messages, direct_period_context)
+        if not periods and messages:
+            periods = self._build_direct_group_period_ranges(messages)
+        resolved: list[ResolvedBetEvent] = []
+        seen_messages: set[tuple[object, ...]] = set()
+
+        for msg in messages:
+            msg_key = self._direct_message_dedupe_key(msg)
+            if msg_key in seen_messages:
+                continue
+            seen_messages.add(msg_key)
+            parsed_content, events = self._parse_bet_events_from_message(msg)
+            if self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+                continue
+            period = self._resolve_direct_group_period(
+                msg.ts,
+                periods,
+                fixed_window=direct_period_context is not None,
+            )
+            for event in events:
+                resolved.append(
+                    ResolvedBetEvent(
+                        group=msg.group,
+                        username=msg.username,
+                        sender_id=msg.sender_id,
+                        ts=msg.ts,
+                        period=period,
+                        bettor=event.bettor or msg.username,
+                        play=event.play,
+                        amount=float(event.amount),
+                        kind=event.kind,
+                        source_kind="direct",
+                        order_id=event.order_id,
+                    )
+                )
+        return resolved
+
+    def _direct_message_dedupe_key(self, msg: ChatMessage) -> tuple[object, ...]:
+        if msg.raw_client_time or msg.raw_rand:
+            return (
+                msg.group,
+                msg.username,
+                msg.sender_id,
+                self._normalize_text(msg.content),
+                int(msg.raw_client_time or 0),
+                int(msg.raw_rand or 0),
+            )
+        return (
+            msg.group,
+            msg.username,
+            msg.sender_id,
+            self._normalize_text(msg.content),
+            msg.ts,
+        )
+
+    def _parse_bet_events_from_message(self, msg: ChatMessage) -> tuple[str, list[BetEvent]]:
+        content = self._clean_text(msg.content)
+        cancel_event = self._parse_cancel_event(content)
+        if cancel_event is not None:
+            return content, [cancel_event]
+
+        events: list[BetEvent] = []
+        for play, amount in self._parse_bets(content):
+            events.append(
+                BetEvent(
+                    bettor=msg.username,
+                    play=play,
+                    amount=float(amount),
+                    kind="bet",
+                    source=content,
+                )
+            )
+        return content, events
 
     def _clean_text(self, value: object) -> str:
         text = str(value or "")
@@ -439,7 +732,7 @@ class ChatLogService:
         period = self._extract_period(content)
         if not period:
             return None
-        if DIRECT_CLOSE_HINT_PATTERN.search(content):
+        if DIRECT_CLOSE_HINT_PATTERN.search(content) or "如下订单已取消" in content:
             return ("end", period)
         if "涓嬫敞鏈熸暟" in content or "鏈湡涓嬫敞" in content:
             return ("start", period)
@@ -490,10 +783,20 @@ class ChatLogService:
         self,
         ts: datetime,
         periods: list[tuple[datetime, datetime, str]],
+        fixed_window: bool = False,
     ) -> str:
-        for start, end, period in reversed(periods):
-            if start <= ts <= end:
+        for start, end, period in periods:
+            if fixed_window:
+                if ts <= start:
+                    continue
+                if end is not None and ts > end:
+                    continue
                 return period
+            if ts < start:
+                continue
+            if end is not None and ts >= end:
+                continue
+            return period
         return ""
 
     def _resolve_receipt_owner(
@@ -521,6 +824,87 @@ class ChatLogService:
             chosen = candidates[-1]
             return chosen.username, chosen.sender_id
         return msg.username, msg.sender_id
+
+    def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
+        if not msg.sender_id:
+            return None
+        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+            return None
+        content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
+        period = self._extract_period(content)
+        if not period:
+            return None
+        if DIRECT_CLOSE_HINT_PATTERN.search(content) or "如下订单已取消" in content:
+            return ("end", period)
+        if (
+            "涓嬫敞鏈熸暟" in content
+            or "鏈湡涓嬫敞" in content
+            or "娑撳鏁為張鐔告殶" in content
+            or "閺堬剚婀℃稉瀣暈" in content
+            or "下注期数" in content
+            or "本期下注" in content
+        ):
+            return ("start", period)
+        return None
+
+    def _parse_cancel_event(self, content: str) -> BetEvent | None:
+        normalized = unicodedata.normalize("NFKC", content).strip()
+        normalized_key = self._normalize_text(normalized)
+        if normalized_key in {self._normalize_text("取消"), self._normalize_text("鍙栨秷")}:
+            return BetEvent("", "", 0.0, "cancel", source=content)
+
+        compact = re.sub(r"\s+", " ", normalized).strip()
+        match = re.match(r"^@?(?P<name>[^:：\s]{1,30})[:：]?\s*(?:取消|鍙栨秷)$", compact)
+        if match:
+            return BetEvent(match.group("name").strip(), "", 0.0, "cancel", source=content)
+
+        lines = [self._normalize_text(line) for line in content.splitlines() if self._normalize_text(line)]
+        if len(lines) == 2 and lines[1] in {"取消", self._normalize_text("鍙栨秷")}:
+            bettor = lines[0].lstrip("@").rstrip(":：").strip()
+            if bettor:
+                return BetEvent(bettor, "", 0.0, "cancel", source=content)
+
+        if lines and any(("已取消" in line) or ("宸插彇娑" in line) for line in lines[1:]):
+            bettor = lines[0].lstrip("@").rstrip(":：").strip()
+            if bettor:
+                order_ids = re.findall(r"(?:订单号|璁㈠崟鍙)[:：]?\s*([^\s]+)", content)
+                return BetEvent(
+                    bettor,
+                    "",
+                    0.0,
+                    "cancel",
+                    source=content,
+                    order_id=",".join(order_ids),
+                )
+        return None
+
+    def _find_active_period(self, bet_stack: dict[tuple[str, str], list[BetEvent]], bettor: str) -> str:
+        candidates = [(key[1], len(values)) for key, values in bet_stack.items() if key[0] == bettor and key[1]]
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return candidates[0][0]
+
+    def _find_active_period_by_latest(self, latest: object, bettor: str) -> str:
+        candidates = sorted(
+            [key[1] for key in latest if key[0] == bettor and key[1]],
+            reverse=True,
+        )
+        return candidates[0] if candidates else ""
+
+    def _pop_last_bet(self, stack: list[BetEvent], play: str) -> BetEvent | None:
+        for index in range(len(stack) - 1, -1, -1):
+            if play and stack[index].play != play:
+                continue
+            return stack.pop(index)
+        return None
+
+    def _pop_last_row(self, rows: list[dict[str, object]], play: str) -> dict[str, object] | None:
+        for index in range(len(rows) - 1, -1, -1):
+            if play and str(rows[index].get("play", "")) != play:
+                continue
+            return rows.pop(index)
+        return None
 
     def _extract_period(self, content: str) -> str:
         match = re.search(r"(\d{4,})", self._clean_text(content))

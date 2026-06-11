@@ -243,6 +243,100 @@ def test_chat_service_receipt_owner_prefers_recent_same_period_pending_record() 
     assert owner == ("AliceUser", "alice-1")
 
 
+def test_chat_service_receipt_owner_matches_within_original_five_minute_window() -> None:
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    now = datetime(2026, 6, 10, 12, 4, 0)
+    event = SimpleNamespace(bettor="Alice")
+    msg = ChatMessage(
+        ts=now,
+        group="GroupA",
+        username="Robot",
+        sender_id="robot-1",
+        content="receipt",
+    )
+    pending = SimpleNamespace(
+        username="AliceUser",
+        sender_id="alice-1",
+        period="8888",
+        ts=now - timedelta(minutes=4),
+    )
+
+    owner = service._resolve_receipt_owner(
+        event,
+        msg,
+        "8888",
+        defaultdict(list, {"alice": [pending]}),
+        defaultdict(list),
+    )
+
+    assert owner == ("AliceUser", "alice-1")
+
+
+def test_chat_service_direct_group_marker_scan_uses_original_ten_minute_window() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service._is_group_member_robot = lambda group, sender_id, username: sender_id.startswith("robot")
+
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 0),
+            group="GroupA",
+            username="Robot",
+            sender_id="robot-1",
+            content="下注期数 123456",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 10),
+            group="GroupA",
+            username="Alice",
+            sender_id="alice-1",
+            content="大100",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 15, 0),
+            group="GroupA",
+            username="Bob",
+            sender_id="bob-1",
+            content="大200",
+        ),
+    ]
+
+    assert service._build_direct_group_period_ranges(messages) == []
+
+
+def test_chat_service_builds_direct_period_context_from_end_and_interval() -> None:
+    from datetime import datetime, timedelta
+
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    end = datetime(2026, 6, 10, 12, 3, 30)
+
+    context = service._build_direct_period_context(
+        site="pc28",
+        period="123456",
+        start=None,
+        end=end,
+        interval_sec=210,
+    )
+
+    assert context is not None
+    assert context.period == "123456"
+    assert context.start == end - timedelta(seconds=210)
+    assert context.end == end
+
+
 def test_chat_service_extract_visual_rows_assigns_period_from_direct_group_marker() -> None:
     from datetime import datetime, timedelta
 
@@ -299,9 +393,154 @@ def test_chat_service_extract_visual_rows_assigns_period_from_direct_group_marke
             "amount": 100.0,
             "kind": "bet",
             "period": "123456",
-            "row_id": "1-0",
+            "sender_id": "alice-1",
+            "row_id": f"GroupA|Alice|123456|{play}|LATEST",
+            "source_kind": "direct",
         }
     ]
+
+
+def test_chat_service_receipt_group_keeps_latest_amount_per_bettor_period_play() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 0),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10 1234",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 20),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大20 1234",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "1234", "大", 20.0)
+    ]
+    assert stats.totals == {"大": 20.0}
+
+
+def test_chat_service_direct_group_accumulates_amount_per_bettor_period_play() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service._is_group_member_robot = lambda group, sender_id, username: sender_id.startswith("robot")
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 0),
+            group="普通群A",
+            username="Robot",
+            sender_id="robot-1",
+            content="下注期数 1234",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 10),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 20),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大20",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 30),
+            group="普通群A",
+            username="Robot",
+            sender_id="robot-1",
+            content="如下订单已取消 1234",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "1234", "大", 30.0)
+    ]
+    assert stats.totals == {"大": 30.0}
+
+
+def test_chat_service_cancel_removes_receipt_group_latest_row_without_residue() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 0),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10 1234",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 20),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大20 1234",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 12, 0, 40),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="Alice 取消",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert rows == []
+    assert stats.totals == {}
 
 
 def test_storage_service_load_returns_default_on_invalid_json(tmp_path: Path) -> None:
