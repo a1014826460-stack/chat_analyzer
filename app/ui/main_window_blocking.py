@@ -58,18 +58,23 @@ class MainWindowBlockingMixin:
     def _normalize_block_name(self, value: str) -> str:
         return unicodedata.normalize("NFKC", str(value).strip()).casefold()
 
+    def _set_global_block_names(self, values: object) -> None:
+        self.global_block_names = self._sanitize_block_names(values)
+
+    def _global_block_names(self) -> list[str]:
+        return list(getattr(self, "global_block_names", []))
+
     def _set_group_block_rules(self, rules_raw: object) -> None:
         self.group_block_rules = self._normalize_saved_block_rules(rules_raw)
         self.chat_service.set_group_block_rules(self.group_block_rules)
 
     def _blocked_names(self) -> list[str]:
-        names: list[str] = []
-        for rule in self.group_block_rules.values():
-            names.extend([str(item) for item in rule.get("names", [])])
-        return names
+        return self._global_block_names()
 
     def _blocked_rule_name_count(self) -> int:
-        return len(self._blocked_names())
+        return len(self._global_block_names()) + sum(
+            len(self._sanitize_block_names(rule.get("names", []))) for rule in self.group_block_rules.values()
+        )
 
     def _blocked_rules_signature(self) -> tuple:
         items = []
@@ -143,6 +148,23 @@ class MainWindowBlockingMixin:
         self._refresh_block_rule_summary()
         self._save_settings()
 
+    def _apply_global_block_names_from_editor(self) -> None:
+        names = self._sanitize_block_names(self.global_block_names_edit.toPlainText())
+        self._set_global_block_names(names)
+        self.global_block_names_edit.setPlainText("\n".join(names))
+        self.block_rule_status_label.setText(f"已保存 {len(names)} 个全局屏蔽名称。")
+        self._refresh_block_rule_summary()
+        self._save_settings()
+        self._reload_messages_after_block_rule_change()
+
+    def _clear_global_block_names(self) -> None:
+        self._set_global_block_names([])
+        self.global_block_names_edit.clear()
+        self.block_rule_status_label.setText("已清空全局屏蔽名称。")
+        self._refresh_block_rule_summary()
+        self._save_settings()
+        self._reload_messages_after_block_rule_change()
+
     def _apply_block_rule_from_editor(self) -> None:
         payload = self._current_block_group_payload()
         if not payload:
@@ -181,6 +203,9 @@ class MainWindowBlockingMixin:
 
     def _refresh_block_rule_summary(self) -> None:
         lines = []
+        global_names = self._global_block_names()
+        if global_names:
+            lines.append(f"全局: {', '.join(global_names)}")
         for rule in sorted(self.group_block_rules.values(), key=lambda item: str(item.get("group_name", ""))):
             names = self._sanitize_block_names(rule.get("names", []))
             if not names:

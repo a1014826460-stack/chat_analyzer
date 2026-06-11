@@ -441,6 +441,107 @@ def test_chat_service_receipt_group_keeps_latest_amount_per_bettor_period_play()
     assert stats.totals == {"大": 20.0}
 
 
+def test_chat_service_analyze_bets_returns_totals_by_group() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService
+
+    play_a, play_b = chat_service_module.PLAY_TYPES[:2]
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 12, 0, 0),
+            group="GroupA",
+            username="Alice",
+            sender_id="alice-1",
+            content=f"{play_a}10 1001",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 12, 0, 5),
+            group="GroupB",
+            username="Bob",
+            sender_id="bob-1",
+            content=f"{play_b}20 1001",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert len(rows) == 2
+    assert stats.totals == {play_a: 10.0, play_b: 20.0}
+    assert stats.totals_by_group == {
+        "GroupA": {play_a: 10.0},
+        "GroupB": {play_b: 20.0},
+    }
+
+
+def test_stats_result_positional_constructor_keeps_legacy_order() -> None:
+    from app.models import StatsResult
+
+    stats = StatsResult({"A": 1.0}, 7, 9)
+
+    assert stats.totals == {"A": 1.0}
+    assert stats.matched_messages == 7
+    assert stats.exported_records == 9
+    assert stats.totals_by_group == {}
+
+
+def test_chat_service_analyze_bets_splits_same_play_totals_by_group() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService
+
+    play = chat_service_module.PLAY_TYPES[0]
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 12, 10, 0),
+            group="GroupA",
+            username="Alice",
+            sender_id="alice-1",
+            content=f"{play}10 1002",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 12, 10, 5),
+            group="GroupB",
+            username="Bob",
+            sender_id="bob-1",
+            content=f"{play}20 1002",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert len(rows) == 2
+    assert stats.totals == {play: 30.0}
+    assert stats.totals_by_group == {
+        "GroupA": {play: 10.0},
+        "GroupB": {play: 20.0},
+    }
+
+
 def test_chat_service_direct_group_accumulates_amount_per_bettor_period_play() -> None:
     from datetime import datetime
 
@@ -1172,6 +1273,175 @@ def test_main_window_data_load_initial_state_restores_period_and_activation_gate
     assert dummy.tabs.current is dummy.license_page
 
 
+def test_main_window_data_load_initial_state_restores_period_override_map() -> None:
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def __init__(self) -> None:
+            self.items: list[str] = []
+            self.current = ""
+
+        def clear(self) -> None:
+            self.items = []
+
+        def addItems(self, values) -> None:
+            self.items.extend(values)
+
+        def setCurrentText(self, value: str) -> None:
+            self.current = value
+
+    class DummyEdit:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    class DummyDateTimeEdit:
+        def __init__(self) -> None:
+            self.value = None
+
+        def setDateTime(self, value) -> None:
+            self.value = value
+
+    class DummyTabs:
+        def __init__(self) -> None:
+            self.current = None
+
+        def setCurrentWidget(self, widget) -> None:
+            self.current = widget
+
+    class DummyLicenseService:
+        def is_activated(self) -> bool:
+            return False
+
+    class DummyWindow(MainWindowDataMixin):
+        def _refresh_block_rule_summary(self) -> None:
+            return None
+
+        def _refresh_block_rule_group_selector(self) -> None:
+            return None
+
+        def _refresh_license_banner(self) -> None:
+            return None
+
+        def _resolve_database(self, silent=False) -> None:
+            self.resolve_called = silent
+
+    dummy = DummyWindow()
+    dummy.analysis_page = object()
+    dummy.settings = {
+        "recent_usernames": ["Alice"],
+        "username": "Alice",
+        "fallback_db_path": "D:/db.sqlite",
+        "query_period_overrides_by_site": {"pc28": "7788"},
+    }
+    dummy.username_combo = DummyCombo()
+    dummy.manual_db_edit = DummyEdit()
+    dummy.resolved_path_edit = DummyEdit()
+    dummy.period_input = DummyEdit()
+    dummy.start_edit = DummyDateTimeEdit()
+    dummy.end_edit = DummyDateTimeEdit()
+    dummy.tabs = DummyTabs()
+    dummy.license_page = object()
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._active_site = "pc28"
+    dummy._require_activation = True
+    dummy.license_service = DummyLicenseService()
+
+    dummy._load_initial_state()
+
+    assert dummy._query_period_overrides_by_site == {"pc28": "7788"}
+    assert dummy.period_input.value == "7788"
+
+
+def test_main_window_data_load_initial_state_seeds_legacy_period_into_active_site() -> None:
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def __init__(self) -> None:
+            self.items: list[str] = []
+            self.current = ""
+
+        def clear(self) -> None:
+            self.items = []
+
+        def addItems(self, values) -> None:
+            self.items.extend(values)
+
+        def setCurrentText(self, value: str) -> None:
+            self.current = value
+
+    class DummyEdit:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    class DummyDateTimeEdit:
+        def __init__(self) -> None:
+            self.value = None
+
+        def setDateTime(self, value) -> None:
+            self.value = value
+
+    class DummyTabs:
+        def __init__(self) -> None:
+            self.current = None
+
+        def setCurrentWidget(self, widget) -> None:
+            self.current = widget
+
+    class DummyLicenseService:
+        def is_activated(self) -> bool:
+            return False
+
+    class DummyWindow(MainWindowDataMixin):
+        def _refresh_block_rule_summary(self) -> None:
+            return None
+
+        def _refresh_block_rule_group_selector(self) -> None:
+            return None
+
+        def _refresh_license_banner(self) -> None:
+            return None
+
+        def _resolve_database(self, silent=False) -> None:
+            self.resolve_called = silent
+
+    dummy = DummyWindow()
+    dummy.analysis_page = object()
+    dummy.settings = {
+        "recent_usernames": ["Alice"],
+        "username": "Alice",
+        "fallback_db_path": "D:/db.sqlite",
+        "query_period_override": "7788",
+        "manual_period_override": True,
+    }
+    dummy.username_combo = DummyCombo()
+    dummy.manual_db_edit = DummyEdit()
+    dummy.resolved_path_edit = DummyEdit()
+    dummy.period_input = DummyEdit()
+    dummy.start_edit = DummyDateTimeEdit()
+    dummy.end_edit = DummyDateTimeEdit()
+    dummy.tabs = DummyTabs()
+    dummy.license_page = object()
+    dummy._query_period_override = "7788"
+    dummy._manual_period_override = True
+    dummy._query_period_overrides_by_site = {}
+    dummy._active_site = "macao"
+    dummy._require_activation = True
+    dummy.license_service = DummyLicenseService()
+
+    dummy._load_initial_state()
+
+    assert dummy._query_period_overrides_by_site == {"macao": "7788"}
+    assert dummy.period_input.value == "7788"
+
+
 def test_main_window_advanced_time_toggle_shows_filter_frame() -> None:
     from types import SimpleNamespace
 
@@ -1241,6 +1511,12 @@ def test_main_window_layout_splitter_can_expand_left_panel() -> None:
             return None
 
         def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_global_block_names_from_editor(self):
+            return None
+
+        def _clear_global_block_names(self):
             return None
 
         def _apply_block_rule_from_editor(self):
@@ -1315,6 +1591,12 @@ def test_main_window_left_controls_are_not_narrowly_capped() -> None:
         def _on_block_group_changed(self, *args):
             return None
 
+        def _apply_global_block_names_from_editor(self):
+            return None
+
+        def _clear_global_block_names(self):
+            return None
+
         def _apply_block_rule_from_editor(self):
             return None
 
@@ -1380,6 +1662,12 @@ def test_main_window_layout_uses_readable_chinese_labels() -> None:
             return None
 
         def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_global_block_names_from_editor(self):
+            return None
+
+        def _clear_global_block_names(self):
             return None
 
         def _apply_block_rule_from_editor(self):
@@ -1453,6 +1741,120 @@ def test_realtime_and_chart_status_labels_are_chinese() -> None:
 
     assert "实时刷新" in dummy.lock_status_label.text
     assert dummy.auto_refresh_label.text == "运行中"
+
+
+def test_main_window_realtime_period_override_is_stored_per_site() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = ""
+            self.blocked = False
+
+        def blockSignals(self, value: bool) -> None:
+            self.blocked = value
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _query_period_overrides_by_site={"pc28": "7788", "macao": "8899"},
+        _query_period_override="",
+        _manual_period_override=False,
+        _draw_infos={
+            "pc28": DrawInfo(current_period="1001", next_period="1002"),
+            "macao": DrawInfo(current_period="2001", next_period="2002"),
+        },
+        period_input=DummyPeriodInput(),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+        lock_status_label=SimpleNamespace(setText=lambda value: None),
+        auto_refresh_label=SimpleNamespace(setText=lambda value: None, setStyleSheet=lambda value: None),
+        chart_window=SimpleNamespace(set_status=lambda *args, **kwargs: None, set_status_seconds=lambda *args, **kwargs: None),
+        current_visual_rows=[],
+        _stats_locked=False,
+        _last_message_cursor={},
+        _awaiting_next_period=False,
+        _format_countdown=lambda value: "00:00",
+        _set_status=lambda *args, **kwargs: None,
+        _load_filtered_messages=lambda: None,
+        _sync_chart_status=lambda: None,
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._has_manual_period_override = lambda: MainWindowRealtimeMixin._has_manual_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._refresh_active_site_info = lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy)
+
+    MainWindowRealtimeMixin._refresh_active_site_info(dummy)
+    assert dummy.period_input.value == "7788"
+
+    MainWindowRealtimeMixin._select_site(dummy, "macao")
+    assert dummy.period_input.value == "8899"
+    assert dummy._query_period_overrides_by_site["pc28"] == "7788"
+
+
+def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selected_site() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+    dummy = SimpleNamespace(
+        _active_site="",
+        _query_period_overrides_by_site={},
+        _query_period_override="7788",
+        _manual_period_override=True,
+        _draw_infos={"macao": DrawInfo(current_period="2001", next_period="2002")},
+        period_input=DummyPeriodInput(),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+        lock_status_label=SimpleNamespace(setText=lambda value: None),
+        auto_refresh_label=SimpleNamespace(setText=lambda value: None, setStyleSheet=lambda value: None),
+        chart_window=SimpleNamespace(set_status=lambda *args, **kwargs: None, set_status_seconds=lambda *args, **kwargs: None),
+        current_visual_rows=[],
+        _stats_locked=False,
+        _last_message_cursor={},
+        _awaiting_next_period=False,
+        _format_countdown=lambda value: "00:00",
+        _set_status=lambda *args, **kwargs: None,
+        _load_filtered_messages=lambda: None,
+        _sync_chart_status=lambda: None,
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._has_manual_period_override = lambda: MainWindowRealtimeMixin._has_manual_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._refresh_active_site_info = lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy)
+
+    MainWindowRealtimeMixin._select_site(dummy, "macao")
+
+    assert dummy._query_period_overrides_by_site == {"macao": "7788"}
+    assert dummy.period_input.value == "7788"
 
 
 def test_logging_config_debug_sets_root_to_debug(tmp_path: Path, monkeypatch) -> None:
@@ -1583,6 +1985,359 @@ def test_block_rule_save_and_clear_use_readable_feedback() -> None:
     MainWindowBlockingMixin._clear_block_rule_for_selected_group(dummy)
     assert dummy.block_names_edit.cleared is True
     assert dummy.block_rule_status_label.text == "已清空测试群的屏蔽名称。"
+
+
+def test_main_window_actions_save_settings_persists_global_block_names_separately() -> None:
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "Alice"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "Alice"
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return ["g1"]
+
+        def _selected_block_group_key(self):
+            return "g1"
+
+        def _global_block_names(self):
+            return ["Robot"]
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {"g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["global_block_names"] == ["Robot"]
+    assert payload["blocked_names"] == ["Robot"]
+    assert payload["blocked_names_by_group"] == {
+        "g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}
+    }
+
+
+def test_main_window_does_not_promote_legacy_blocked_names_when_group_rules_exist(monkeypatch) -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.main_window import MainWindow
+
+    class DummySettingsService:
+        def load(self) -> dict:
+            return {
+                "blocked_names": ["LegacyName"],
+                "blocked_names_by_group": {
+                    "g1": {"group_id": "g1", "group_name": "GroupA", "names": ["LegacyName"]}
+                },
+                "lock_threshold_sec": 20,
+                "is_first_launch": False,
+                "query_period_override": "",
+                "manual_period_override": False,
+            }
+
+    monkeypatch.setattr("app.ui.main_window.SettingsService", lambda: DummySettingsService())
+    monkeypatch.setattr(MainWindow, "_apply_icon", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_build_license_page", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_apply_theme", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_license_banner", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_activate_and_launch", lambda self: None)
+    monkeypatch.setattr("app.ui.main_window.set_proxy_settings", lambda settings: None)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    assert window.global_block_names == []
+
+    window.close()
+
+
+def test_main_window_preserves_legacy_global_block_names_not_present_in_group_rules(monkeypatch) -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.main_window import MainWindow
+
+    class DummySettingsService:
+        def load(self) -> dict:
+            return {
+                "blocked_names": ["Robot", "LegacyName"],
+                "blocked_names_by_group": {
+                    "g1": {"group_id": "g1", "group_name": "GroupA", "names": ["LegacyName"]}
+                },
+                "lock_threshold_sec": 20,
+                "is_first_launch": False,
+                "query_period_override": "",
+                "manual_period_override": False,
+            }
+
+    monkeypatch.setattr("app.ui.main_window.SettingsService", lambda: DummySettingsService())
+    monkeypatch.setattr(MainWindow, "_apply_icon", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_build_license_page", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_apply_theme", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_license_banner", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_activate_and_launch", lambda self: None)
+    monkeypatch.setattr("app.ui.main_window.set_proxy_settings", lambda settings: None)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    assert window.global_block_names == ["Robot"]
+
+    window.close()
+
+
+def test_main_window_promotes_legacy_blocked_names_only_when_group_rules_are_empty(monkeypatch) -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.main_window import MainWindow
+
+    class DummySettingsService:
+        def load(self) -> dict:
+            return {
+                "blocked_names": ["LegacyName"],
+                "blocked_names_by_group": {},
+                "lock_threshold_sec": 20,
+                "is_first_launch": False,
+                "query_period_override": "",
+                "manual_period_override": False,
+            }
+
+    monkeypatch.setattr("app.ui.main_window.SettingsService", lambda: DummySettingsService())
+    monkeypatch.setattr(MainWindow, "_apply_icon", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_build_license_page", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_apply_theme", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_license_banner", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_activate_and_launch", lambda self: None)
+    monkeypatch.setattr("app.ui.main_window.set_proxy_settings", lambda settings: None)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    assert window.global_block_names == ["LegacyName"]
+
+    window.close()
+
+
+def test_main_window_actions_save_settings_preserves_existing_unknown_keys() -> None:
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "Alice"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "Alice"
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return ["g1"]
+
+        def _selected_block_group_key(self):
+            return "g1"
+
+        def _global_block_names(self):
+            return ["Robot"]
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.settings = {
+        "export_dir": "",
+        "proxy_enabled": False,
+        "proxy_http": "",
+        "proxy_https": "",
+        "query_period_overrides_by_site": {"pc28": "7788"},
+        "custom_keep": "keep-me",
+    }
+    dummy.group_block_rules = {"g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {"pc28": "7788"}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["query_period_overrides_by_site"] == {"pc28": "7788"}
+    assert payload["custom_keep"] == "keep-me"
+
+
+def test_main_window_global_block_ui_uses_chinese_text(monkeypatch) -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window import MainWindow
+
+    monkeypatch.setattr(main_window_realtime, "site_list", lambda: ["pc28"])
+    monkeypatch.setattr(main_window_realtime, "site_label", lambda site: "PC28")
+    monkeypatch.setattr(
+        main_window_realtime,
+        "fetch_all_draw_infos",
+        lambda: {"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=30)},
+    )
+    monkeypatch.setattr(
+        main_window_realtime,
+        "extract_draw_info",
+        lambda site: DrawInfo(current_period="1001", next_period="1002", next_countdown=30),
+    )
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    label_texts = [label.text() for label in window.findChildren(type(window.active_site_label))]
+
+    assert "全局" in label_texts
+    assert window.global_block_save_btn.text() == "保存全局"
+    assert window.global_block_clear_btn.text() == "清空全局"
+    assert window.global_block_names_edit.placeholderText() == "全局屏蔽名称，每行一个，也可用逗号/分号分隔"
+    window.close()
+
+
+def test_global_block_rule_feedback_uses_chinese_text() -> None:
+    from app.ui.main_window_blocking import MainWindowBlockingMixin
+
+    class DummyEdit:
+        def __init__(self, text: str = "") -> None:
+            self._text = text
+            self.value = ""
+            self.cleared = False
+
+        def toPlainText(self) -> str:
+            return self._text
+
+        def setPlainText(self, value: str) -> None:
+            self.value = value
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    class DummySummary:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setPlainText(self, value: str) -> None:
+            self.text = value
+
+    class DummyWindow(MainWindowBlockingMixin):
+        def _save_settings(self) -> None:
+            return None
+
+        def _reload_messages_after_block_rule_change(self) -> None:
+            return None
+
+    dummy = DummyWindow()
+    dummy.global_block_names = []
+    dummy.group_block_rules = {}
+    dummy.global_block_names_edit = DummyEdit("Robot, Spam")
+    dummy.block_rule_status_label = DummyLabel()
+    dummy.block_rule_summary_view = DummySummary()
+
+    MainWindowBlockingMixin._apply_global_block_names_from_editor(dummy)
+    assert dummy.block_rule_status_label.text == "已保存 2 个全局屏蔽名称。"
+    assert dummy.block_rule_summary_view.text == "全局: Robot, Spam"
+
+    MainWindowBlockingMixin._clear_global_block_names(dummy)
+    assert dummy.global_block_names_edit.cleared is True
+    assert dummy.block_rule_status_label.text == "已清空全局屏蔽名称。"
+
+
+def test_chat_service_global_block_list_applies_to_all_groups() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 10, 0, 0),
+            group="GroupA",
+            username="Robot",
+            sender_id="robot-a",
+            content="澶?0 1001",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 11, 10, 0, 5),
+            group="GroupB",
+            username="Robot",
+            sender_id="robot-b",
+            content="澶?0 1001",
+        ),
+    ]
+
+    filtered = service.filter_blocked_messages(messages, blocked_names=["Robot"], blocked_ids=[])
+
+    assert filtered == []
 
 
 def test_main_window_safe_buttons_click_without_crashing(monkeypatch) -> None:

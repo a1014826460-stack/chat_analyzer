@@ -321,9 +321,19 @@ class ChatLogService:
             period_interval_sec=period_interval_sec,
         )
         totals: dict[str, float] = defaultdict(float)
+        totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for row in visual_rows:
-            totals[str(row["play"])] += float(row["amount"])
-        return visual_rows, StatsResult(totals=dict(totals), matched_messages=len(filtered))
+            play = str(row["play"])
+            amount = float(row["amount"])
+            totals[play] += amount
+            group = str(row.get("group", "") or "")
+            if group:
+                totals_by_group[group][play] += amount
+        return visual_rows, StatsResult(
+            totals=dict(totals),
+            totals_by_group={group: dict(group_totals) for group, group_totals in totals_by_group.items()},
+            matched_messages=len(filtered),
+        )
 
     def summarize_bets(
         self,

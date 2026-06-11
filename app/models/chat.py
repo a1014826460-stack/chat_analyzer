@@ -41,12 +41,16 @@ class ParseOptions:
     incremental_cursor_rand: int = 0
 
     @property
-    def blacklist_users(self) -> list[str]:
+    def global_block_names(self) -> list[str]:
         return self.blocked_names
 
     @property
+    def blacklist_users(self) -> list[str]:
+        return self.global_block_names
+
+    @property
     def masked_bettors(self) -> list[str]:
-        return self.blocked_names
+        return self.global_block_names
 
 
 @dataclass
@@ -54,6 +58,7 @@ class StatsResult:
     totals: dict[str, float]
     matched_messages: int = 0
     exported_records: int = 0
+    totals_by_group: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass

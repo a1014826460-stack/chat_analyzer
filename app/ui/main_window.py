@@ -52,9 +52,10 @@ class MainWindow(
         self.settings = self.settings_service.load()
 
         self.current_messages = []
-        self.current_stats = StatsResult(totals={})
+        self.current_stats = StatsResult(totals={}, totals_by_group={})
         self.current_visual_rows = []
         self.resolved_db = None
+        self.global_block_names: list[str] = []
         self.group_block_rules: dict[str, dict[str, object]] = {}
         self.message_page = 0
         self.messages_per_page = 50
@@ -64,8 +65,16 @@ class MainWindow(
         self._lock_threshold_sec = int(self.settings.get("lock_threshold_sec", LOCK_THRESHOLD_DEFAULT_SEC))
         self._site_card_widgets: dict[str, dict[str, QLabel]] = {}
         self._awaiting_next_period = False
-        self._query_period_override = str(self.settings.get("query_period_override", "")).strip()
-        self._manual_period_override = bool(self.settings.get("manual_period_override", False))
+        legacy_period = str(self.settings.get("query_period_override", "")).strip()
+        legacy_manual = bool(self.settings.get("manual_period_override", False))
+        overrides_raw = self.settings.get("query_period_overrides_by_site", {})
+        self._query_period_overrides_by_site = {
+            str(key): str(value).strip()
+            for key, value in dict(overrides_raw if isinstance(overrides_raw, dict) else {}).items()
+            if str(value).strip()
+        }
+        self._query_period_override = legacy_period
+        self._manual_period_override = legacy_manual
         self._last_loaded_signature = None
         self._last_message_cursor: dict[str, tuple[int, int]] = {}
         self._message_load_sequence = 0
@@ -81,7 +90,26 @@ class MainWindow(
         self._data_worker = ThreadPoolExecutor(max_workers=1)
 
         self._apply_icon()
-        self._set_group_block_rules(self.settings.get("blocked_names_by_group", {}))
+        group_rules_raw = self.settings.get("blocked_names_by_group", {})
+        if "global_block_names" in self.settings:
+            global_block_source = self.settings.get("global_block_names", [])
+        elif group_rules_raw:
+            # Legacy `blocked_names` may contain a mix of true global names and
+            # flattened group-only names. Preserve only names that are not
+            # already present in the saved group rules.
+            legacy_blocked_names = self._sanitize_block_names(self.settings.get("blocked_names", []))
+            group_rule_names = set()
+            normalized_group_rules = self._normalize_saved_block_rules(group_rules_raw)
+            for rule in normalized_group_rules.values():
+                for name in rule.get("names", []):
+                    group_rule_names.add(self._normalize_block_name(str(name)))
+            global_block_source = [
+                name for name in legacy_blocked_names if self._normalize_block_name(name) not in group_rule_names
+            ]
+        else:
+            global_block_source = self.settings.get("blocked_names", [])
+        self.global_block_names = self._sanitize_block_names(global_block_source)
+        self._set_group_block_rules(group_rules_raw)
 
         self.tabs = QStackedWidget()
         self.setCentralWidget(self.tabs)

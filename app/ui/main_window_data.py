@@ -29,8 +29,30 @@ class MainWindowDataMixin:
         if hasattr(self, "resolved_path_edit"):
             self.resolved_path_edit.setText(str(self.settings.get("data_source", "")).strip())
         self.manual_db_edit.setText(str(self.settings.get("fallback_db_path", "")).strip())
+        overrides_raw = self.settings.get("query_period_overrides_by_site", {})
+        self._query_period_overrides_by_site = {
+            str(key): str(value).strip()
+            for key, value in dict(overrides_raw if isinstance(overrides_raw, dict) else {}).items()
+            if str(value).strip()
+        }
+        legacy_period = str(self.settings.get("query_period_override", getattr(self, "_query_period_override", ""))).strip()
+        legacy_manual = bool(self.settings.get("manual_period_override", getattr(self, "_manual_period_override", False)))
+        if legacy_manual and legacy_period and self._active_site and self._active_site not in self._query_period_overrides_by_site:
+            self._query_period_overrides_by_site[self._active_site] = legacy_period
+        current_override = str(self._query_period_overrides_by_site.get(self._active_site or "", "")).strip()
+        if self._active_site:
+            self._query_period_override = current_override
+            self._manual_period_override = bool(current_override)
+        else:
+            self._query_period_override = legacy_period
+            self._manual_period_override = legacy_manual
+        if hasattr(self, "global_block_names_edit") and hasattr(self, "_global_block_names"):
+            self.global_block_names_edit.setPlainText("\n".join(self._global_block_names()))
         if hasattr(self, "period_input"):
-            self.period_input.setText(self._query_period_override if self._manual_period_override else "")
+            if self._active_site:
+                self.period_input.setText(current_override)
+            else:
+                self.period_input.setText(self._query_period_override if self._manual_period_override else "")
         now = QDateTime.currentDateTime()
         if hasattr(self, "end_edit"):
             self.end_edit.setDateTime(now)
@@ -290,10 +312,15 @@ class MainWindowDataMixin:
         period_filter = self.period_input.text().strip() if hasattr(self, "period_input") else ""
         site = self._active_site or ""
         period_interval_sec = _SITE_INTERVAL_SEC.get(site, 180)
+        global_block_names = (
+            self._global_block_names()
+            if hasattr(self, "_global_block_names")
+            else (self._blocked_names() if hasattr(self, "_blocked_names") else [])
+        )
         return ParseOptions(
             username=self.username_combo.currentText().strip(),
             groups=selected_groups,
-            blocked_names=self._blocked_names(),
+            blocked_names=global_block_names,
             blocked_names_by_group=self.group_block_rules,
             group_ids=selected_group_ids,
             blocked_user_ids=[],

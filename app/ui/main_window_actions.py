@@ -102,27 +102,43 @@ class MainWindowActionsMixin:
 
     def _save_settings(self) -> None:
         source_path = self._current_source_path()
-        self.settings_service.save(
+        global_block_names = (
+            self._global_block_names()
+            if hasattr(self, "_global_block_names")
+            else (self._blocked_names() if hasattr(self, "_blocked_names") else [])
+        )
+        overrides_raw = getattr(self, "_query_period_overrides_by_site", self.settings.get("query_period_overrides_by_site", {}))
+        query_period_overrides_by_site = {
+            str(key): str(value).strip()
+            for key, value in dict(overrides_raw if isinstance(overrides_raw, dict) else {}).items()
+            if str(value).strip()
+        }
+        payload = dict(getattr(self, "settings", {}))
+        payload.update(
             {
                 "username": self.username_combo.currentText().strip(),
                 "recent_usernames": [self.username_combo.itemText(i) for i in range(self.username_combo.count())],
                 "db_dir": str(source_path.parent) if source_path else "",
                 "data_source": str(source_path) if source_path else "",
-                "export_dir": str(self.settings.get("export_dir", "")).strip(),
-                "blocked_names": self._blocked_names(),
+                "export_dir": str(payload.get("export_dir", "")).strip(),
+                "global_block_names": global_block_names,
+                "blocked_names": global_block_names,
                 "blocked_names_by_group": self.group_block_rules,
                 "selected_group_ids": self._selected_group_ids(),
                 "selected_block_group_key": self._selected_block_group_key(),
                 "fallback_db_path": self.manual_db_edit.text().strip(),
                 "lock_threshold_sec": self._lock_threshold_sec,
-                "query_period_override": self._query_period_override,
-                "manual_period_override": self._manual_period_override,
+                "query_period_overrides_by_site": query_period_overrides_by_site,
+                "query_period_override": "",
+                "manual_period_override": False,
                 "is_first_launch": self._is_first_launch,
-                "proxy_enabled": self.settings.get("proxy_enabled", False),
-                "proxy_http": self.settings.get("proxy_http", ""),
-                "proxy_https": self.settings.get("proxy_https", ""),
+                "proxy_enabled": payload.get("proxy_enabled", False),
+                "proxy_http": payload.get("proxy_http", ""),
+                "proxy_https": payload.get("proxy_https", ""),
             }
         )
+        self.settings = payload
+        self.settings_service.save(payload)
 
     def _show_about(self) -> None:
         logger.debug("About dialog opened")

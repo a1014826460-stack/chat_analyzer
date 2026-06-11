@@ -62,8 +62,16 @@ class MainWindowRealtimeMixin:
     def _select_site(self, site: str) -> None:
         logger.info("Switch site: %s", site)
         self._active_site = site
-        self._manual_period_override = False
-        self._query_period_override = ""
+        if (
+            getattr(self, "_manual_period_override", False)
+            and getattr(self, "_query_period_override", "")
+            and not self._current_period_override()
+        ):
+            if not hasattr(self, "_query_period_overrides_by_site") or not isinstance(self._query_period_overrides_by_site, dict):
+                self._query_period_overrides_by_site = {}
+            self._query_period_overrides_by_site[site] = str(self._query_period_override).strip()
+        self._query_period_override = self._current_period_override()
+        self._manual_period_override = self._has_manual_period_override()
         self._stats_locked = False
         self._awaiting_next_period = False
         self._last_message_cursor.pop(site, None)
@@ -113,17 +121,32 @@ class MainWindowRealtimeMixin:
     def _default_query_period(self, info: DrawInfo) -> str:
         return info.next_period or info.current_period
 
+    def _current_period_override(self) -> str:
+        return str(getattr(self, "_query_period_overrides_by_site", {}).get(self._active_site or "", "")).strip()
+
+    def _has_manual_period_override(self) -> bool:
+        return bool(self._current_period_override())
+
     def _sync_period_input_from_site(self, info: DrawInfo) -> None:
-        if self._manual_period_override:
-            return
+        text = self._current_period_override() or self._default_query_period(info)
         self.period_input.blockSignals(True)
-        self.period_input.setText(self._default_query_period(info))
+        self.period_input.setText(text)
         self.period_input.blockSignals(False)
 
     def _on_period_input_changed(self) -> None:
-        self._query_period_override = self.period_input.text().strip()
-        self._manual_period_override = bool(self._query_period_override)
-        logger.debug("Query period changed: manual=%s period=%s", self._manual_period_override, self._query_period_override)
+        if not self._active_site:
+            return
+        if not hasattr(self, "_query_period_overrides_by_site") or not isinstance(self._query_period_overrides_by_site, dict):
+            self._query_period_overrides_by_site = {}
+        value = self.period_input.text().strip()
+        if value:
+            self._query_period_overrides_by_site[self._active_site] = value
+        else:
+            self._query_period_overrides_by_site.pop(self._active_site, None)
+        self._query_period_override = value
+        self._manual_period_override = bool(value)
+        logger.debug("Query period changed: site=%s period=%s", self._active_site, value)
+        self._save_settings()
 
     def _on_lock_threshold_changed(self, value: int) -> None:
         self._lock_threshold_sec = int(value)
