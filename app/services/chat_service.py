@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import logging
@@ -12,6 +13,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import unpad
+except ImportError:
+    AES = None
+    unpad = None
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -40,6 +48,9 @@ NUMBER_TOKEN_AT_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
 DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
 RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
 DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
+DEFAULT_SQLITE_LOAD_WINDOW = timedelta(minutes=20)
+FRONTEND_AAS_KEY = "AAS_FRONTEND_KEY"
+LOG_PREVIEW_LIMIT = 120
 ZODIAC_GROUP_NAMES = (
     "白羊座",
     "金牛座",
@@ -109,11 +120,47 @@ class ChatLogService:
         return [ChatGroup(group_id=group, group_name=group) for group in groups]
 
     def list_groups_from_db(self, msg_db: Path) -> list[ChatGroup]:
+        msg_db = Path(msg_db)
+        if msg_db.suffix.lower() != ".txt":
+            groups = self._list_sqlite_groups(msg_db)
+            if groups:
+                return groups
         try:
             messages = self.load_messages(msg_db, ParseOptions())
         except Exception:
             return []
         return self.extract_groups(messages)
+
+    def _list_sqlite_groups(self, msg_db: Path) -> list[ChatGroup]:
+        if not msg_db.exists():
+            return []
+        queries = [
+            "select distinct sid as group_id from message where sid is not null and sid != '' order by sid asc",
+            "select distinct conversation_id as group_id from msg where conversation_id is not null and conversation_id != '' order by conversation_id asc",
+        ]
+        try:
+            con = sqlite3.connect(f"file:{msg_db.as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            for query in queries:
+                try:
+                    rows = con.execute(query).fetchall()
+                except sqlite3.DatabaseError:
+                    continue
+                groups = [
+                    ChatGroup(group_id=str(row["group_id"]).strip(), group_name=str(row["group_id"]).strip())
+                    for row in rows
+                    if str(row["group_id"]).strip()
+                ]
+                if groups:
+                    return groups
+        except sqlite3.DatabaseError:
+            logger.exception("Failed to list sqlite groups from %s", msg_db)
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+        return []
 
     def load_messages(self, source_path: Path, options: ParseOptions) -> list[ChatMessage]:
         source_path = Path(source_path)
@@ -152,13 +199,28 @@ class ChatLogService:
         queries = [
             """
             select
+                coalesce(client_time, time, 0) as client_time,
+                coalesce(rand, 0) as rand,
+                coalesce(sid, 'Unknown') as group_name,
+                coalesce(sender, 'Unknown') as sender_name,
+                coalesce(sender, '') as sender_id,
+                coalesce(element_descriptions, '') as element_descriptions,
+                coalesce(content, '') as content
+            from message
+            {where_clause}
+            order by client_time asc, rand asc
+            """,
+            """
+            select
                 coalesce(client_time, 0) as client_time,
                 coalesce(rand, 0) as rand,
                 coalesce(conv_nick_name, conversation_id, 'Unknown') as group_name,
                 coalesce(sender_nick_name, sender_id, 'Unknown') as sender_name,
                 coalesce(sender_id, '') as sender_id,
+                '' as element_descriptions,
                 coalesce(msg_text, text_elem, content, '') as content
             from msg
+            {where_clause}
             order by client_time asc, rand asc
             """,
             """
@@ -168,8 +230,10 @@ class ChatLogService:
                 coalesce(conversation_id, 'Unknown') as group_name,
                 coalesce(sender_id, 'Unknown') as sender_name,
                 coalesce(sender_id, '') as sender_id,
+                '' as element_descriptions,
                 coalesce(content, '') as content
             from message
+            {where_clause}
             order by client_time asc, rand asc
             """,
         ]
@@ -178,9 +242,11 @@ class ChatLogService:
         try:
             con = sqlite3.connect(f"file:{msg_db.as_posix()}?mode=ro", uri=True)
             con.row_factory = sqlite3.Row
-            for query in queries:
+            client_time_unit = self._detect_sqlite_client_time_unit(con)
+            for raw_query in queries:
+                query, params = self._apply_sqlite_query_options(raw_query, options, client_time_unit)
                 try:
-                    rows = con.execute(query).fetchall()
+                    rows = con.execute(query, params).fetchall()
                     if rows:
                         for row in rows:
                             ts = self._sqlite_ts_to_datetime(int(row["client_time"] or 0))
@@ -188,7 +254,10 @@ class ChatLogService:
                                 ts=ts,
                                 group=str(row["group_name"] or "Unknown").strip(),
                                 username=str(row["sender_name"] or "Unknown").strip(),
-                                content=self._stringify_sqlite_content(row["content"]),
+                                content=self._extract_message_text(
+                                    row["element_descriptions"],
+                                    row["content"],
+                                ),
                                 sender_id=str(row["sender_id"] or "").strip(),
                                 raw_client_time=int(row["client_time"] or 0),
                                 raw_rand=int(row["rand"] or 0),
@@ -920,7 +989,48 @@ class ChatLogService:
         return False
 
     def _decode_possible_frontend_ciphertext(self, content: str) -> str:
-        return self._clean_text(content)
+        text = self._clean_text(content)
+        if not self._looks_like_base64_ciphertext(text):
+            return text
+        decoded = self._decrypt_frontend_aas_text(text)
+        logger.debug(
+            "[直读群] 密文检测: raw=%s, decoded=%s, success=%s",
+            self._preview_text(text),
+            self._preview_text(decoded or text),
+            bool(decoded),
+        )
+        return self._clean_text(decoded or text)
+
+    def _preview_text(self, text: str) -> str:
+        clean = self._clean_text(text)
+        if len(clean) <= LOG_PREVIEW_LIMIT:
+            return clean
+        return clean[:LOG_PREVIEW_LIMIT] + "..."
+
+    def _looks_like_base64_ciphertext(self, text: str) -> bool:
+        compact = str(text or "").strip()
+        if not compact or "\n" in compact:
+            return False
+        if len(compact) < 16 or len(compact) % 4 != 0:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9+/=]+", compact))
+
+    def _decrypt_frontend_aas_text(self, ciphertext_b64: str) -> str:
+        if AES is None or unpad is None:
+            return ""
+        try:
+            raw = base64.b64decode(ciphertext_b64, validate=True)
+        except Exception:
+            return ""
+        key = FRONTEND_AAS_KEY.encode("utf-8")
+        if len(key) < 16:
+            key = key + (b"\x00" * (16 - len(key)))
+        try:
+            decrypted = AES.new(key[:16], AES.MODE_ECB).decrypt(raw)
+            plain = unpad(decrypted, AES.block_size)
+            return plain.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
 
     def _message_matches_options(self, msg: ChatMessage, options: ParseOptions) -> bool:
         if options.username and self._normalize_text(msg.username) != self._normalize_text(options.username):
@@ -945,9 +1055,155 @@ class ChatLogService:
     def _sqlite_ts_to_datetime(self, value: int) -> datetime:
         if value <= 0:
             return datetime.now()
-        if value > 10_000_000_000:
+        if value > 100_000_000_000_000:
+            value //= 1_000_000
+        elif value > 10_000_000_000:
             value //= 1000
         return datetime.fromtimestamp(value)
+
+    def _apply_sqlite_query_options(
+        self,
+        query: str,
+        options: ParseOptions,
+        client_time_unit: int = 1,
+    ) -> tuple[str, list[object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        start_time = options.start_time
+        end_time = options.end_time
+        if start_time is None and end_time is None and options.incremental_since is None:
+            now = datetime.now()
+            start_time = now - DEFAULT_SQLITE_LOAD_WINDOW
+            end_time = now
+            logger.debug("应用默认时间窗口: %s ~ %s", start_time, end_time)
+        if start_time is not None:
+            clauses.append("client_time >= ?")
+            params.append(self._to_sqlite_timestamp(start_time, client_time_unit))
+        if end_time is not None:
+            clauses.append("client_time <= ?")
+            params.append(self._to_sqlite_timestamp(end_time, client_time_unit))
+        if options.group_ids:
+            placeholders = ",".join("?" for _ in options.group_ids)
+            if "from msg" in query:
+                clauses.append(f"conversation_id in ({placeholders})")
+            else:
+                clauses.append(f"sid in ({placeholders})")
+            params.extend(options.group_ids)
+        if options.blocked_user_ids:
+            placeholders = ",".join("?" for _ in options.blocked_user_ids)
+            if "from msg" in query:
+                clauses.append(f"sender_id not in ({placeholders})")
+            else:
+                clauses.append(f"sender not in ({placeholders})")
+            params.extend(options.blocked_user_ids)
+        if options.incremental_since is not None or options.incremental_cursor_value:
+            cursor_value = (
+                int(options.incremental_cursor_value)
+                if options.incremental_cursor_value
+                else self._to_sqlite_timestamp(options.incremental_since, client_time_unit)
+            )
+            cursor_rand = int(options.incremental_cursor_rand or 0)
+            clauses.append("(client_time > ? or (client_time = ? and rand > ?))")
+            params.extend([cursor_value, cursor_value, cursor_rand])
+        where_clause = f"where {' and '.join(clauses)}" if clauses else ""
+        return query.format(where_clause=where_clause), params
+
+    def _detect_sqlite_client_time_unit(self, con: sqlite3.Connection) -> int:
+        try:
+            row = con.execute("select max(client_time) from message").fetchone()
+        except sqlite3.DatabaseError:
+            return 1
+        value = int((row[0] if row else 0) or 0)
+        if value > 100_000_000_000_000:
+            return 1_000_000
+        if value > 10_000_000_000:
+            return 1000
+        return 1
+
+    def _to_sqlite_timestamp(self, value: datetime | None, unit: int) -> int:
+        if value is None:
+            return 0
+        return int(value.timestamp() * max(1, unit))
+
+    def _extract_message_text(self, element_desc: object, content_blob: object) -> str:
+        candidates: list[str] = []
+        for value in (element_desc, content_blob):
+            if isinstance(value, bytes):
+                candidates.append(value.decode("utf-8", errors="ignore"))
+            elif value:
+                candidates.append(str(value))
+
+        for candidate in candidates:
+            text = self._clean_text(candidate)
+            extracted = self._extract_json_text(text)
+            if extracted:
+                return extracted
+            lines = [line.strip(" @") for line in text.splitlines()]
+            useful = [line for line in lines if self._looks_like_message_line(line)]
+            if useful:
+                return "\n".join(useful).strip()
+            compact = text.strip()
+            if (
+                compact
+                and not compact.startswith("{")
+                and not compact.startswith("[")
+                and not self._looks_like_base64_ciphertext(compact)
+            ):
+                return compact
+        return ""
+
+    def _extract_json_text(self, text: str) -> str:
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            match = re.search(r'"content"\s*:\s*"((?:\\.|[^"])*)"', text)
+            if not match:
+                return ""
+            try:
+                return bytes(match.group(1), "utf-8").decode("unicode_escape").strip()
+            except Exception:
+                return match.group(1).strip()
+        return self._extract_text_from_json_value(payload)
+
+    def _extract_text_from_json_value(self, value: object) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in (
+                "text",
+                "content",
+                "msg",
+                "message",
+                "textElement",
+                "text_elem",
+                "strContent",
+                "StrContent",
+            ):
+                item = value.get(key)
+                if isinstance(item, dict):
+                    nested = self._extract_text_from_json_value(item)
+                    if nested:
+                        return nested
+                elif isinstance(item, str) and item.strip():
+                    return item.strip()
+            for item in value.values():
+                nested = self._extract_text_from_json_value(item)
+                if nested:
+                    return nested
+        if isinstance(value, list):
+            for item in value:
+                nested = self._extract_text_from_json_value(item)
+                if nested:
+                    return nested
+        return ""
+
+    def _looks_like_message_line(self, line: str) -> bool:
+        line = self._clean_text(line)
+        if not line:
+            return False
+        if self._extract_json_text(line):
+            return True
+        return bool(SIMPLE_BET_PATTERN.search(line) or self._parse_compact_bets(line, ""))
 
     def _stringify_sqlite_content(self, value: object) -> str:
         if value is None:

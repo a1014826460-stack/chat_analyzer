@@ -14,7 +14,7 @@ python -m venv .venv
 Run the application:
 
 ```powershell
-.\.venv\Scripts\python.exe app\main.py
+.\.venv\Scripts\python.exe app\main.py --admin --debug
 ```
 
 ## Build

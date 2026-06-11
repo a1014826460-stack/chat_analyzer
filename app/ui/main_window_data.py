@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime
+from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 
 from app.models import ParseOptions
@@ -55,9 +55,12 @@ class MainWindowDataMixin:
 
     def _resolve_database(self, silent: bool = False) -> None:
         username = self.username_combo.currentText().strip()
+        logger.info("Resolve database requested username=%s silent=%s", username, silent)
         if not username:
             if not silent:
-                QMessageBox.information(self, "Missing username", "Please enter a username first.")
+                QMessageBox.information(self, "缺少用户名", "请先输入用户名。")
+                if hasattr(self, "_set_status"):
+                    self._set_status("请先输入用户名。", "info")
             return
         resolved = self.account_resolver.resolve(username)
         if resolved is None:
@@ -68,22 +71,25 @@ class MainWindowDataMixin:
             if hasattr(self, "group_list") and hasattr(self.group_list, "clear"):
                 self.group_list.clear()
             self._refresh_block_rule_group_selector()
-            self.db_status_label.setText(diagnostic.format_message() if diagnostic else "Database not found.")
-            self.status_label.setText("Automatic database resolution failed.")
+            self.db_status_label.setText(diagnostic.format_message() if diagnostic else "未找到数据库。")
+            self.status_label.setText("自动定位数据库失败，请手动选择数据源。")
             self.fallback_box.setVisible(True)
+            logger.warning("Resolve database failed username=%s", username)
             return
         self.resolved_db = resolved
         self.resolved_path_edit.setText(str(resolved.msg_db))
-        self.db_status_label.setText(f"Resolved {resolved.account_name} -> {resolved.msg_db}")
-        self.status_label.setText("Database resolved. Ready to load messages.")
+        self.db_status_label.setText(f"已定位 {resolved.account_name} -> {resolved.msg_db}")
+        self.status_label.setText("数据库已定位，可以加载消息。")
         self.fallback_box.setVisible(False)
         self._remember_username(username)
         self._load_groups_from_current_source()
         self._save_settings()
+        logger.info("Resolve database succeeded username=%s path=%s", username, resolved.msg_db)
 
     def _load_groups_from_current_source(self) -> None:
         source_path = self._current_source_path()
         if source_path is None or not source_path.exists():
+            logger.debug("Skip group loading; source missing: %s", source_path)
             return
         groups = self.chat_service.list_groups_from_db(source_path)
         self.group_list.blockSignals(True)
@@ -92,26 +98,31 @@ class MainWindowDataMixin:
             item = QListWidgetItem(group.group_name)
             item.setData(32, group.group_id)
             item.setData(33, group.group_name)
-            item.setFlags(item.flags() | item.flags())
-            item.setCheckState(2)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
         self._refresh_block_rule_group_selector()
+        logger.info("Loaded %d groups from %s", len(groups), source_path)
 
     def _pick_manual_data_source(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose data source",
+            "选择数据源",
             self.manual_db_edit.text().strip(),
-            "Data files (*.db *.sqlite *.txt);;All files (*.*)",
+            "数据文件 (*.db *.sqlite *.txt);;所有文件 (*.*)",
         )
         if file_path:
             self.manual_db_edit.setText(file_path)
+            logger.info("Manual data source picked: %s", file_path)
 
     def _load_manual_data_source(self) -> None:
         source_path = Path(self.manual_db_edit.text().strip()).expanduser()
+        logger.info("Load manual data source requested path=%s", source_path)
         if not source_path.exists():
-            QMessageBox.warning(self, "Missing file", "The selected data source does not exist.")
+            QMessageBox.warning(self, "文件不存在", "选择的数据源不存在。")
+            if hasattr(self, "_set_status"):
+                self._set_status("手动数据源不存在。", "warning")
             return
         self.resolved_db = ResolvedDatabase(
             account_name=self.username_combo.currentText().strip() or "manual",
@@ -122,8 +133,8 @@ class MainWindowDataMixin:
             msg_db=source_path,
         )
         self.resolved_path_edit.setText(str(source_path))
-        self.db_status_label.setText(f"Using manual data source: {source_path}")
-        self.status_label.setText("Manual data source selected.")
+        self.db_status_label.setText(f"正在使用手动数据源: {source_path}")
+        self.status_label.setText("已选择手动数据源。")
         self._load_groups_from_current_source()
         self._save_settings()
 
@@ -146,7 +157,17 @@ class MainWindowDataMixin:
             raise FileNotFoundError("No data source selected")
         options = self._gather_parse_options()
         advanced_time_check = getattr(self, "advanced_time_check", None)
-        if advanced_time_check is not None and advanced_time_check.isChecked():
+        advanced_time_frame = getattr(self, "advanced_time_frame", None)
+        advanced_time_enabled = (
+            advanced_time_check is not None
+            and hasattr(advanced_time_check, "isChecked")
+            and advanced_time_check.isChecked()
+        ) or (
+            advanced_time_frame is not None
+            and hasattr(advanced_time_frame, "isVisible")
+            and advanced_time_frame.isVisible()
+        )
+        if advanced_time_enabled:
             if hasattr(self, "start_edit"):
                 options.start_time = self.start_edit.dateTime().toPython()
             if hasattr(self, "end_edit"):
@@ -200,20 +221,24 @@ class MainWindowDataMixin:
         new_cursor = result.get("new_cursor")
         if self._active_site and new_cursor:
             self._last_message_cursor[self._active_site] = new_cursor
-        self.status_label.setText(f"Loaded {len(self.current_messages):,} messages.")
+        self.status_label.setText(f"已加载 {len(self.current_messages):,} 条消息。")
         self._refresh_message_view()
         self._update_chart_data()
         self._sync_chart_status()
+        logger.info("Load messages applied count=%d", len(self.current_messages))
 
     def _load_filtered_messages(self) -> None:
         try:
             source_path, options, current_sig, _incremental = self._build_load_options(True)
         except FileNotFoundError:
-            QMessageBox.information(self, "No data source", "Please resolve or choose a data source first.")
+            QMessageBox.information(self, "没有数据源", "请先自动定位或手动选择数据源。")
+            if hasattr(self, "_set_status"):
+                self._set_status("没有数据源，请先选择数据源。", "info")
             return
         self._message_load_sequence += 1
         load_seq = self._message_load_sequence
-        self.status_label.setText("Loading messages...")
+        self.status_label.setText("正在加载消息...")
+        logger.info("Submit message load seq=%s source=%s site=%s", load_seq, source_path, self._active_site)
         future = self._data_worker.submit(
             self._run_load_pipeline,
             source_path,
@@ -238,11 +263,12 @@ class MainWindowDataMixin:
         if not isinstance(result, dict):
             return
         if int(result.get("seq", 0) or 0) != self._message_load_sequence:
+            logger.debug("Ignore stale load result seq=%s current=%s", result.get("seq"), self._message_load_sequence)
             return
         error = result.get("error")
         if error is not None:
-            self.status_label.setText("Failed to load messages.")
-            QMessageBox.warning(self, "Load failed", str(error))
+            self.status_label.setText("加载消息失败。")
+            QMessageBox.warning(self, "加载失败", str(error))
             return
         self._apply_load_result(result)
 
@@ -256,7 +282,7 @@ class MainWindowDataMixin:
         selected_group_ids: list[str] = []
         for index in range(self.group_list.count()):
             item = self.group_list.item(index)
-            if item.checkState() != 2:
+            if item.checkState() != Qt.Checked:
                 continue
             selected_groups.append(str(item.data(33) or item.text()))
             selected_group_ids.append(str(item.data(32) or ""))

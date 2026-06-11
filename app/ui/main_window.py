@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import QTimer, Signal, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QShowEvent
@@ -88,15 +90,15 @@ class MainWindow(
         self.tabs.addWidget(self.license_page)
 
         menubar = QMenuBar()
-        help_menu = menubar.addMenu("Help")
-        about_action = QAction("About", self)
+        help_menu = menubar.addMenu("帮助")
+        about_action = QAction("关于", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
-        proxy_action = QAction("Proxy", self)
+        proxy_action = QAction("代理设置", self)
         proxy_action.triggered.connect(self._open_proxy_settings)
         help_menu.addAction(proxy_action)
         if IS_ADMIN_VERSION:
-            license_action = QAction("Generate Activation Code", self)
+            license_action = QAction("生成激活码", self)
             license_action.triggered.connect(self._show_admin_license_panel)
             help_menu.addAction(license_action)
         self.setMenuBar(menubar)
@@ -118,7 +120,7 @@ class MainWindow(
         self.tabs.setCurrentWidget(self.analysis_page)
 
     def _show_activation_required(self) -> None:
-        self.license_status_label.setText("Software is not activated.")
+        self.license_status_label.setText("软件未激活。")
         self.tabs.setCurrentWidget(self.license_page)
 
     def _show_admin_license_panel(self) -> None:
@@ -126,6 +128,38 @@ class MainWindow(
             return
         dlg = LicenseGeneratorDialog(self.license_service, self)
         dlg.exec()
+
+    def _set_status(self, message: str, log_level: str = "debug") -> None:
+        if hasattr(self, "status_label"):
+            self.status_label.setText(message)
+        log_method = getattr(logger, log_level, logger.debug)
+        log_method(message)
+
+    def _run_ui_action(
+        self,
+        action_name: str,
+        callback: Callable[[], Any],
+        *,
+        started: str | None = None,
+        finished: str | None = None,
+        error_title: str = "操作失败",
+    ) -> Any:
+        logger.debug("UI action clicked: %s", action_name)
+        if started:
+            self._set_status(started, "info")
+        try:
+            result = callback()
+        except Exception as exc:
+            logger.exception("UI action failed: %s", action_name)
+            self._set_status(f"{error_title}: {exc}", "error")
+            QMessageBox.warning(self, error_title, str(exc))
+            return None
+        if finished:
+            self._set_status(finished, "info")
+        return result
+
+    def _reset_button_text_later(self, button: QPushButton, text: str, delay_ms: int = 1500) -> None:
+        QTimer.singleShot(delay_ms, lambda: button.setText(text))
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -147,11 +181,11 @@ class MainWindow(
         layout = QVBoxLayout(self.license_page)
         self.license_status_label = QLabel("")
         self.license_status_label.setObjectName("headingLabel")
-        self.machine_code_label = QLabel(f"Machine code: {self.license_service.get_machine_code()}")
-        self.machine_code_copy_btn = QPushButton("Copy machine code")
+        self.machine_code_label = QLabel(f"机器码: {self.license_service.get_machine_code()}")
+        self.machine_code_copy_btn = QPushButton("复制机器码")
         self.machine_code_copy_btn.clicked.connect(self._copy_user_machine_code)
         self.license_input = QTextEdit()
-        activate_btn = QPushButton("Activate")
+        activate_btn = QPushButton("激活")
         activate_btn.clicked.connect(self._activate_license)
         layout.addWidget(self.license_status_label)
         layout.addWidget(self.machine_code_label)
@@ -162,7 +196,9 @@ class MainWindow(
 
     def _copy_user_machine_code(self) -> None:
         QApplication.clipboard().setText(self.license_service.get_machine_code())
-        self.machine_code_copy_btn.setText("Copied")
+        logger.info("Machine code copied to clipboard")
+        self.machine_code_copy_btn.setText("已复制")
+        self._reset_button_text_later(self.machine_code_copy_btn, "复制机器码")
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(
@@ -206,9 +242,9 @@ class MainWindow(
     def _refresh_license_banner(self) -> None:
         info = self.license_service.load_license()
         if self.license_service.is_activated():
-            self.license_status_label.setText(f"Activated until {info.expires_at:%Y-%m-%d %H:%M}")
+            self.license_status_label.setText(f"已激活，有效期至 {info.expires_at:%Y-%m-%d %H:%M}")
         else:
-            self.license_status_label.setText("Not activated")
+            self.license_status_label.setText("未激活")
 
     def _assert_activated(self) -> bool:
         if IS_ADMIN_VERSION:
@@ -216,7 +252,12 @@ class MainWindow(
         return True
 
     def _toggle_advanced_time(self) -> None:
-        QMessageBox.information(self, "Info", "Advanced time filter is not implemented in this recovery build.")
+        visible = not self.advanced_time_frame.isVisible()
+        self.advanced_time_frame.setVisible(visible)
+        self.advanced_time_toggle.setText(
+            "- 高级时间筛选" if visible else "+ 高级时间筛选"
+        )
+        logger.debug("Advanced time filter visible=%s", visible)
 
     def _toggle_chat_panel(self) -> None:
         return None

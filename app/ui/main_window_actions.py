@@ -45,6 +45,9 @@ class MainWindowActionsMixin:
         if widget is self.group_list:
             self._refresh_block_rule_group_selector()
             self._refresh_message_view()
+            state_text = "全选" if checked else "清空"
+            if hasattr(self, "_set_status"):
+                self._set_status(f"群组筛选已{state_text}。", "info")
         self._save_settings()
 
     def _invert_checked_state(self, widget) -> None:
@@ -57,6 +60,8 @@ class MainWindowActionsMixin:
         if widget is self.group_list:
             self._refresh_block_rule_group_selector()
             self._refresh_message_view()
+            if hasattr(self, "_set_status"):
+                self._set_status("群组筛选已反选。", "info")
         self._save_settings()
 
     def _handle_group_item_changed(self, item) -> None:
@@ -120,10 +125,12 @@ class MainWindowActionsMixin:
         )
 
     def _show_about(self) -> None:
-        QMessageBox.about(self, "About", "StarTrace Chat Analyzer")
+        logger.debug("About dialog opened")
+        QMessageBox.about(self, "关于", "StarTrace Chat Analyzer")
 
     def _open_proxy_settings(self) -> None:
-        QMessageBox.information(self, "Proxy", proxy_status_text(self.settings))
+        logger.debug("Proxy settings viewed")
+        QMessageBox.information(self, "代理设置", proxy_status_text(self.settings))
 
     def _apply_proxy_settings(self, enabled: bool, http_proxy: str, https_proxy: str) -> None:
         self.settings["proxy_enabled"] = enabled
@@ -169,6 +176,8 @@ class MainWindowActionsMixin:
         if self.message_page > 0:
             self.message_page -= 1
             self._refresh_message_view()
+            if hasattr(self, "_set_status"):
+                self._set_status(f"已切换到第 {self.message_page + 1} 页。", "debug")
 
     def _next_page(self) -> None:
         filtered = self._filtered_messages_for_view()
@@ -176,6 +185,8 @@ class MainWindowActionsMixin:
         if self.message_page + 1 < total_pages:
             self.message_page += 1
             self._refresh_message_view()
+            if hasattr(self, "_set_status"):
+                self._set_status(f"已切换到第 {self.message_page + 1} 页。", "debug")
 
     def _message_html(self, msg) -> str:
         user_id = getattr(msg, "sender_id", "") or self._find_user_id_by_name(getattr(msg, "username", ""))
@@ -205,39 +216,46 @@ class MainWindowActionsMixin:
 
     def _export_messages(self, suffix: str) -> None:
         if not self.current_messages:
-            QMessageBox.information(self, "No data", "Load messages first.")
+            QMessageBox.information(self, "没有数据", "请先加载消息。")
             return
         export_path = self._export_dir_path() / f"filtered_messages{suffix}"
         count = self.chat_service.export_filtered_messages(self.current_messages, export_path)
-        self.status_label.setText(f"Exported {count:,} messages to {export_path}")
+        self.status_label.setText(f"已导出 {count:,} 条消息到 {export_path}")
+        logger.info("Exported messages count=%d path=%s", count, export_path)
 
     def _export_stats_excel(self) -> None:
         if not self.current_stats or not self.current_stats.totals:
-            QMessageBox.information(self, "No stats", "Analyze messages first.")
+            QMessageBox.information(self, "没有统计数据", "请先分析消息。")
             return
         export_path = self._export_dir_path() / "stats.xlsx"
         self.chat_service.export_stats_excel(self.current_stats, export_path)
-        self.status_label.setText(f"Exported Excel: {export_path}")
+        self.status_label.setText(f"已导出 Excel: {export_path}")
+        logger.info("Exported stats Excel path=%s", export_path)
 
     def _export_stats_pdf(self) -> None:
         if not self.current_stats or not self.current_stats.totals:
-            QMessageBox.information(self, "No stats", "Analyze messages first.")
+            QMessageBox.information(self, "没有统计数据", "请先分析消息。")
             return
         export_path = self._export_dir_path() / "stats.pdf"
         self.chat_service.export_stats_pdf(self.current_stats, export_path)
-        self.status_label.setText(f"Exported PDF: {export_path}")
+        self.status_label.setText(f"已导出 PDF: {export_path}")
+        logger.info("Exported stats PDF path=%s", export_path)
 
     def _pick_export_dir(self) -> None:
-        dir_name = QFileDialog.getExistingDirectory(self, "Choose export directory")
+        dir_name = QFileDialog.getExistingDirectory(self, "选择导出目录")
         if dir_name:
             self.settings["export_dir"] = dir_name
             self._save_settings()
+            if hasattr(self, "_set_status"):
+                self._set_status(f"导出目录已设置: {dir_name}", "info")
 
     def _activate_license(self) -> None:
         ok, message = self.license_service.activate(self.license_input.toPlainText().strip())
         if ok:
-            QMessageBox.information(self, "Activation", message)
+            logger.info("License activated")
+            QMessageBox.information(self, "激活", message)
             self._activate_and_launch()
         else:
-            QMessageBox.warning(self, "Activation", message)
+            logger.warning("License activation failed: %s", message)
+            QMessageBox.warning(self, "激活", message)
         self._refresh_license_banner()

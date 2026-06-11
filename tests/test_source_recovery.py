@@ -553,6 +553,315 @@ def test_storage_service_load_returns_default_on_invalid_json(tmp_path: Path) ->
     assert store.load({"ok": True}) == {"ok": True}
 
 
+def test_chat_service_loads_original_message_table_and_extracts_json_text(tmp_path: Path) -> None:
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    from app.models import ParseOptions
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    con.execute(
+        "insert into message values (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "group-1",
+            "alice-id",
+            0,
+            int(datetime(2026, 6, 10, 12, 0, 0).timestamp()),
+            7,
+            json.dumps({"text": "大100"}, ensure_ascii=False),
+            b"",
+        ),
+    )
+    con.commit()
+    con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(
+        db_path,
+        ParseOptions(
+            group_ids=["group-1"],
+            start_time=datetime(2026, 6, 10, 12, 0, 0),
+            end_time=datetime(2026, 6, 10, 12, 5, 0),
+        ),
+    )
+
+    assert len(messages) == 1
+    assert messages[0].group == "group-1"
+    assert messages[0].sender_id == "alice-id"
+    assert messages[0].content == "大100"
+    assert messages[0].raw_client_time == int(datetime(2026, 6, 10, 12, 0, 0).timestamp())
+    assert messages[0].raw_rand == 7
+
+
+def test_chat_service_sqlite_group_ids_filter_and_nested_content_decode(tmp_path: Path) -> None:
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    from app.models import ParseOptions
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    rows = [
+        (
+            "group-1",
+            "alice-id",
+            0,
+            int(datetime(2026, 6, 10, 12, 0, 0).timestamp() * 1_000_000),
+            7,
+            "",
+            json.dumps({"textElement": {"content": "大100"}}, ensure_ascii=False).encode("utf-8"),
+        ),
+        (
+            "group-2",
+            "bob-id",
+            0,
+            int(datetime(2026, 6, 10, 12, 1, 0).timestamp()),
+            8,
+            json.dumps({"content": "小100"}, ensure_ascii=False),
+            b"",
+        ),
+    ]
+    con.executemany("insert into message values (?, ?, ?, ?, ?, ?, ?)", rows)
+    con.commit()
+    con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(
+        db_path,
+        ParseOptions(
+            group_ids=["group-1"],
+            start_time=datetime(2026, 6, 10, 11, 55, 0),
+            end_time=datetime(2026, 6, 10, 12, 5, 0),
+        ),
+    )
+
+    assert len(messages) == 1
+    assert messages[0].group == "group-1"
+    assert messages[0].content == "大100"
+    assert messages[0].ts == datetime(2026, 6, 10, 12, 0, 0)
+
+
+def test_chat_service_extracts_plain_sqlite_content_without_base64_helper_crash(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import datetime
+
+    from app.models import ParseOptions
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    con.execute(
+        "insert into message values (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "group-1",
+            "alice-id",
+            0,
+            int(datetime(2026, 6, 10, 12, 2, 0).timestamp()),
+            9,
+            "",
+            "普通聊天文本",
+        ),
+    )
+    con.commit()
+    con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(
+        db_path,
+        ParseOptions(
+            group_ids=["group-1"],
+            start_time=datetime(2026, 6, 10, 12, 0, 0),
+            end_time=datetime(2026, 6, 10, 12, 5, 0),
+        ),
+    )
+
+    assert len(messages) == 1
+    assert messages[0].content == "普通聊天文本"
+
+
+def test_chat_service_sqlite_applies_default_twenty_minute_window(monkeypatch, tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    from app.models import ParseOptions
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService
+
+    fixed_now = datetime(2026, 6, 10, 12, 0, 0)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(chat_service_module, "datetime", FixedDateTime)
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    rows = [
+        (
+            "group-1",
+            "old-id",
+            0,
+            int((fixed_now - timedelta(minutes=25)).timestamp()),
+            1,
+            "",
+            "旧消息",
+        ),
+        (
+            "group-1",
+            "new-id",
+            0,
+            int((fixed_now - timedelta(minutes=5)).timestamp()),
+            2,
+            "",
+            "新消息",
+        ),
+    ]
+    con.executemany("insert into message values (?, ?, ?, ?, ?, ?, ?)", rows)
+    con.commit()
+    con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(db_path, ParseOptions(group_ids=["group-1"]))
+
+    assert [msg.content for msg in messages] == ["新消息"]
+
+
+def test_chat_service_lists_sqlite_groups_without_loading_messages(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute("create table message (sid text)")
+    con.executemany("insert into message values (?)", [("group-b",), ("group-a",), ("group-a",)])
+    con.commit()
+    con.close()
+
+    service = ChatLogService()
+    monkeypatch.setattr(
+        service,
+        "load_messages",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not load messages")),
+    )
+
+    groups = service.list_groups_from_db(db_path)
+
+    assert [(group.group_id, group.group_name) for group in groups] == [
+        ("group-a", "group-a"),
+        ("group-b", "group-b"),
+    ]
+
+
+def test_fetch_date_parses_original_site_payload_shapes() -> None:
+    from datetime import datetime
+
+    from app.utils.fetch_date import extract_draw_info, site_label
+
+    pc28 = extract_draw_info(
+        "pc28",
+        {"issue": [{"qishu": "1001", "time": "2026-06-10 12:00:00", "next": 1781093010}]},
+    )
+    macao = extract_draw_info(
+        "macao",
+        {"data": {"drawList": [{"qihao": "2001", "opentime": "2026-06-10 12:03:00"}]}},
+    )
+    australia = extract_draw_info(
+        "australia",
+        {"qi": "3001", "next": {"qi": "3002", "sec": 120}},
+    )
+    norway = extract_draw_info(
+        "norway",
+        {"lottery_data": [{"expect": "4001", "nextexpect": "4002", "opentime": "2026-06-10 12:06:00", "next": 1781093190}]},
+    )
+
+    assert site_label("macao") == "澳门"
+    assert site_label("australia") == "澳洲"
+    assert site_label("norway") == "挪威"
+    assert pc28.current_period == "1001"
+    assert pc28.current_time == datetime(2026, 6, 10, 12, 0, 0)
+    assert pc28.next_period == "1002"
+    assert macao.current_period == "2001"
+    assert macao.next_period == "2002"
+    assert australia.current_period == "3001"
+    assert australia.next_period == "3002"
+    assert australia.next_countdown == 120
+    assert norway.current_period == "4001"
+    assert norway.next_period == "4002"
+
+
+def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty() -> None:
+    from app.utils import fetch_date
+
+    fetch_date._last_good_draw.clear()
+    first = fetch_date.extract_draw_info(
+        "pc28",
+        {"issue": [{"qishu": "1001", "time": "2026-06-10 12:00:00", "next": 1781093010}]},
+    )
+
+    fallback = fetch_date.extract_draw_info("pc28", {"issue": []})
+
+    assert first.current_period == "1001"
+    assert fallback.current_period == "1001"
+    assert fallback.next_period == "1002"
+    assert fallback.next_countdown >= 0
+
+
 def test_blocking_mixin_splits_chinese_punctuation() -> None:
     from app.ui.main_window_blocking import MainWindowBlockingMixin
 
@@ -626,7 +935,43 @@ def test_load_filtered_messages_uses_background_worker() -> None:
     assert dummy._load_result_ready.emitted == []
 
 
+def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -> None:
+    import sqlite3
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute("create table message (sid text)")
+    con.execute("insert into message values (?)", ("group-1",))
+    con.commit()
+    con.close()
+
+    class DummyWindow(MainWindowDataMixin):
+        def _current_source_path(self):
+            return db_path
+
+        def _refresh_block_rule_group_selector(self) -> None:
+            self.refreshed = True
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy.group_list = QListWidget()
+    dummy.chat_service = __import__("app.services.chat_service", fromlist=["ChatLogService"]).ChatLogService()
+
+    dummy._load_groups_from_current_source()
+
+    assert dummy.group_list.count() == 1
+    assert dummy.group_list.item(0).checkState() == Qt.Checked
+    assert dummy.refreshed is True
+
+
 def test_main_window_data_gather_parse_options_includes_group_and_period_context() -> None:
+    from PySide6.QtCore import Qt
+
     from app.ui.main_window_data import MainWindowDataMixin
 
     class DummyItem:
@@ -636,7 +981,7 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
             self._group_name = group_name
 
         def checkState(self):
-            return 2 if self._checked else 0
+            return Qt.Checked if self._checked else Qt.Unchecked
 
         def data(self, role):
             return {32: self._group_id, 33: self._group_name}.get(role)
@@ -682,6 +1027,64 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
     assert options.period_filter == "9001"
     assert options.site == "pc28"
     assert options.period_interval_sec > 0
+
+
+def test_main_window_data_gather_parse_options_does_not_flatten_group_rules_into_global_names() -> None:
+    from PySide6.QtCore import Qt
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyItem:
+        def __init__(self, checked: bool, group_id: str, group_name: str) -> None:
+            self._checked = checked
+            self._group_id = group_id
+            self._group_name = group_name
+
+        def checkState(self):
+            return Qt.Checked if self._checked else Qt.Unchecked
+
+        def data(self, role):
+            return {32: self._group_id, 33: self._group_name}.get(role)
+
+        def text(self):
+            return self._group_name
+
+    class DummyList:
+        def __init__(self) -> None:
+            self.items = [DummyItem(True, "g1", "GroupA")]
+
+        def count(self):
+            return len(self.items)
+
+        def item(self, index):
+            return self.items[index]
+
+    class DummyCombo:
+        def currentText(self):
+            return "Alice"
+
+    class DummyText:
+        def text(self):
+            return "9001"
+
+    class DummyWindow(MainWindowDataMixin):
+        def _global_block_names(self):
+            return []
+
+    dummy = DummyWindow()
+    dummy.group_list = DummyList()
+    dummy.username_combo = DummyCombo()
+    dummy.period_input = DummyText()
+    dummy.group_block_rules = {"g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}}
+    dummy._active_site = "pc28"
+
+    options = dummy._gather_parse_options()
+
+    assert options.blocked_names == []
+    assert options.global_block_names == []
+    assert options.blocked_names_by_group == {
+        "g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}
+    }
 
 
 def test_main_window_data_load_initial_state_restores_period_and_activation_gate() -> None:
@@ -769,7 +1172,511 @@ def test_main_window_data_load_initial_state_restores_period_and_activation_gate
     assert dummy.tabs.current is dummy.license_page
 
 
-def test_main_window_imports_qmessagebox_for_advanced_time_prompt() -> None:
-    import app.ui.main_window as main_window
+def test_main_window_advanced_time_toggle_shows_filter_frame() -> None:
+    from types import SimpleNamespace
 
-    assert hasattr(main_window, "QMessageBox")
+    from app.ui.main_window import MainWindow
+
+    class DummyFrame:
+        def __init__(self) -> None:
+            self.visible = False
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def setVisible(self, value: bool) -> None:
+            self.visible = value
+
+    class DummyButton:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    dummy = SimpleNamespace(
+        advanced_time_frame=DummyFrame(),
+        advanced_time_toggle=DummyButton(),
+    )
+
+    MainWindow._toggle_advanced_time(dummy)
+
+    assert dummy.advanced_time_frame.visible is True
+    assert dummy.advanced_time_toggle.text == "- 高级时间筛选"
+
+
+def test_main_window_layout_splitter_can_expand_left_panel() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.ui.main_window_layout import MainWindowLayoutMixin
+
+    class DummyWindow(QWidget, MainWindowLayoutMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.analysis_page = QWidget()
+            self._lock_threshold_sec = 20
+
+        def _resolve_database(self, *args, **kwargs):
+            return None
+
+        def _pick_manual_data_source(self):
+            return None
+
+        def _load_manual_data_source(self):
+            return None
+
+        def _toggle_advanced_time(self):
+            return None
+
+        def _handle_group_item_changed(self, *args):
+            return None
+
+        def _set_checked_state(self, *args):
+            return None
+
+        def _invert_checked_state(self, *args):
+            return None
+
+        def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_block_rule_from_editor(self):
+            return None
+
+        def _clear_block_rule_for_selected_group(self):
+            return None
+
+        def _on_period_input_changed(self):
+            return None
+
+        def _on_lock_threshold_changed(self, *args):
+            return None
+
+        def _prev_page(self):
+            return None
+
+        def _next_page(self):
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy._build_analysis_page()
+    dummy.analysis_page.resize(1180, 720)
+    dummy.analysis_page.show()
+    app.processEvents()
+
+    dummy.main_splitter.setSizes([760, 380])
+    app.processEvents()
+
+    sizes = dummy.main_splitter.sizes()
+    assert sizes[0] >= 700
+    assert dummy.main_splitter.widget(1).minimumWidth() <= 380
+    dummy.analysis_page.close()
+
+
+def test_main_window_left_controls_are_not_narrowly_capped() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.ui.main_window_layout import MainWindowLayoutMixin
+
+    class DummyWindow(QWidget, MainWindowLayoutMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.analysis_page = QWidget()
+            self._lock_threshold_sec = 20
+
+        def _resolve_database(self, *args, **kwargs):
+            return None
+
+        def _pick_manual_data_source(self):
+            return None
+
+        def _load_manual_data_source(self):
+            return None
+
+        def _toggle_advanced_time(self):
+            return None
+
+        def _handle_group_item_changed(self, *args):
+            return None
+
+        def _set_checked_state(self, *args):
+            return None
+
+        def _invert_checked_state(self, *args):
+            return None
+
+        def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_block_rule_from_editor(self):
+            return None
+
+        def _clear_block_rule_for_selected_group(self):
+            return None
+
+        def _on_period_input_changed(self):
+            return None
+
+        def _on_lock_threshold_changed(self, *args):
+            return None
+
+        def _prev_page(self):
+            return None
+
+        def _next_page(self):
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy._build_analysis_page()
+
+    assert dummy.resolved_path_edit.maximumWidth() >= 1600
+    assert dummy.manual_db_edit.maximumWidth() >= 1600
+    assert dummy.block_names_edit.maximumHeight() <= 110
+    assert dummy.block_rule_summary_view.maximumHeight() <= 140
+    dummy.analysis_page.close()
+
+
+def test_main_window_layout_uses_readable_chinese_labels() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+
+    from app.ui.main_window_layout import MainWindowLayoutMixin
+
+    class DummyWindow(QWidget, MainWindowLayoutMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.analysis_page = QWidget()
+            self._lock_threshold_sec = 20
+
+        def _resolve_database(self, *args, **kwargs):
+            return None
+
+        def _pick_manual_data_source(self):
+            return None
+
+        def _load_manual_data_source(self):
+            return None
+
+        def _toggle_advanced_time(self):
+            return None
+
+        def _handle_group_item_changed(self, *args):
+            return None
+
+        def _set_checked_state(self, *args):
+            return None
+
+        def _invert_checked_state(self, *args):
+            return None
+
+        def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_block_rule_from_editor(self):
+            return None
+
+        def _clear_block_rule_for_selected_group(self):
+            return None
+
+        def _on_period_input_changed(self):
+            return None
+
+        def _on_lock_threshold_changed(self, *args):
+            return None
+
+        def _prev_page(self):
+            return None
+
+        def _next_page(self):
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy._build_analysis_page()
+
+    button_texts = {button.text() for button in dummy.analysis_page.findChildren(QPushButton)}
+
+    assert {"自动定位数据库", "浏览", "使用数据源", "全选", "反选", "上一页", "下一页"} <= button_texts
+    assert dummy.resolved_path_edit.placeholderText() == "自动解析或手动选择的数据源路径"
+    assert dummy.manual_db_edit.placeholderText() == "自动定位失败时选择 msg_0.db / sqlite / txt"
+    dummy.analysis_page.close()
+
+
+def test_realtime_and_chart_status_labels_are_chinese() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+        def setStyleSheet(self, value: str) -> None:
+            self.style = value
+
+    class DummyWindow(MainWindowRealtimeMixin):
+        pass
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart.set_status("running")
+    chart.set_status_seconds(30)
+    assert "实时刷新" in chart.status_label.text()
+
+    dummy = DummyWindow()
+    dummy.chart_window = chart
+    dummy._active_site = "pc28"
+    dummy._draw_infos = {"pc28": SimpleNamespace(next_countdown=30)}
+    dummy._stats_locked = False
+    dummy.current_visual_rows = [{"group": "G"}]
+    dummy.lock_status_label = DummyLabel()
+    dummy.auto_refresh_label = DummyLabel()
+    dummy._sync_chart_status()
+
+    assert "实时刷新" in dummy.lock_status_label.text
+    assert dummy.auto_refresh_label.text == "运行中"
+
+
+def test_logging_config_debug_sets_root_to_debug(tmp_path: Path, monkeypatch) -> None:
+    import logging
+
+    from app.utils import logging_config
+
+    monkeypatch.setattr(logging_config, "user_data_dir", lambda: tmp_path)
+
+    logging_config.configure(debug=True)
+
+    assert logging.getLogger().level == logging.DEBUG
+    assert (tmp_path / "chat_analyzer.log").exists()
+
+
+def test_main_window_status_helper_updates_label_and_logs(caplog) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window import MainWindow
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    dummy = SimpleNamespace(status_label=DummyLabel())
+
+    with caplog.at_level("INFO"):
+        MainWindow._set_status(dummy, "正在测试按钮反馈", log_level="info")
+
+    assert dummy.status_label.text == "正在测试按钮反馈"
+    assert "正在测试按钮反馈" in caplog.text
+
+
+def test_resolve_database_without_username_reports_readable_feedback(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def currentText(self) -> str:
+            return ""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.ui.main_window_data.QMessageBox.information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    dummy = SimpleNamespace(username_combo=DummyCombo())
+
+    MainWindowDataMixin._resolve_database(dummy, silent=False)
+
+    assert messages == [("缺少用户名", "请先输入用户名。")]
+
+
+def test_load_manual_data_source_missing_file_reports_readable_feedback(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyEdit:
+        def text(self) -> str:
+            return "Z:/missing/msg_0.db"
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.ui.main_window_data.QMessageBox.warning",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    dummy = SimpleNamespace(manual_db_edit=DummyEdit())
+
+    MainWindowDataMixin._load_manual_data_source(dummy)
+
+    assert messages == [("文件不存在", "选择的数据源不存在。")]
+
+
+def test_block_rule_save_and_clear_use_readable_feedback() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_blocking import MainWindowBlockingMixin
+
+    class DummyEdit:
+        def __init__(self, text: str = "") -> None:
+            self._text = text
+            self.cleared = False
+
+        def toPlainText(self) -> str:
+            return self._text
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    class DummyWindow(MainWindowBlockingMixin):
+        def _current_block_group_payload(self):
+            return {"group_id": "g1", "group_name": "测试群"}
+
+        def _set_group_block_rules(self, rules):
+            self.group_block_rules = rules
+
+        def _refresh_block_rule_summary(self) -> None:
+            return None
+
+        def _save_settings(self) -> None:
+            return None
+
+        def _reload_messages_after_block_rule_change(self) -> None:
+            return None
+
+    dummy = DummyWindow()
+    dummy.group_block_rules = {}
+    dummy.block_names_edit = DummyEdit("Alice, Bob")
+    dummy.block_rule_status_label = DummyLabel()
+
+    MainWindowBlockingMixin._apply_block_rule_from_editor(dummy)
+    assert dummy.block_rule_status_label.text == "已保存测试群的 2 个屏蔽名称。"
+
+    MainWindowBlockingMixin._clear_block_rule_for_selected_group(dummy)
+    assert dummy.block_names_edit.cleared is True
+    assert dummy.block_rule_status_label.text == "已清空测试群的屏蔽名称。"
+
+
+def test_main_window_safe_buttons_click_without_crashing(monkeypatch) -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+
+    from app.models import DrawInfo
+    from app.services.account_resolver import ResolvedDatabase
+    from app.ui import main_window_realtime
+    from app.ui.main_window import MainWindow
+
+    monkeypatch.setattr(main_window_realtime, "site_list", lambda: ["pc28"])
+    monkeypatch.setattr(main_window_realtime, "site_label", lambda site: "PC28")
+    monkeypatch.setattr(
+        main_window_realtime,
+        "fetch_all_draw_infos",
+        lambda: {"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=30)},
+    )
+    monkeypatch.setattr(
+        main_window_realtime,
+        "extract_draw_info",
+        lambda site: DrawInfo(current_period="1001", next_period="1002", next_countdown=30),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(QMessageBox, "about", lambda *args, **kwargs: None)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.account_resolver.resolve = lambda username: ResolvedDatabase(
+        account_name=username,
+        accid="acc",
+        im_appid="app",
+        config_dir=Path.cwd(),
+        im_db=Path("missing.db"),
+        msg_db=Path("missing.db"),
+    )
+    window.chat_service.list_groups_from_db = lambda source_path: []
+    window._load_filtered_messages = lambda: window._set_status("已触发加载消息", "info")
+    window.username_combo.setCurrentText("tester")
+
+    excluded = {
+        "浏览",
+        "Activate",
+        "Copy machine code",
+    }
+    clicked: list[str] = []
+    for button in window.findChildren(QPushButton):
+        text = button.text()
+        if text in excluded:
+            continue
+        button.click()
+        app.processEvents()
+        clicked.append(text)
+
+    assert "自动定位数据库" in clicked
+    assert "切换" in clicked
+    assert window.status_label.text()
+    window.close()
+
+
+def test_license_generator_dialog_buttons_have_readable_feedback() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from app.ui.license_generator_dialog import LicenseGeneratorDialog
+
+    class DummyLicenseService:
+        def get_machine_code(self) -> str:
+            return "machine-123456"
+
+        def generate_key(self, value: int, machine_code: str, unit: str = "days") -> str:
+            return f"KEY-{machine_code}-{unit}-{value}"
+
+    app = QApplication.instance() or QApplication([])
+    dialog = LicenseGeneratorDialog(DummyLicenseService())
+
+    button_texts = {button.text() for button in dialog.findChildren(QPushButton)}
+    assert {"生成", "复制机器码"} <= button_texts
+
+    for button in dialog.findChildren(QPushButton):
+        if button.text() == "生成":
+            button.click()
+            break
+    assert dialog.output_edit.toPlainText().startswith("KEY-machine-123456")
+    assert "已为 machine-" in dialog.status_label.text()
+
+    for button in dialog.findChildren(QPushButton):
+        if button.text() == "复制机器码":
+            button.click()
+            break
+    assert dialog.status_label.text() == "机器码已复制到剪贴板。"
+    dialog.close()

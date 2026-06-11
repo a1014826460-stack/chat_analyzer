@@ -124,20 +124,21 @@ class MainWindowBlockingMixin:
         payload = self._current_block_group_payload()
         if not payload:
             self.block_names_edit.clear()
-            self.block_rule_status_label.setText("No group available.")
+            self.block_rule_status_label.setText("暂无可用群组。")
             return
         rule = self.group_block_rules.get(str(payload["group_id"]))
         names = self._sanitize_block_names((rule or {}).get("names", []))
         self.block_names_edit.setPlainText("\n".join(names))
         if names:
-            self.block_rule_status_label.setText(f"{payload['group_name']}: {len(names)} blocked names")
+            self.block_rule_status_label.setText(f"{payload['group_name']}: 已屏蔽 {len(names)} 个名称")
         else:
-            self.block_rule_status_label.setText(f"{payload['group_name']}: no blocked names")
+            self.block_rule_status_label.setText(f"{payload['group_name']}: 未设置屏蔽名称")
 
     def _on_block_group_changed(self) -> None:
         payload = self._current_block_group_payload()
         if payload:
             self.settings["selected_block_group_key"] = payload["group_id"]
+            logger.debug("Block group changed: %s", payload)
         self._load_block_rule_editor_for_selected_group()
         self._refresh_block_rule_summary()
         self._save_settings()
@@ -145,7 +146,7 @@ class MainWindowBlockingMixin:
     def _apply_block_rule_from_editor(self) -> None:
         payload = self._current_block_group_payload()
         if not payload:
-            QMessageBox.information(self, "Group required", "Choose a group first.")
+            QMessageBox.information(self, "请选择群组", "请先选择一个群组。")
             return
         names = self._sanitize_block_names(self.block_names_edit.toPlainText())
         updated = dict(self.group_block_rules)
@@ -153,13 +154,12 @@ class MainWindowBlockingMixin:
         if names:
             updated[key] = {"group_id": key, "group_name": payload["group_name"], "names": names}
             self.block_rule_status_label.setText(
-                f"Saved {len(names)} blocked names for {payload['group_name']}."
+                f"已保存{payload['group_name']}的 {len(names)} 个屏蔽名称。"
             )
         else:
             updated.pop(key, None)
-            self.block_rule_status_label.setText(
-                f"Removed blocked names for {payload['group_name']}."
-            )
+            self.block_rule_status_label.setText(f"已移除{payload['group_name']}的屏蔽名称。")
+        logger.info("Saved block rule group=%s names=%d", payload["group_name"], len(names))
         self._set_group_block_rules(updated)
         self._refresh_block_rule_summary()
         self._save_settings()
@@ -173,7 +173,8 @@ class MainWindowBlockingMixin:
         updated.pop(str(payload["group_id"]), None)
         self._set_group_block_rules(updated)
         self.block_names_edit.clear()
-        self.block_rule_status_label.setText(f"Cleared blocked names for {payload['group_name']}.")
+        self.block_rule_status_label.setText(f"已清空{payload['group_name']}的屏蔽名称。")
+        logger.info("Cleared block rule group=%s", payload["group_name"])
         self._refresh_block_rule_summary()
         self._save_settings()
         self._reload_messages_after_block_rule_change()
@@ -187,7 +188,7 @@ class MainWindowBlockingMixin:
             label = str(rule.get("group_name", "") or rule.get("group_id", "")).strip()
             lines.append(f"{label}: {', '.join(names)}")
         self.block_rule_summary_view.setPlainText(
-            "\n".join(lines) if lines else "No blocked names configured."
+            "\n".join(lines) if lines else "尚未配置屏蔽名称。"
         )
 
     def _reload_messages_after_block_rule_change(self) -> None:

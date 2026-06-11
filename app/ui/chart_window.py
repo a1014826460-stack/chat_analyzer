@@ -21,19 +21,19 @@ logger = logging.getLogger(__name__)
 class ChartWindow(QWidget):
     groups_changed = Signal()
 
-    def __init__(self, title: str = "Bet Chart", parent: QWidget | None = None, show_close: bool = False) -> None:
+    def __init__(self, title: str = "投注图表", parent: QWidget | None = None, show_close: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self._rows: list[dict[str, object]] = []
         self._status_mode = "empty"
-        self._status_text = "No bet rows available"
+        self._status_text = "暂无投注数据"
 
         root = QVBoxLayout(self)
         top_bar = QHBoxLayout()
-        top_bar.addWidget(QLabel("Visible Groups"))
-        self.group_all_btn = QPushButton("All")
-        self.group_invert_btn = QPushButton("Invert")
-        self.group_clear_btn = QPushButton("Clear")
+        top_bar.addWidget(QLabel("可见群组"))
+        self.group_all_btn = QPushButton("全选")
+        self.group_invert_btn = QPushButton("反选")
+        self.group_clear_btn = QPushButton("清空")
         self.group_all_btn.clicked.connect(self._select_all_groups)
         self.group_invert_btn.clicked.connect(self._invert_groups)
         self.group_clear_btn.clicked.connect(self._clear_groups)
@@ -57,7 +57,7 @@ class ChartWindow(QWidget):
         root.addWidget(self.activity_view, 1)
 
         if show_close:
-            close_btn = QPushButton("Close")
+            close_btn = QPushButton("关闭")
             close_btn.clicked.connect(self.hide)
             root.addWidget(close_btn, alignment=Qt.AlignLeft)
 
@@ -75,18 +75,18 @@ class ChartWindow(QWidget):
         if text is not None:
             self._status_text = text
         elif mode == "running":
-            self._status_text = "Live refresh running"
+            self._status_text = "实时刷新运行中"
         elif mode == "locked":
-            self._status_text = "Statistics locked for current period"
+            self._status_text = "当前期数统计已锁定"
         elif mode == "waiting":
-            self._status_text = "Waiting for next period"
+            self._status_text = "等待下一期"
         else:
-            self._status_text = "No bet rows available"
+            self._status_text = "暂无投注数据"
         self.status_label.setText(self._status_text)
 
     def set_status_seconds(self, seconds: int) -> None:
         if self._status_mode == "running":
-            self.status_label.setText(f"Live refresh running · {max(0, int(seconds)):,}s to deadline")
+            self.status_label.setText(f"实时刷新运行中 · 距锁定 {max(0, int(seconds)):,} 秒")
 
     def selected_groups(self) -> set[str]:
         groups: set[str] = set()
@@ -131,9 +131,11 @@ class ChartWindow(QWidget):
         self.activity_view.setPlainText("\n".join(lines))
 
     def _select_all_groups(self) -> None:
+        logger.debug("Chart group filter: select all")
         self._set_group_checks(Qt.Checked)
 
     def _invert_groups(self) -> None:
+        logger.debug("Chart group filter: invert")
         self.group_list.blockSignals(True)
         for index in range(self.group_list.count()):
             item = self.group_list.item(index)
@@ -143,6 +145,7 @@ class ChartWindow(QWidget):
         self.groups_changed.emit()
 
     def _clear_groups(self) -> None:
+        logger.debug("Chart group filter: clear")
         self._set_group_checks(Qt.Unchecked)
 
     def _set_group_checks(self, state: Qt.CheckState) -> None:
