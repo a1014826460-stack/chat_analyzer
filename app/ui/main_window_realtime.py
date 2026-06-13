@@ -61,15 +61,22 @@ class MainWindowRealtimeMixin:
 
     def _select_site(self, site: str) -> None:
         logger.info("Switch site: %s", site)
-        self._active_site = site
+        previous_site = self._active_site
+        migrated_legacy_override = False
         if (
             getattr(self, "_manual_period_override", False)
             and getattr(self, "_query_period_override", "")
-            and not self._current_period_override()
         ):
             if not hasattr(self, "_query_period_overrides_by_site") or not isinstance(self._query_period_overrides_by_site, dict):
                 self._query_period_overrides_by_site = {}
-            self._query_period_overrides_by_site[site] = str(self._query_period_override).strip()
+            legacy_override = str(self._query_period_override).strip()
+            if previous_site:
+                migrated_legacy_override = previous_site not in self._query_period_overrides_by_site
+                self._query_period_overrides_by_site.setdefault(previous_site, legacy_override)
+            elif site:
+                migrated_legacy_override = site not in self._query_period_overrides_by_site
+                self._query_period_overrides_by_site.setdefault(site, legacy_override)
+        self._active_site = site
         self._query_period_override = self._current_period_override()
         self._manual_period_override = self._has_manual_period_override()
         self._stats_locked = False
@@ -81,6 +88,8 @@ class MainWindowRealtimeMixin:
         self._refresh_active_site_info()
         if hasattr(self, "_set_status"):
             self._set_status(f"已切换线路: {site_label(site)}", "info")
+        if migrated_legacy_override and hasattr(self, "_save_settings"):
+            self._save_settings()
         self._load_filtered_messages()
 
     def _refresh_active_site_info(self) -> None:

@@ -1844,6 +1844,7 @@ def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selecte
         _set_status=lambda *args, **kwargs: None,
         _load_filtered_messages=lambda: None,
         _sync_chart_status=lambda: None,
+        _save_settings=lambda: None,
     )
     dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
     dummy._has_manual_period_override = lambda: MainWindowRealtimeMixin._has_manual_period_override(dummy)
@@ -1855,6 +1856,120 @@ def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selecte
 
     assert dummy._query_period_overrides_by_site == {"macao": "7788"}
     assert dummy.period_input.value == "7788"
+
+
+def test_main_window_realtime_select_site_saves_after_legacy_period_migration() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+    save_calls: list[str] = []
+    dummy = SimpleNamespace(
+        _active_site="",
+        _query_period_overrides_by_site={},
+        _query_period_override="7788",
+        _manual_period_override=True,
+        _draw_infos={"macao": DrawInfo(current_period="2001", next_period="2002")},
+        period_input=DummyPeriodInput(),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+        lock_status_label=SimpleNamespace(setText=lambda value: None),
+        auto_refresh_label=SimpleNamespace(setText=lambda value: None, setStyleSheet=lambda value: None),
+        chart_window=SimpleNamespace(set_status=lambda *args, **kwargs: None, set_status_seconds=lambda *args, **kwargs: None),
+        current_visual_rows=[],
+        _stats_locked=False,
+        _last_message_cursor={},
+        _awaiting_next_period=False,
+        _format_countdown=lambda value: "00:00",
+        _set_status=lambda *args, **kwargs: None,
+        _load_filtered_messages=lambda: None,
+        _sync_chart_status=lambda: None,
+        _save_settings=lambda: save_calls.append("saved"),
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._has_manual_period_override = lambda: MainWindowRealtimeMixin._has_manual_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._refresh_active_site_info = lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy)
+
+    MainWindowRealtimeMixin._select_site(dummy, "macao")
+
+    assert save_calls == ["saved"]
+
+
+def test_main_window_realtime_select_site_preserves_legacy_period_on_previous_site() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _query_period_overrides_by_site={},
+        _query_period_override="7788",
+        _manual_period_override=True,
+        _draw_infos={
+            "pc28": DrawInfo(current_period="1001", next_period="1002"),
+            "macao": DrawInfo(current_period="2001", next_period="2002"),
+        },
+        period_input=DummyPeriodInput(),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+        lock_status_label=SimpleNamespace(setText=lambda value: None),
+        auto_refresh_label=SimpleNamespace(setText=lambda value: None, setStyleSheet=lambda value: None),
+        chart_window=SimpleNamespace(set_status=lambda *args, **kwargs: None, set_status_seconds=lambda *args, **kwargs: None),
+        current_visual_rows=[],
+        _stats_locked=False,
+        _last_message_cursor={},
+        _awaiting_next_period=False,
+        _format_countdown=lambda value: "00:00",
+        _set_status=lambda *args, **kwargs: None,
+        _load_filtered_messages=lambda: None,
+        _sync_chart_status=lambda: None,
+        _save_settings=lambda: None,
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._has_manual_period_override = lambda: MainWindowRealtimeMixin._has_manual_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._refresh_active_site_info = lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy)
+
+    MainWindowRealtimeMixin._select_site(dummy, "macao")
+
+    assert dummy._query_period_overrides_by_site == {"pc28": "7788"}
+    assert dummy._query_period_override == ""
+    assert dummy.period_input.value == "2002"
 
 
 def test_logging_config_debug_sets_root_to_debug(tmp_path: Path, monkeypatch) -> None:
@@ -2219,6 +2334,63 @@ def test_main_window_actions_save_settings_preserves_existing_unknown_keys() -> 
     payload = saved_payloads[-1]
     assert payload["query_period_overrides_by_site"] == {"pc28": "7788"}
     assert payload["custom_keep"] == "keep-me"
+
+
+def test_main_window_actions_save_settings_preserves_legacy_period_until_migrated() -> None:
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "Alice"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "Alice"
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return ["g1"]
+
+        def _selected_block_group_key(self):
+            return "g1"
+
+        def _global_block_names(self):
+            return []
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = "7788"
+    dummy._manual_period_override = True
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["query_period_overrides_by_site"] == {}
+    assert payload["query_period_override"] == "7788"
+    assert payload["manual_period_override"] is True
 
 
 def test_main_window_global_block_ui_uses_chinese_text(monkeypatch) -> None:

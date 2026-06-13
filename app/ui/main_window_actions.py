@@ -113,6 +113,8 @@ class MainWindowActionsMixin:
             for key, value in dict(overrides_raw if isinstance(overrides_raw, dict) else {}).items()
             if str(value).strip()
         }
+        legacy_period_override = str(getattr(self, "_query_period_override", "")).strip()
+        legacy_manual_override = bool(getattr(self, "_manual_period_override", False) and legacy_period_override)
         payload = dict(getattr(self, "settings", {}))
         payload.update(
             {
@@ -129,8 +131,8 @@ class MainWindowActionsMixin:
                 "fallback_db_path": self.manual_db_edit.text().strip(),
                 "lock_threshold_sec": self._lock_threshold_sec,
                 "query_period_overrides_by_site": query_period_overrides_by_site,
-                "query_period_override": "",
-                "manual_period_override": False,
+                "query_period_override": "" if query_period_overrides_by_site else legacy_period_override,
+                "manual_period_override": False if query_period_overrides_by_site else legacy_manual_override,
                 "is_first_launch": self._is_first_launch,
                 "proxy_enabled": payload.get("proxy_enabled", False),
                 "proxy_http": payload.get("proxy_http", ""),
