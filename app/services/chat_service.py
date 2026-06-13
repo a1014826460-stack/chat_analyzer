@@ -45,11 +45,16 @@ TXT_LINE_PATTERN = re.compile(
 SIMPLE_BET_PATTERN = re.compile(rf"(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)")
 PLAY_TOKENS = tuple(sorted(PLAY_TYPES, key=len, reverse=True))
 NUMBER_TOKEN_AT_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+RECEIPT_BETTOR_PATTERN = re.compile(r"@\s*(?P<bettor>.+?)\s*[:：]")
+RECEIPT_BODY_PATTERN = re.compile(r"下注内容\s*[:：]\s*-+\s*(?P<body>.*?)\s*-+\s*余额", re.S)
+RECEIPT_ODDS_PATTERN = re.compile(r"\([^)]*赔率\)")
+RECEIPT_POINT_BET_PATTERN = re.compile(r"^(?P<play>\d{1,2})\.(?P<amount>\d[\d,]*(?:\.\d+)?)$")
+RECEIPT_PLAY_BET_PATTERN = re.compile(r"^(?P<play>.+?)(?P<amount>\d[\d,]*(?:\.\d+)?)$")
 DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
 RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
 DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
-DEFAULT_SQLITE_LOAD_WINDOW = timedelta(minutes=20)
-FRONTEND_AAS_KEY = "AAS_FRONTEND_KEY"
+DEFAULT_SQLITE_LOAD_WINDOW = timedelta(minutes=5)
+FRONTEND_AAS_KEY = "666888"
 LOG_PREVIEW_LIMIT = 120
 ZODIAC_GROUP_NAMES = (
     "白羊座",
@@ -122,9 +127,7 @@ class ChatLogService:
     def list_groups_from_db(self, msg_db: Path) -> list[ChatGroup]:
         msg_db = Path(msg_db)
         if msg_db.suffix.lower() != ".txt":
-            groups = self._list_sqlite_groups(msg_db)
-            if groups:
-                return groups
+            return self._list_sqlite_groups(msg_db)
         try:
             messages = self.load_messages(msg_db, ParseOptions())
         except Exception:
@@ -134,33 +137,38 @@ class ChatLogService:
     def _list_sqlite_groups(self, msg_db: Path) -> list[ChatGroup]:
         if not msg_db.exists():
             return []
-        queries = [
-            "select distinct sid as group_id from message where sid is not null and sid != '' order by sid asc",
-            "select distinct conversation_id as group_id from msg where conversation_id is not null and conversation_id != '' order by conversation_id asc",
-        ]
+        group_names = self._sqlite_group_name_map(msg_db)
+        if not group_names:
+            logger.info("No groupinfo groups found for %s; skip message-table group inference", msg_db)
+            return []
+        return [ChatGroup(group_id=group_id, group_name=group_name) for group_id, group_name in group_names.items()]
+
+    def _sqlite_group_name_map(self, msg_db: Path) -> dict[str, str]:
+        im_db = msg_db.parent / "im.db"
+        if not im_db.exists():
+            return {}
         try:
-            con = sqlite3.connect(f"file:{msg_db.as_posix()}?mode=ro", uri=True)
+            con = sqlite3.connect(f"file:{im_db.as_posix()}?mode=ro", uri=True)
             con.row_factory = sqlite3.Row
-            for query in queries:
-                try:
-                    rows = con.execute(query).fetchall()
-                except sqlite3.DatabaseError:
-                    continue
-                groups = [
-                    ChatGroup(group_id=str(row["group_id"]).strip(), group_name=str(row["group_id"]).strip())
-                    for row in rows
-                    if str(row["group_id"]).strip()
-                ]
-                if groups:
-                    return groups
+            rows = con.execute(
+                "select group_id, group_name from groupinfo "
+                "where group_id is not null and group_id != '' "
+                "and group_name is not null and group_name != '' "
+                "order by group_name collate nocase asc"
+            ).fetchall()
+            return {
+                str(row["group_id"]).strip(): str(row["group_name"] or row["group_id"]).strip()
+                for row in rows
+                if str(row["group_id"]).strip() and str(row["group_name"] or "").strip()
+            }
         except sqlite3.DatabaseError:
-            logger.exception("Failed to list sqlite groups from %s", msg_db)
+            logger.debug("Failed to load group names from %s", im_db, exc_info=True)
+            return {}
         finally:
             try:
                 con.close()
             except Exception:
                 pass
-        return []
 
     def load_messages(self, source_path: Path, options: ParseOptions) -> list[ChatMessage]:
         source_path = Path(source_path)
@@ -243,6 +251,7 @@ class ChatLogService:
             con = sqlite3.connect(f"file:{msg_db.as_posix()}?mode=ro", uri=True)
             con.row_factory = sqlite3.Row
             client_time_unit = self._detect_sqlite_client_time_unit(con)
+            group_name_map = self._sqlite_group_name_map(msg_db)
             for raw_query in queries:
                 query, params = self._apply_sqlite_query_options(raw_query, options, client_time_unit)
                 try:
@@ -250,9 +259,10 @@ class ChatLogService:
                     if rows:
                         for row in rows:
                             ts = self._sqlite_ts_to_datetime(int(row["client_time"] or 0))
+                            group_raw = str(row["group_name"] or "Unknown").strip()
                             msg = ChatMessage(
                                 ts=ts,
-                                group=str(row["group_name"] or "Unknown").strip(),
+                                group=group_name_map.get(group_raw, group_raw),
                                 username=str(row["sender_name"] or "Unknown").strip(),
                                 content=self._extract_message_text(
                                     row["element_descriptions"],
@@ -698,9 +708,14 @@ class ChatLogService:
 
     def _parse_bet_events_from_message(self, msg: ChatMessage) -> tuple[str, list[BetEvent]]:
         content = self._clean_text(msg.content)
+        if self._looks_like_period_summary_billboard(content):
+            return content, []
         cancel_event = self._parse_cancel_event(content)
         if cancel_event is not None:
             return content, [cancel_event]
+        receipt_events = self._parse_receipt_bet_events(content)
+        if receipt_events:
+            return content, receipt_events
 
         events: list[BetEvent] = []
         for play, amount in self._parse_bets(content):
@@ -714,6 +729,47 @@ class ChatLogService:
                 )
             )
         return content, events
+
+    def _parse_receipt_bet_events(self, content: str) -> list[BetEvent]:
+        if "下注期数" not in content or "下注内容" not in content:
+            return []
+        bettor_match = RECEIPT_BETTOR_PATTERN.search(content)
+        body_match = RECEIPT_BODY_PATTERN.search(content)
+        if not bettor_match or not body_match:
+            return []
+        bettor = bettor_match.group("bettor").strip()
+        if not bettor:
+            return []
+        events: list[BetEvent] = []
+        for raw_line in body_match.group("body").splitlines():
+            parsed = self._parse_receipt_bet_line(raw_line)
+            if parsed is None:
+                continue
+            play, amount = parsed
+            if amount <= 0:
+                continue
+            events.append(BetEvent(bettor=bettor, play=play, amount=amount, kind="bet", source=content))
+        return events
+
+    def _parse_receipt_bet_line(self, line: str) -> tuple[str, float] | None:
+        text = RECEIPT_ODDS_PATTERN.sub("", self._clean_text(line)).strip()
+        if not text:
+            return None
+        point_match = RECEIPT_POINT_BET_PATTERN.match(text)
+        if point_match:
+            return point_match.group("play"), self._parse_amount_text(point_match.group("amount"))
+        play_match = RECEIPT_PLAY_BET_PATTERN.match(text)
+        if not play_match:
+            return None
+        play = play_match.group("play").strip()
+        amount = self._parse_amount_text(play_match.group("amount"))
+        return (play, amount) if play else None
+
+    def _looks_like_period_summary_billboard(self, content: str) -> bool:
+        has_period_header = bool(re.search(r"-+\[\d{4,}\].*?-+", content))
+        if has_period_header and "在线人数" in content and "总分" in content:
+            return True
+        return bool(re.search(r"-+\[\d{4,}\].*?期-+", content) and "【" in content and "】" in content)
 
     def _clean_text(self, value: object) -> str:
         text = str(value or "")
@@ -1148,11 +1204,16 @@ class ChatLogService:
             extracted = self._extract_json_text(text)
             if extracted:
                 return extracted
+            compact = text.strip()
+            if self._looks_like_receipt_text(compact):
+                return compact
             lines = [line.strip(" @") for line in text.splitlines()]
             useful = [line for line in lines if self._looks_like_message_line(line)]
             if useful:
                 return "\n".join(useful).strip()
-            compact = text.strip()
+            decoded = self._decode_possible_frontend_ciphertext(compact)
+            if decoded and decoded != compact:
+                return decoded
             if (
                 compact
                 and not compact.startswith("{")
@@ -1161,6 +1222,9 @@ class ChatLogService:
             ):
                 return compact
         return ""
+
+    def _looks_like_receipt_text(self, text: str) -> bool:
+        return bool(text and "下注期数" in text and "下注内容" in text and "余额" in text)
 
     def _extract_json_text(self, text: str) -> str:
         try:

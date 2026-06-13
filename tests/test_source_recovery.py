@@ -441,6 +441,175 @@ def test_chat_service_receipt_group_keeps_latest_amount_per_bettor_period_play()
     assert stats.totals == {"大": 20.0}
 
 
+def test_chat_service_parses_robot_multiline_receipt_bets() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 13, 18, 22, 22),
+            group="摩羯座网盘4.28-3.68",
+            username="Robot",
+            sender_id="robot-1",
+            content=(
+                "@雪茜 : \n"
+                "下注期数: 3444525\n"
+                "下注内容: \n"
+                "------------\n"
+                "15.150(13.0赔率)\n"
+                "大800(1.98赔率)\n"
+                "------------\n"
+                "余额：3088"
+            ),
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 13, 18, 22, 24),
+            group="摩羯座网盘4.28-3.68",
+            username="Robot",
+            sender_id="robot-1",
+            content=(
+                "@朝阳 : \n"
+                "下注期数: 3444525\n"
+                "下注内容: \n"
+                "------------\n"
+                "小单2500(3.68赔率)\n"
+                "大双2500(3.68赔率)\n"
+                "11.500(14.0赔率)\n"
+                "------------\n"
+                "余额：39292"
+            ),
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3444525",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("雪茜", "3444525", "15", 150.0),
+        ("雪茜", "3444525", "大", 800.0),
+        ("朝阳", "3444525", "11", 500.0),
+        ("朝阳", "3444525", "大双", 2500.0),
+        ("朝阳", "3444525", "小单", 2500.0),
+    ]
+    assert stats.totals == {
+        "15": 150.0,
+        "大": 800.0,
+        "小单": 2500.0,
+        "大双": 2500.0,
+        "11": 500.0,
+    }
+    assert stats.totals_by_group == {
+        "摩羯座网盘4.28-3.68": {
+            "15": 150.0,
+            "大": 800.0,
+            "小单": 2500.0,
+            "大双": 2500.0,
+            "11": 500.0,
+        }
+    }
+
+
+def test_chat_service_receipt_group_ignores_period_summary_billboard() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 13, 18, 24, 27),
+            group="摩羯座网盘4.28-3.68",
+            username="Robot",
+            sender_id="robot-1",
+            content=(
+                "--------[3444525]期--------\n"
+                "诗绮 63985【小单5888 小双5888 】\n"
+                "福哥 61144【大单4644 大双2500 】\n"
+                "洞宇 52342【大双3000 大单3000 小单3000 】"
+            ),
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3444525",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+
+    assert rows == []
+    assert stats.totals == {}
+
+
+def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 13, 18, 25, 7),
+            group="摩羯座网盘4.28-3.68",
+            username="Robot",
+            sender_id="robot-1",
+            content=(
+                "---[3444525]---\n"
+                "在线人数: 313 人－总分 7712306\n"
+                "════════════\n"
+                "摩羯9999999 座杀9999998\n"
+                "大枣0037720 堰清0045380\n"
+                "大爷0000888 柳权0030939"
+            ),
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3444525",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+
+    assert rows == []
+    assert stats.totals == {}
+
+
+def test_chat_service_recognizes_online_scoreboard_as_billboard() -> None:
+    from app.services.chat_service import ChatLogService
+
+    content = (
+        "---[3444525]---\n"
+        "在线人数: 313 人－总分 7712306\n"
+        "════════════\n"
+        "大枣0037720 雪梅0036427\n"
+        "大爷0000888 文燕0000834"
+    )
+
+    assert ChatLogService()._looks_like_period_summary_billboard(content) is True
+
+
 def test_chat_service_analyze_bets_returns_totals_by_group() -> None:
     from datetime import datetime
 
@@ -709,6 +878,84 @@ def test_chat_service_loads_original_message_table_and_extracts_json_text(tmp_pa
     assert messages[0].raw_rand == 7
 
 
+def test_chat_service_sqlite_messages_map_group_id_to_groupinfo_name(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import datetime
+
+    from app.models import ParseOptions
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    con.execute(
+        "insert into message values (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "900361932",
+            "robot-1",
+            0,
+            int(datetime(2026, 6, 13, 18, 22, 22).timestamp()),
+            7,
+            "",
+            "@雪茜 : \n下注期数: 3444525\n下注内容: \n------------\n15.150(13.0赔率)\n------------\n余额：3088",
+        ),
+    )
+    con.commit()
+    con.close()
+
+    im_con = sqlite3.connect(tmp_path / "im.db")
+    im_con.execute("create table groupinfo (group_id text, group_name text)")
+    im_con.execute("insert into groupinfo values (?, ?)", ("900361932", "摩羯座网盘4.28-3.68"))
+    im_con.commit()
+    im_con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(
+        db_path,
+        ParseOptions(
+            group_ids=["900361932"],
+            start_time=datetime(2026, 6, 13, 18, 20, 0),
+            end_time=datetime(2026, 6, 13, 18, 25, 0),
+        ),
+    )
+
+    assert len(messages) == 1
+    assert messages[0].group == "摩羯座网盘4.28-3.68"
+
+
+def test_chat_service_extract_message_text_preserves_multiline_receipt_context() -> None:
+    from app.services.chat_service import ChatLogService
+
+    raw = (
+        "@堰清 : \n"
+        "下注期数: 3444525\n"
+        "下注内容: \n"
+        "------------\n"
+        "大单3000(4.28赔率)\n"
+        "小双3000(4.28赔率)\n"
+        "------------\n"
+        "余额：45380"
+    )
+
+    text = ChatLogService()._extract_message_text(raw, "")
+
+    assert "@堰清" in text
+    assert "下注期数: 3444525" in text
+    assert "大单3000" in text
+    assert "余额" in text
+
+
 def test_chat_service_sqlite_group_ids_filter_and_nested_content_decode(tmp_path: Path) -> None:
     import json
     import sqlite3
@@ -882,7 +1129,7 @@ def test_chat_service_sqlite_applies_default_twenty_minute_window(monkeypatch, t
     assert [msg.content for msg in messages] == ["新消息"]
 
 
-def test_chat_service_lists_sqlite_groups_without_loading_messages(tmp_path: Path, monkeypatch) -> None:
+def test_chat_service_sqlite_groups_require_groupinfo_without_scanning_messages(tmp_path: Path, monkeypatch) -> None:
     import sqlite3
 
     from app.services.chat_service import ChatLogService
@@ -903,10 +1150,66 @@ def test_chat_service_lists_sqlite_groups_without_loading_messages(tmp_path: Pat
 
     groups = service.list_groups_from_db(db_path)
 
+    assert groups == []
+
+
+def test_chat_service_sqlite_default_window_is_five_minutes() -> None:
+    from datetime import timedelta
+
+    from app.services import chat_service
+
+    assert chat_service.DEFAULT_SQLITE_LOAD_WINDOW == timedelta(minutes=5)
+
+
+def test_chat_service_lists_sqlite_groups_with_names_from_sibling_im_db(tmp_path: Path) -> None:
+    import sqlite3
+
+    from app.services.chat_service import ChatLogService
+
+    msg_db = tmp_path / "msg_0.db"
+    msg_con = sqlite3.connect(msg_db)
+    msg_con.execute("create table message (sid text)")
+    msg_con.executemany("insert into message values (?)", [("1001",), ("1002",)])
+    msg_con.commit()
+    msg_con.close()
+
+    im_db = tmp_path / "im.db"
+    im_con = sqlite3.connect(im_db)
+    im_con.execute("create table groupinfo (group_id text, group_name text)")
+    im_con.executemany("insert into groupinfo values (?, ?)", [("1001", "测试一群"), ("1002", "测试二群")])
+    im_con.commit()
+    im_con.close()
+
+    groups = ChatLogService().list_groups_from_db(msg_db)
+
     assert [(group.group_id, group.group_name) for group in groups] == [
-        ("group-a", "group-a"),
-        ("group-b", "group-b"),
+        ("1001", "测试一群"),
+        ("1002", "测试二群"),
     ]
+
+
+def test_chat_service_sqlite_groups_ignore_message_ids_not_in_groupinfo(tmp_path: Path) -> None:
+    import sqlite3
+
+    from app.services.chat_service import ChatLogService
+
+    msg_db = tmp_path / "msg_0.db"
+    msg_con = sqlite3.connect(msg_db)
+    msg_con.execute("create table message (sid text)")
+    msg_con.executemany("insert into message values (?)", [("private-user",), ("1001",)])
+    msg_con.commit()
+    msg_con.close()
+
+    im_db = tmp_path / "im.db"
+    im_con = sqlite3.connect(im_db)
+    im_con.execute("create table groupinfo (group_id text, group_name text)")
+    im_con.execute("insert into groupinfo values (?, ?)", ("1001", "测试一群"))
+    im_con.commit()
+    im_con.close()
+
+    groups = ChatLogService().list_groups_from_db(msg_db)
+
+    assert [(group.group_id, group.group_name) for group in groups] == [("1001", "测试一群")]
 
 
 def test_fetch_date_parses_original_site_payload_shapes() -> None:
@@ -961,6 +1264,22 @@ def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty
     assert fallback.current_period == "1001"
     assert fallback.next_period == "1002"
     assert fallback.next_countdown >= 0
+
+
+def test_extract_draw_info_retries_transient_empty_pc28_payload(monkeypatch) -> None:
+    from app.utils import fetch_date
+
+    fetch_date._last_good_draw.clear()
+    payloads = [
+        {"issue": []},
+        {"issue": [{"qishu": "1002", "time": "2026-06-10 12:03:30", "next": 1781093220}]},
+    ]
+    monkeypatch.setitem(fetch_date._FETCHERS, "pc28", lambda: payloads.pop(0))
+
+    info = fetch_date.extract_draw_info("pc28")
+
+    assert info.current_period == "1002"
+    assert payloads == []
 
 
 def test_blocking_mixin_splits_chinese_punctuation() -> None:
@@ -1050,6 +1369,11 @@ def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -
     con.execute("insert into message values (?)", ("group-1",))
     con.commit()
     con.close()
+    im_con = sqlite3.connect(tmp_path / "im.db")
+    im_con.execute("create table groupinfo (group_id text, group_name text)")
+    im_con.execute("insert into groupinfo values (?, ?)", ("group-1", "测试群"))
+    im_con.commit()
+    im_con.close()
 
     class DummyWindow(MainWindowDataMixin):
         def _current_source_path(self):
@@ -1066,6 +1390,9 @@ def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -
     dummy._load_groups_from_current_source()
 
     assert dummy.group_list.count() == 1
+    assert dummy.group_list.item(0).text() == "测试群"
+    assert dummy.group_list.item(0).data(Qt.UserRole) == "group-1"
+    assert dummy.group_list.item(0).data(Qt.UserRole + 1) == "测试群"
     assert dummy.group_list.item(0).checkState() == Qt.Checked
     assert dummy.refreshed is True
 
@@ -1121,7 +1448,7 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
 
     options = dummy._gather_parse_options()
 
-    assert options.username == "Alice"
+    assert options.username == ""
     assert options.groups == ["GroupA"]
     assert options.group_ids == ["g1"]
     assert options.blocked_names == ["Blocked"]
@@ -1357,6 +1684,73 @@ def test_main_window_data_load_initial_state_restores_period_override_map() -> N
     assert dummy.period_input.value == "7788"
 
 
+def test_main_window_data_load_initial_state_restores_advanced_time_filter() -> None:
+    from datetime import datetime
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def clear(self) -> None:
+            return None
+
+        def addItems(self, _values) -> None:
+            return None
+
+    class DummyEdit:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    class DummyFrame:
+        def __init__(self) -> None:
+            self.visible = False
+
+        def setVisible(self, value: bool) -> None:
+            self.visible = value
+
+    class DummyDateTimeEdit:
+        def __init__(self) -> None:
+            self.value = None
+
+        def setDateTime(self, value) -> None:
+            self.value = value
+
+    class DummyWindow(MainWindowDataMixin):
+        def _refresh_block_rule_group_selector(self) -> None:
+            return None
+
+        def _refresh_license_banner(self) -> None:
+            return None
+
+        def _sync_chart_status(self) -> None:
+            return None
+
+    dummy = DummyWindow()
+    dummy.analysis_page = object()
+    dummy.settings = {
+        "advanced_time_filter_enabled": True,
+        "advanced_time_start": "2026-06-12T03:30:00",
+        "advanced_time_end": "2026-06-12T03:35:00",
+    }
+    dummy.username_combo = DummyCombo()
+    dummy.manual_db_edit = DummyEdit()
+    dummy.resolved_path_edit = DummyEdit()
+    dummy.period_input = DummyEdit()
+    dummy.advanced_time_frame = DummyFrame()
+    dummy.start_edit = DummyDateTimeEdit()
+    dummy.end_edit = DummyDateTimeEdit()
+    dummy._active_site = ""
+    dummy._require_activation = False
+
+    dummy._load_initial_state()
+
+    assert dummy.advanced_time_frame.visible is True
+    assert dummy.start_edit.value.toPython() == datetime(2026, 6, 12, 3, 30, 0)
+    assert dummy.end_edit.value.toPython() == datetime(2026, 6, 12, 3, 35, 0)
+
+
 def test_main_window_data_load_initial_state_seeds_legacy_period_into_active_site() -> None:
     from app.ui.main_window_data import MainWindowDataMixin
 
@@ -1481,7 +1875,7 @@ def test_main_window_layout_splitter_can_expand_left_panel() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QWidget
 
-    from app.ui.main_window_layout import MainWindowLayoutMixin
+    from app.ui.main_window_layout import LEFT_SECTION_MAX_WIDTH, LEFT_SECTION_MIN_WIDTH, MainWindowLayoutMixin
 
     class DummyWindow(QWidget, MainWindowLayoutMixin):
         def __init__(self) -> None:
@@ -1559,7 +1953,7 @@ def test_main_window_left_controls_are_not_narrowly_capped() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QWidget
 
-    from app.ui.main_window_layout import MainWindowLayoutMixin
+    from app.ui.main_window_layout import LEFT_SECTION_MAX_WIDTH, LEFT_SECTION_MIN_WIDTH, MainWindowLayoutMixin
 
     class DummyWindow(QWidget, MainWindowLayoutMixin):
         def __init__(self) -> None:
@@ -1619,11 +2013,218 @@ def test_main_window_left_controls_are_not_narrowly_capped() -> None:
     dummy = DummyWindow()
     dummy._build_analysis_page()
 
-    assert dummy.resolved_path_edit.maximumWidth() >= 1600
-    assert dummy.manual_db_edit.maximumWidth() >= 1600
-    assert dummy.block_names_edit.maximumHeight() <= 110
-    assert dummy.block_rule_summary_view.maximumHeight() <= 140
+    assert dummy.resolved_path_edit.maximumWidth() <= 210
+    assert dummy.manual_db_edit.maximumWidth() <= 210
+    assert dummy.block_names_edit.maximumHeight() >= 300
+    assert dummy.block_rule_summary_view.maximumHeight() >= 300
     dummy.analysis_page.close()
+
+
+def test_main_window_left_sections_share_width_height_and_expand_policies() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QFrame, QGroupBox, QScrollArea, QSizePolicy, QWidget
+
+    from app.ui.main_window_layout import LEFT_SECTION_MAX_WIDTH, LEFT_SECTION_MIN_WIDTH, MainWindowLayoutMixin
+
+    class DummyWindow(QWidget, MainWindowLayoutMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.analysis_page = QWidget()
+            self._lock_threshold_sec = 20
+
+        def _resolve_database(self, *args, **kwargs):
+            return None
+
+        def _pick_manual_data_source(self):
+            return None
+
+        def _load_manual_data_source(self):
+            return None
+
+        def _toggle_advanced_time(self):
+            return None
+
+        def _handle_group_item_changed(self, *args):
+            return None
+
+        def _set_checked_state(self, *args):
+            return None
+
+        def _invert_checked_state(self, *args):
+            return None
+
+        def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_global_block_names_from_editor(self):
+            return None
+
+        def _clear_global_block_names(self):
+            return None
+
+        def _apply_block_rule_from_editor(self):
+            return None
+
+        def _clear_block_rule_for_selected_group(self):
+            return None
+
+        def _on_period_input_changed(self):
+            return None
+
+        def _on_lock_threshold_changed(self, *args):
+            return None
+
+        def _prev_page(self):
+            return None
+
+        def _next_page(self):
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy._build_analysis_page()
+
+    left_scroll = dummy.main_splitter.widget(0)
+    assert isinstance(left_scroll, QScrollArea)
+    assert left_scroll.maximumWidth() >= 1600
+    sections = [dummy.analysis_page.findChild(QFrame, "siteFrame")]
+    sections.extend(dummy.analysis_page.findChildren(QGroupBox))
+    section_names = {section.title() if isinstance(section, QGroupBox) else "线路选择" for section in sections}
+    assert {"线路选择", "账号与数据源", "手动数据源", "筛选条件", "屏蔽名单", "状态"} <= section_names
+    for section in sections:
+        assert section.minimumWidth() == LEFT_SECTION_MIN_WIDTH
+        assert section.maximumWidth() == LEFT_SECTION_MAX_WIDTH
+        assert section.minimumHeight() >= 140
+        assert section.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+        assert section.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    assert dummy.username_combo.maximumWidth() <= 190
+    assert dummy.group_list.minimumWidth() == LEFT_SECTION_MIN_WIDTH
+    assert dummy.group_list.maximumWidth() == LEFT_SECTION_MAX_WIDTH
+    assert dummy.group_list.minimumHeight() >= 140
+    assert dummy.group_list.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert dummy.group_list.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    assert dummy.global_block_names_edit.minimumWidth() == LEFT_SECTION_MIN_WIDTH
+    assert dummy.global_block_names_edit.maximumWidth() == LEFT_SECTION_MAX_WIDTH
+    assert dummy.global_block_names_edit.minimumHeight() >= 100
+    assert dummy.global_block_names_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert dummy.global_block_names_edit.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    dummy.analysis_page.close()
+
+
+def test_main_window_splitter_can_drag_left_panel_wider_while_controls_stay_compact() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.ui.main_window_layout import MainWindowLayoutMixin
+
+    class DummyWindow(QWidget, MainWindowLayoutMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.analysis_page = QWidget()
+            self._lock_threshold_sec = 20
+
+        def _resolve_database(self, *args, **kwargs):
+            return None
+
+        def _pick_manual_data_source(self):
+            return None
+
+        def _load_manual_data_source(self):
+            return None
+
+        def _toggle_advanced_time(self):
+            return None
+
+        def _handle_group_item_changed(self, *args):
+            return None
+
+        def _set_checked_state(self, *args):
+            return None
+
+        def _invert_checked_state(self, *args):
+            return None
+
+        def _on_block_group_changed(self, *args):
+            return None
+
+        def _apply_global_block_names_from_editor(self):
+            return None
+
+        def _clear_global_block_names(self):
+            return None
+
+        def _apply_block_rule_from_editor(self):
+            return None
+
+        def _clear_block_rule_for_selected_group(self):
+            return None
+
+        def _on_period_input_changed(self):
+            return None
+
+        def _on_lock_threshold_changed(self, *args):
+            return None
+
+        def _prev_page(self):
+            return None
+
+        def _next_page(self):
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy._build_analysis_page()
+    dummy.analysis_page.resize(1180, 720)
+    dummy.analysis_page.show()
+    app.processEvents()
+
+    dummy.main_splitter.setSizes([500, 680])
+    app.processEvents()
+
+    assert dummy.main_splitter.sizes()[0] >= 450
+    assert dummy.username_combo.maximumWidth() <= 190
+    dummy.analysis_page.close()
+
+
+def test_main_window_initial_splitter_uses_compact_left_panel() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummySplitter:
+        def __init__(self) -> None:
+            self.sizes: list[int] = []
+
+        def setSizes(self, sizes: list[int]) -> None:
+            self.sizes = sizes
+
+    dummy = SimpleNamespace(main_splitter=DummySplitter())
+
+    MainWindowDataMixin._apply_initial_splitter_sizes(dummy)
+
+    assert dummy.main_splitter.sizes == [240, 1160]
+
+
+def test_main_window_theme_adds_groupbox_title_padding() -> None:
+    from app.ui.main_window import MainWindow
+
+    class DummyWindow:
+        def __init__(self) -> None:
+            self.stylesheet = ""
+
+        def setStyleSheet(self, value: str) -> None:
+            self.stylesheet = value
+
+    dummy = DummyWindow()
+
+    MainWindow._apply_theme(dummy)
+
+    assert "QGroupBox::title" in dummy.stylesheet
+    assert "padding" in dummy.stylesheet
 
 
 def test_main_window_layout_uses_readable_chinese_labels() -> None:
@@ -1803,6 +2404,88 @@ def test_main_window_realtime_period_override_is_stored_per_site() -> None:
     assert dummy._query_period_overrides_by_site["pc28"] == "7788"
 
 
+def test_main_window_realtime_auto_period_clears_stale_override_matching_next_period() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = "3444518"
+            self.blocked = False
+
+        def blockSignals(self, value: bool) -> None:
+            self.blocked = value
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+        def hasFocus(self) -> bool:
+            return False
+
+    saved: list[dict[str, str]] = []
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _query_period_overrides_by_site={"pc28": "3444487"},
+        _query_period_override="3444487",
+        _manual_period_override=True,
+        _draw_infos={"pc28": DrawInfo(current_period="3444517", next_period="3444518")},
+        period_input=DummyPeriodInput(),
+        _save_settings=lambda: saved.append(dict(dummy._query_period_overrides_by_site)),
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+
+    MainWindowRealtimeMixin._on_period_input_changed(dummy)
+    MainWindowRealtimeMixin._sync_period_input_from_site(dummy, dummy._draw_infos["pc28"])
+
+    assert dummy._query_period_overrides_by_site == {}
+    assert dummy.period_input.value == "3444518"
+    assert saved == [{}]
+
+
+def test_main_window_realtime_period_sync_does_not_overwrite_focused_user_input() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    class DummyPeriodInput:
+        def __init__(self) -> None:
+            self.value = "3444518"
+
+        def blockSignals(self, value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+        def text(self) -> str:
+            return self.value
+
+        def hasFocus(self) -> bool:
+            return True
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _query_period_overrides_by_site={"pc28": "3444487"},
+        period_input=DummyPeriodInput(),
+    )
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+
+    MainWindowRealtimeMixin._sync_period_input_from_site(
+        dummy,
+        DrawInfo(current_period="3444517", next_period="3444518"),
+    )
+
+    assert dummy.period_input.value == "3444518"
+
+
 def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selected_site() -> None:
     from types import SimpleNamespace
 
@@ -1972,6 +2655,367 @@ def test_main_window_realtime_select_site_preserves_legacy_period_on_previous_si
     assert dummy.period_input.value == "2002"
 
 
+def _bind_realtime_countdown_helpers(dummy) -> None:
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    dummy._advance_site_countdown = lambda site, info, now: MainWindowRealtimeMixin._advance_site_countdown(
+        dummy, site, info, now
+    )
+    dummy._submit_site_draw_refresh = lambda site, info: MainWindowRealtimeMixin._submit_site_draw_refresh(
+        dummy, site, info
+    )
+    dummy._handle_single_draw_info_loaded = lambda site, fallback, future: MainWindowRealtimeMixin._handle_single_draw_info_loaded(
+        dummy, site, fallback, future
+    )
+    dummy._apply_single_draw_info = lambda payload: MainWindowRealtimeMixin._apply_single_draw_info(dummy, payload)
+    dummy._refreshing_site_set = lambda: MainWindowRealtimeMixin._refreshing_site_set(dummy)
+    dummy._update_site_card_widgets = lambda site, info: None
+    dummy._extrapolate_next_draw_info = lambda site, info: MainWindowRealtimeMixin._extrapolate_next_draw_info(
+        dummy, site, info
+    )
+    dummy._increment_period_text = lambda period, delta: MainWindowRealtimeMixin._increment_period_text(
+        dummy, period, delta
+    )
+
+
+def test_main_window_countdown_tick_submits_refresh_only_when_countdown_reaches_zero(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    submitted: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        main_window_realtime,
+        "extract_draw_info",
+        lambda site: (_ for _ in ()).throw(AssertionError("network refresh must run in worker")),
+    )
+
+    class DummyWorker:
+        def submit(self, func, site):
+            submitted.append((func, site))
+            return SimpleNamespace(add_done_callback=lambda callback: None)
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=2)},
+        _refresh_active_site_info=lambda: None,
+        _refreshing_sites=set(),
+        _worker=DummyWorker(),
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    MainWindowRealtimeMixin._on_countdown_tick(dummy)
+    assert submitted == []
+    assert dummy._draw_infos["pc28"].next_countdown == 1
+
+    MainWindowRealtimeMixin._on_countdown_tick(dummy)
+    assert submitted == [(main_window_realtime.extract_draw_info, "pc28")]
+    assert dummy._draw_infos["pc28"].current_period == "1001"
+    assert dummy._refreshing_sites == {"pc28"}
+
+
+def test_main_window_countdown_tick_updates_all_sites_and_fetches_only_expired(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    monkeypatch.setattr(main_window_realtime, "site_list", lambda: ["pc28", "macao", "australia", "norway"])
+    submitted: list[str] = []
+    monkeypatch.setattr(
+        main_window_realtime,
+        "extract_draw_info",
+        lambda site: DrawInfo(current_period="9002", next_period="9003", next_countdown=8),
+    )
+
+    class DummyWorker:
+        def submit(self, func, site):
+            submitted.append(site)
+            return SimpleNamespace(add_done_callback=lambda callback: None)
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={
+            "pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=3),
+            "macao": DrawInfo(current_period="2001", next_period="2002", next_countdown=1),
+            "australia": DrawInfo(current_period="3001", next_period="3002", next_countdown=5),
+            "norway": DrawInfo(current_period="4001", next_period="4002", next_countdown=1),
+        },
+        _refresh_active_site_info=lambda: None,
+        _render_site_cards=lambda: None,
+        _refreshing_sites=set(),
+        _worker=DummyWorker(),
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    MainWindowRealtimeMixin._on_countdown_tick(dummy)
+
+    assert submitted == ["macao", "norway"]
+    assert dummy._draw_infos["pc28"].next_countdown == 2
+    assert dummy._draw_infos["australia"].next_countdown == 4
+    assert dummy._draw_infos["macao"].current_period == "2001"
+    assert dummy._draw_infos["norway"].current_period == "4001"
+
+
+def test_main_window_countdown_tick_extrapolates_expired_site_when_refresh_fails(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=1)},
+        _refresh_active_site_info=lambda: None,
+        _render_site_cards=lambda: None,
+        _refreshing_sites={"pc28"},
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    fallback = DrawInfo(current_period="1002", next_period="1003", next_countdown=9)
+    future = SimpleNamespace(result=lambda: (_ for _ in ()).throw(ValueError("empty issue list")))
+    MainWindowRealtimeMixin._handle_single_draw_info_loaded(dummy, "pc28", fallback, future)
+
+    assert dummy._draw_infos["pc28"].current_period == "1002"
+    assert dummy._draw_infos["pc28"].next_period == "1003"
+    assert dummy._draw_infos["pc28"].next_countdown > 0
+    assert dummy._refreshing_sites == set()
+
+
+def test_main_window_countdown_refresh_failure_uses_retry_countdown(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    submitted: list[str] = []
+
+    class DummyWorker:
+        def submit(self, func, site):
+            submitted.append(site)
+            return SimpleNamespace(add_done_callback=lambda callback: None)
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=1)},
+        _refresh_active_site_info=lambda: None,
+        _refreshing_sites=set(),
+        _worker=DummyWorker(),
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    MainWindowRealtimeMixin._on_countdown_tick(dummy)
+    MainWindowRealtimeMixin._on_countdown_tick(dummy)
+
+    assert submitted == ["pc28"]
+    assert dummy._draw_infos["pc28"].current_period == "1001"
+    assert dummy._refreshing_sites == {"pc28"}
+
+
+def test_main_window_refresh_tick_does_not_poll_before_countdown_zero(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    calls: list[str] = []
+    monkeypatch.setattr(main_window_realtime, "extract_draw_info", lambda site: calls.append(site) or DrawInfo(current_period="x"))
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=30)},
+        _refresh_active_site_info=lambda: None,
+    )
+
+    MainWindowRealtimeMixin._on_refresh_tick(dummy)
+
+    assert calls == []
+
+
+def test_refresh_site_cards_submits_background_fetch_without_blocking(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    monkeypatch.setattr(
+        main_window_realtime,
+        "fetch_all_draw_infos",
+        lambda: (_ for _ in ()).throw(AssertionError("should run only in worker")),
+    )
+    monkeypatch.setattr(main_window_realtime, "site_list", lambda: ["pc28"])
+
+    submitted: list[object] = []
+
+    class DummyWorker:
+        def submit(self, func):
+            submitted.append(func)
+            return SimpleNamespace(add_done_callback=lambda callback: None)
+
+    class DummyLayout:
+        def count(self):
+            return 0
+
+        def addWidget(self, *_args):
+            return None
+
+    dummy = SimpleNamespace(
+        _draw_infos={},
+        _site_card_widgets={},
+        _worker=DummyWorker(),
+        site_cards_layout=DummyLayout(),
+        site_status_label=SimpleNamespace(setText=lambda value: None),
+        _build_site_card=lambda site, info: (object(), {}),
+    )
+    dummy._render_site_cards = lambda: MainWindowRealtimeMixin._render_site_cards(dummy)
+    dummy._handle_site_cards_loaded = lambda future: MainWindowRealtimeMixin._handle_site_cards_loaded(dummy, future)
+
+    MainWindowRealtimeMixin._refresh_site_cards(dummy)
+
+    assert submitted == [main_window_realtime.fetch_all_draw_infos]
+
+
+def test_site_cards_loaded_emits_draw_info_for_main_thread_application() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    emitted: list[dict[str, DrawInfo]] = []
+    future = SimpleNamespace(result=lambda: {"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=88)})
+    dummy = SimpleNamespace(_draw_infos_ready=SimpleNamespace(emit=lambda value: emitted.append(value)))
+
+    MainWindowRealtimeMixin._handle_site_cards_loaded(dummy, future)
+
+    assert emitted
+    assert emitted[0]["pc28"].current_period == "1001"
+
+
+def test_apply_draw_infos_updates_site_card_countdown(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    monkeypatch.setattr(main_window_realtime, "site_list", lambda: ["pc28"])
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    widgets = {
+        "name": DummyLabel(),
+        "period": DummyLabel(),
+        "next": DummyLabel(),
+        "countdown": DummyLabel(),
+    }
+    dummy = SimpleNamespace(
+        _draw_infos={},
+        _active_site="",
+        _site_card_widgets={"pc28": widgets},
+        site_cards_layout=SimpleNamespace(count=lambda: 1),
+        site_status_label=DummyLabel(),
+    )
+    dummy._render_site_cards = lambda: MainWindowRealtimeMixin._render_site_cards(dummy)
+    dummy._update_site_card_widgets = lambda site, info: MainWindowRealtimeMixin._update_site_card_widgets(dummy, site, info)
+    dummy._format_countdown = lambda value: MainWindowRealtimeMixin._format_countdown(dummy, value)
+
+    MainWindowRealtimeMixin._apply_draw_infos(dummy, {"pc28": DrawInfo("1001", next_period="1002", next_countdown=88)})
+
+    assert widgets["period"].text == "当前: 1001"
+    assert widgets["next"].text == "下期: 1002"
+    assert widgets["countdown"].text == "倒计时: 01:28"
+
+
+def test_site_card_uses_expanding_height_instead_of_fixed_short_height() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QSizePolicy
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    app = QApplication.instance() or QApplication([])
+    dummy = SimpleNamespace(
+        _format_countdown=lambda value: MainWindowRealtimeMixin._format_countdown(dummy, value),
+        _select_site=lambda site: None,
+    )
+
+    frame, _widgets = MainWindowRealtimeMixin._build_site_card(
+        dummy,
+        "pc28",
+        DrawInfo(current_period="1001", next_period="1002", next_countdown=88),
+    )
+
+    assert frame.minimumHeight() >= 120
+    assert frame.maximumHeight() >= 1600
+    assert frame.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+
+
+def test_chart_window_renders_bar_chart_totals_and_bettor_names() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import BarChartWidget, ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    rows = [
+        {
+            "time": datetime(2026, 6, 13, 19, 36, 22),
+            "group": "摩羯座网盘4.28-3.68",
+            "username": "TfPISL2u5",
+            "bettor": "桂林",
+            "period": "1040954",
+            "play": "大单",
+            "amount": 2800.0,
+        },
+        {
+            "time": datetime(2026, 6, 13, 19, 36, 24),
+            "group": "摩羯座网盘4.28-3.68",
+            "username": "TfPISL2u5",
+            "bettor": "朝阳",
+            "period": "1040954",
+            "play": "大单",
+            "amount": 5000.0,
+        },
+        {
+            "time": datetime(2026, 6, 13, 19, 36, 24),
+            "group": "摩羯座网盘4.28-3.68",
+            "username": "TfPISL2u5",
+            "bettor": "朝阳",
+            "period": "1040954",
+            "play": "13",
+            "amount": 500.0,
+        },
+    ]
+
+    chart.set_rows(rows)
+
+    assert isinstance(chart.bar_chart, BarChartWidget)
+    assert chart.bar_chart.totals == {"大单": 7800.0, "13": 500.0}
+    activity_text = chart.activity_view.toPlainText()
+    assert "桂林" in activity_text
+    assert "朝阳" in activity_text
+    assert "TfPISL2u5" not in activity_text
+    chart.close()
+
+
 def test_logging_config_debug_sets_root_to_debug(tmp_path: Path, monkeypatch) -> None:
     import logging
 
@@ -2004,6 +3048,69 @@ def test_main_window_status_helper_updates_label_and_logs(caplog) -> None:
 
     assert dummy.status_label.text == "正在测试按钮反馈"
     assert "正在测试按钮反馈" in caplog.text
+
+
+def test_settings_service_logs_readable_chinese(caplog, monkeypatch, tmp_path: Path) -> None:
+    from app.services.settings_service import SettingsService
+    from app.services.storage_service import JsonStore
+
+    monkeypatch.setattr(JsonStore, "__init__", lambda self, filename: setattr(self, "path", tmp_path / filename))
+    service = SettingsService()
+
+    with caplog.at_level("DEBUG"):
+        data = service.load()
+        data["username"] = "tester"
+        service.save(data)
+
+    assert "加载设置" in caplog.text
+    assert "保存设置: username=tester" in caplog.text
+
+
+def test_main_window_data_logs_empty_load_diagnostics(caplog) -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+    from datetime import datetime
+
+    from app.models import ParseOptions, StatsResult
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    dummy = SimpleNamespace()
+    options = ParseOptions(
+        username="tester",
+        groups=["GroupA", "GroupB"],
+        group_ids=["g1", "g2"],
+        period_filter="9001",
+        site="pc28",
+    )
+    options.start_time = datetime(2026, 6, 12, 3, 38, 39)
+    options.end_time = datetime(2026, 6, 12, 3, 58, 39)
+    options.incremental_cursor_value = 123456
+    options.incremental_cursor_rand = 7
+
+    with caplog.at_level("INFO"):
+        MainWindowDataMixin._log_load_diagnostics(
+            dummy,
+            source_path=Path("C:/data/msg_0.db"),
+            options=options,
+            messages=[],
+            visual_rows=[],
+            stats=StatsResult(totals={}, matched_messages=0, totals_by_group={}),
+        )
+
+    assert "Load diagnostics" in caplog.text
+    assert "source=C:\\data\\msg_0.db" in caplog.text or "source=C:/data/msg_0.db" in caplog.text
+    assert "site=pc28" in caplog.text
+    assert "groups=2" in caplog.text
+    assert "group_ids=2" in caplog.text
+    assert "selected_group_ids=g1,g2" in caplog.text
+    assert "period=9001" in caplog.text
+    assert "start=2026-06-12 03:38:39" in caplog.text
+    assert "end=2026-06-12 03:58:39" in caplog.text
+    assert "cursor=123456/7" in caplog.text
+    assert "messages=0" in caplog.text
+    assert "matched=0" in caplog.text
+    assert "rows=0" in caplog.text
+    assert "totals_by_group=0" in caplog.text
 
 
 def test_resolve_database_without_username_reports_readable_feedback(monkeypatch) -> None:
@@ -2336,6 +3443,86 @@ def test_main_window_actions_save_settings_preserves_existing_unknown_keys() -> 
     assert payload["custom_keep"] == "keep-me"
 
 
+def test_main_window_actions_save_settings_persists_advanced_time_filter() -> None:
+    from datetime import datetime
+
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "Alice"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "Alice"
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyFrame:
+        def isVisible(self) -> bool:
+            return True
+
+    class DummyDateTimeValue:
+        def __init__(self, value: datetime) -> None:
+            self.value = value
+
+        def toPython(self):
+            return self.value
+
+    class DummyDateTimeEdit:
+        def __init__(self, value: datetime) -> None:
+            self.value = value
+
+        def dateTime(self):
+            return DummyDateTimeValue(self.value)
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return ["g1"]
+
+        def _selected_block_group_key(self):
+            return "g1"
+
+        def _global_block_names(self):
+            return []
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.advanced_time_frame = DummyFrame()
+    dummy.start_edit = DummyDateTimeEdit(datetime(2026, 6, 12, 3, 30, 0))
+    dummy.end_edit = DummyDateTimeEdit(datetime(2026, 6, 12, 3, 35, 0))
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["advanced_time_filter_enabled"] is True
+    assert payload["advanced_time_start"] == "2026-06-12T03:30:00"
+    assert payload["advanced_time_end"] == "2026-06-12T03:35:00"
+
+
 def test_main_window_actions_save_settings_preserves_legacy_period_until_migrated() -> None:
     from app.ui.main_window_actions import MainWindowActionsMixin
 
@@ -2391,6 +3578,174 @@ def test_main_window_actions_save_settings_preserves_legacy_period_until_migrate
     assert payload["query_period_overrides_by_site"] == {}
     assert payload["query_period_override"] == "7788"
     assert payload["manual_period_override"] is True
+
+
+def test_resolve_database_failure_preserves_saved_data_source(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def currentText(self) -> str:
+            return "tester"
+
+    class DummyEdit:
+        def __init__(self, value: str) -> None:
+            self.value = value
+            self.cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
+        def text(self) -> str:
+            return self.value
+
+    class DummyList:
+        def __init__(self) -> None:
+            self.cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    class DummyLabel:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    dummy = SimpleNamespace(
+        username_combo=DummyCombo(),
+        account_resolver=SimpleNamespace(resolve=lambda username: None, get_diagnostic=lambda: None),
+        resolved_db=None,
+        resolved_path_edit=DummyEdit("D:/last/msg_0.db"),
+        group_list=DummyList(),
+        db_status_label=DummyLabel(),
+        status_label=DummyLabel(),
+        fallback_box=SimpleNamespace(setVisible=lambda value: None),
+        _refresh_block_rule_group_selector=lambda: None,
+    )
+
+    MainWindowDataMixin._resolve_database(dummy, silent=True)
+
+    assert dummy.resolved_path_edit.value == "D:/last/msg_0.db"
+    assert dummy.resolved_path_edit.cleared is False
+    assert dummy.group_list.cleared is False
+
+
+def test_resolve_database_failure_still_remembers_typed_username() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyCombo:
+        def __init__(self) -> None:
+            self.items: list[str] = ["Alice"]
+            self.current = "齐天大圣"
+
+        def currentText(self) -> str:
+            return self.current
+
+        def count(self) -> int:
+            return len(self.items)
+
+        def itemText(self, index: int) -> str:
+            return self.items[index]
+
+        def clear(self) -> None:
+            self.items = []
+
+        def addItems(self, values) -> None:
+            self.items.extend(values)
+
+        def setCurrentText(self, value: str) -> None:
+            self.current = value
+
+    class DummyEdit:
+        def __init__(self) -> None:
+            self.value = "D:/last/msg_0.db"
+
+        def clear(self) -> None:
+            self.value = ""
+
+        def text(self) -> str:
+            return self.value
+
+    class DummyLabel:
+        def setText(self, value: str) -> None:
+            return None
+
+    saved: list[str] = []
+
+    class DummyWindow(MainWindowDataMixin):
+        def _remember_username(self, username: str) -> None:
+            self.username_combo.items = [username, "Alice"]
+            self.username_combo.current = username
+
+        def _save_settings(self) -> None:
+            saved.append(self.username_combo.currentText())
+
+        def _refresh_block_rule_group_selector(self) -> None:
+            return None
+
+    dummy = DummyWindow()
+    dummy.username_combo = DummyCombo()
+    dummy.account_resolver = SimpleNamespace(resolve=lambda username: None, get_diagnostic=lambda: None)
+    dummy.resolved_db = None
+    dummy.resolved_path_edit = DummyEdit()
+    dummy.group_list = SimpleNamespace(clear=lambda: None)
+    dummy.db_status_label = DummyLabel()
+    dummy.status_label = DummyLabel()
+    dummy.fallback_box = SimpleNamespace(setVisible=lambda value: None)
+
+    MainWindowDataMixin._resolve_database(dummy, silent=True)
+
+    assert dummy.username_combo.currentText() == "齐天大圣"
+    assert dummy.username_combo.items[0] == "齐天大圣"
+    assert saved == ["齐天大圣"]
+
+
+def test_load_groups_restores_saved_group_selection(tmp_path: Path) -> None:
+    import sqlite3
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    msg_db = tmp_path / "msg_0.db"
+    con = sqlite3.connect(msg_db)
+    con.execute("create table message (sid text)")
+    con.executemany("insert into message values (?)", [("g1",), ("g2",)])
+    con.commit()
+    con.close()
+
+    class DummyService:
+        def list_groups_from_db(self, _source_path):
+            from app.models import ChatGroup
+
+            return [ChatGroup("g1", "一群"), ChatGroup("g2", "二群")]
+
+    app = QApplication.instance() or QApplication([])
+    dummy = SimpleNamespace(
+        settings={"selected_group_ids": ["g2"]},
+        group_list=QListWidget(),
+        chat_service=DummyService(),
+        _current_source_path=lambda: msg_db,
+        _refresh_block_rule_group_selector=lambda: None,
+    )
+
+    MainWindowDataMixin._load_groups_from_current_source(dummy)
+
+    assert dummy.group_list.item(0).text() == "一群"
+    assert dummy.group_list.item(0).data(Qt.UserRole) == "g1"
+    assert dummy.group_list.item(0).data(Qt.UserRole + 1) == "一群"
+    assert dummy.group_list.item(0).checkState() == Qt.Unchecked
+    assert dummy.group_list.item(1).text() == "二群"
+    assert dummy.group_list.item(1).data(Qt.UserRole) == "g2"
+    assert dummy.group_list.item(1).data(Qt.UserRole + 1) == "二群"
+    assert dummy.group_list.item(1).checkState() == Qt.Checked
 
 
 def test_main_window_global_block_ui_uses_chinese_text(monkeypatch) -> None:
@@ -2510,6 +3865,22 @@ def test_chat_service_global_block_list_applies_to_all_groups() -> None:
     filtered = service.filter_blocked_messages(messages, blocked_names=["Robot"], blocked_ids=[])
 
     assert filtered == []
+
+
+def test_chat_service_decodes_frontend_aas_ciphertext_from_legacy_exe() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._decrypt_frontend_aas_text("8KcXXLdrA2KfY084IeVaNA==") == "1"
+
+
+def test_chat_service_extract_message_text_decodes_frontend_aas_ciphertext() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._extract_message_text(" 8KcXXLdrA2KfY084IeVaNA==", b"") == "1"
 
 
 def test_main_window_safe_buttons_click_without_crashing(monkeypatch) -> None:

@@ -38,6 +38,8 @@ class MainWindow(
     QMainWindow,
 ):
     _load_result_ready = Signal(object)
+    _draw_infos_ready = Signal(object)
+    _single_draw_info_ready = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,6 +66,7 @@ class MainWindow(
         self._stats_locked = False
         self._lock_threshold_sec = int(self.settings.get("lock_threshold_sec", LOCK_THRESHOLD_DEFAULT_SEC))
         self._site_card_widgets: dict[str, dict[str, QLabel]] = {}
+        self._refreshing_sites: set[str] = set()
         self._awaiting_next_period = False
         legacy_period = str(self.settings.get("query_period_override", "")).strip()
         legacy_manual = bool(self.settings.get("manual_period_override", False))
@@ -86,6 +89,8 @@ class MainWindow(
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._on_countdown_tick)
         self._load_result_ready.connect(self._handle_load_result_ready)
+        self._draw_infos_ready.connect(self._apply_draw_infos)
+        self._single_draw_info_ready.connect(self._apply_single_draw_info)
         self._worker = ThreadPoolExecutor(max_workers=2)
         self._data_worker = ThreadPoolExecutor(max_workers=1)
 
@@ -195,7 +200,6 @@ class MainWindow(
             return
         self._splitter_initialized = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
-        self._refresh_timer.start(5000)
         self._countdown_timer.start(1000)
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -241,6 +245,17 @@ class MainWindow(
                 background: {THEME['panel']};
                 border: 1px solid {THEME['border']};
                 border-radius: 14px;
+            }}
+            QGroupBox {{
+                margin-top: 12px;
+                padding-top: 14px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 12px;
+                padding: 0 6px;
+                background: {THEME['panel']};
             }}
             QLineEdit, QTextEdit, QComboBox, QListWidget, QSpinBox {{
                 background: white;

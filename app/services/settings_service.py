@@ -30,6 +30,9 @@ class SettingsService:
                 "query_period_override": "",
                 "manual_period_override": False,
                 "query_period_overrides_by_site": {},
+                "advanced_time_filter_enabled": False,
+                "advanced_time_start": "",
+                "advanced_time_end": "",
                 "lock_threshold_sec": 20,
                 "is_first_launch": True,
                 "proxy_enabled": False,
@@ -39,7 +42,7 @@ class SettingsService:
         )
 
         logger.debug(
-            "鍔犺浇璁剧疆: username=%s, blocked_groups=%d, groups=%d, proxy=%s",
+            "加载设置: username=%s, blocked_groups=%d, groups=%d, proxy=%s",
             data.get("username"),
             len(data.get("blocked_names_by_group", {})),
             len(data.get("selected_group_ids", [])),
@@ -49,4 +52,4 @@ class SettingsService:
 
     def save(self, payload: dict) -> None:
         self.store.save(payload)
-        logger.debug("淇濆瓨璁剧疆: username=%s", payload.get("username", ""))
+        logger.debug("保存设置: username=%s", payload.get("username", ""))

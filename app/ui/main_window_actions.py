@@ -115,6 +115,14 @@ class MainWindowActionsMixin:
         }
         legacy_period_override = str(getattr(self, "_query_period_override", "")).strip()
         legacy_manual_override = bool(getattr(self, "_manual_period_override", False) and legacy_period_override)
+        advanced_time_frame = getattr(self, "advanced_time_frame", None)
+        advanced_time_enabled = bool(
+            advanced_time_frame is not None
+            and hasattr(advanced_time_frame, "isVisible")
+            and advanced_time_frame.isVisible()
+        )
+        advanced_time_start = self._settings_datetime_value("start_edit")
+        advanced_time_end = self._settings_datetime_value("end_edit")
         payload = dict(getattr(self, "settings", {}))
         payload.update(
             {
@@ -133,6 +141,9 @@ class MainWindowActionsMixin:
                 "query_period_overrides_by_site": query_period_overrides_by_site,
                 "query_period_override": "" if query_period_overrides_by_site else legacy_period_override,
                 "manual_period_override": False if query_period_overrides_by_site else legacy_manual_override,
+                "advanced_time_filter_enabled": advanced_time_enabled,
+                "advanced_time_start": advanced_time_start,
+                "advanced_time_end": advanced_time_end,
                 "is_first_launch": self._is_first_launch,
                 "proxy_enabled": payload.get("proxy_enabled", False),
                 "proxy_http": payload.get("proxy_http", ""),
@@ -141,6 +152,13 @@ class MainWindowActionsMixin:
         )
         self.settings = payload
         self.settings_service.save(payload)
+
+    def _settings_datetime_value(self, attr_name: str) -> str:
+        widget = getattr(self, attr_name, None)
+        if widget is None or not hasattr(widget, "dateTime"):
+            return ""
+        value = widget.dateTime().toPython()
+        return value.isoformat(timespec="seconds") if hasattr(value, "isoformat") else ""
 
     def _show_about(self) -> None:
         logger.debug("About dialog opened")

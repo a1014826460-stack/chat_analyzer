@@ -54,10 +54,17 @@ class MainWindowDataMixin:
             else:
                 self.period_input.setText(self._query_period_override if self._manual_period_override else "")
         now = QDateTime.currentDateTime()
+        saved_start = self._settings_datetime("advanced_time_start")
+        saved_end = self._settings_datetime("advanced_time_end")
+        advanced_enabled = bool(self.settings.get("advanced_time_filter_enabled", False))
+        if hasattr(self, "advanced_time_frame"):
+            self.advanced_time_frame.setVisible(advanced_enabled)
+        if hasattr(self, "advanced_time_toggle"):
+            self.advanced_time_toggle.setText("- 高级时间筛选" if advanced_enabled else "+ 高级时间筛选")
         if hasattr(self, "end_edit"):
-            self.end_edit.setDateTime(now)
+            self.end_edit.setDateTime(saved_end or now)
         if hasattr(self, "start_edit"):
-            self.start_edit.setDateTime(now.addDays(-1))
+            self.start_edit.setDateTime(saved_start or now.addDays(-1))
         if hasattr(self, "_refresh_block_rule_summary"):
             self._refresh_block_rule_summary()
         self._refresh_block_rule_group_selector()
@@ -73,7 +80,14 @@ class MainWindowDataMixin:
 
     def _apply_initial_splitter_sizes(self) -> None:
         if hasattr(self, "main_splitter"):
-            self.main_splitter.setSizes([420, 980])
+            self.main_splitter.setSizes([240, 1160])
+
+    def _settings_datetime(self, key: str) -> QDateTime | None:
+        raw = str(self.settings.get(key, "")).strip()
+        if not raw:
+            return None
+        value = QDateTime.fromString(raw, Qt.ISODate)
+        return value if value.isValid() else None
 
     def _resolve_database(self, silent: bool = False) -> None:
         username = self.username_combo.currentText().strip()
@@ -86,11 +100,20 @@ class MainWindowDataMixin:
             return
         resolved = self.account_resolver.resolve(username)
         if resolved is None:
+            if hasattr(self, "_remember_username"):
+                self._remember_username(username)
+            if hasattr(self, "_save_settings"):
+                self._save_settings()
             diagnostic = self.account_resolver.get_diagnostic()
             self.resolved_db = None
-            if hasattr(self, "resolved_path_edit") and hasattr(self.resolved_path_edit, "clear"):
+            has_saved_source = bool(
+                hasattr(self, "resolved_path_edit")
+                and hasattr(self.resolved_path_edit, "text")
+                and self.resolved_path_edit.text().strip()
+            )
+            if not has_saved_source and hasattr(self, "resolved_path_edit") and hasattr(self.resolved_path_edit, "clear"):
                 self.resolved_path_edit.clear()
-            if hasattr(self, "group_list") and hasattr(self.group_list, "clear"):
+            if not has_saved_source and hasattr(self, "group_list") and hasattr(self.group_list, "clear"):
                 self.group_list.clear()
             self._refresh_block_rule_group_selector()
             self.db_status_label.setText(diagnostic.format_message() if diagnostic else "未找到数据库。")
@@ -114,14 +137,23 @@ class MainWindowDataMixin:
             logger.debug("Skip group loading; source missing: %s", source_path)
             return
         groups = self.chat_service.list_groups_from_db(source_path)
+        settings = getattr(self, "settings", {})
+        selected_group_ids = {
+            str(item).strip()
+            for item in settings.get("selected_group_ids", [])
+            if str(item).strip()
+        }
+        restore_selection = bool(selected_group_ids)
         self.group_list.blockSignals(True)
         self.group_list.clear()
         for group in groups:
             item = QListWidgetItem(group.group_name)
+            item.setData(Qt.UserRole, group.group_id)
+            item.setData(Qt.UserRole + 1, group.group_name)
             item.setData(32, group.group_id)
             item.setData(33, group.group_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setCheckState(Qt.Checked if not restore_selection or group.group_id in selected_group_ids else Qt.Unchecked)
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
         self._refresh_block_rule_group_selector()
@@ -221,6 +253,7 @@ class MainWindowDataMixin:
             options.period_window_end,
             options.period_interval_sec,
         )
+        self._log_load_diagnostics(source_path, options, messages, visual_rows, stats)
         new_cursor = self.chat_service.get_cached_cursor(messages)
         return {
             "seq": load_seq,
@@ -234,6 +267,43 @@ class MainWindowDataMixin:
             "short_circuit": False,
             "current_sig": current_sig,
         }
+
+    def _log_load_diagnostics(
+        self,
+        source_path: Path,
+        options: ParseOptions,
+        messages: list[object],
+        visual_rows: list[dict[str, object]],
+        stats: object,
+    ) -> None:
+        stats_matched = int(getattr(stats, "matched_messages", 0) or 0)
+        totals_by_group = getattr(stats, "totals_by_group", {}) or {}
+        selected_group_ids = ",".join(str(item) for item in options.group_ids)
+        total_group_amounts = {
+            str(group): round(sum(float(value or 0) for value in dict(totals).values()), 2)
+            for group, totals in dict(totals_by_group).items()
+        }
+        logger.info(
+            "Load diagnostics source=%s site=%s username=%s groups=%d group_ids=%d "
+            "selected_group_ids=%s period=%s start=%s end=%s cursor=%s/%s "
+            "messages=%d matched=%d rows=%d totals_by_group=%d group_amounts=%s",
+            source_path,
+            options.site or "",
+            options.username or "",
+            len(options.groups),
+            len(options.group_ids),
+            selected_group_ids,
+            options.period_filter or "",
+            options.start_time.isoformat(sep=" ") if options.start_time else "",
+            options.end_time.isoformat(sep=" ") if options.end_time else "",
+            int(options.incremental_cursor_value or 0),
+            int(options.incremental_cursor_rand or 0),
+            len(messages),
+            stats_matched,
+            len(visual_rows),
+            len(totals_by_group),
+            total_group_amounts,
+        )
 
     def _apply_load_result(self, result: dict[str, object]) -> None:
         self.current_messages = list(result.get("current_messages", []))
@@ -318,7 +388,7 @@ class MainWindowDataMixin:
             else (self._blocked_names() if hasattr(self, "_blocked_names") else [])
         )
         return ParseOptions(
-            username=self.username_combo.currentText().strip(),
+            username="",
             groups=selected_groups,
             blocked_names=global_block_names,
             blocked_names_by_group=self.group_block_rules,

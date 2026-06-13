@@ -25,7 +25,43 @@ from app.ui.chart_window import ChartWindow
 from app.ui.main_window_theme import THEME
 
 
+LEFT_SECTION_MIN_WIDTH = 360
+LEFT_SECTION_MAX_WIDTH = 440
+LEFT_SECTION_MIN_HEIGHT = 150
+LEFT_CONTROL_MIN_HEIGHT = 34
+LEFT_TEXT_MIN_HEIGHT = 110
+
+
 class MainWindowLayoutMixin:
+    def _configure_left_section(self, widget: QWidget, min_height: int = LEFT_SECTION_MIN_HEIGHT) -> None:
+        widget.setMinimumWidth(LEFT_SECTION_MIN_WIDTH)
+        widget.setMaximumWidth(LEFT_SECTION_MAX_WIDTH)
+        widget.setMinimumHeight(min_height)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def _configure_left_control(
+        self,
+        widget: QWidget,
+        *,
+        max_width: int = 210,
+        min_height: int = LEFT_CONTROL_MIN_HEIGHT,
+        vertical_policy: QSizePolicy.Policy = QSizePolicy.Fixed,
+    ) -> None:
+        widget.setMaximumWidth(max_width)
+        widget.setMinimumHeight(min_height)
+        widget.setSizePolicy(QSizePolicy.Preferred, vertical_policy)
+
+    def _configure_left_expanding_control(
+        self,
+        widget: QWidget,
+        *,
+        min_height: int,
+    ) -> None:
+        widget.setMinimumWidth(LEFT_SECTION_MIN_WIDTH)
+        widget.setMaximumWidth(LEFT_SECTION_MAX_WIDTH)
+        widget.setMinimumHeight(min_height)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
     def _build_analysis_page(self) -> None:
         outer = QHBoxLayout(self.analysis_page)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -42,7 +78,7 @@ class MainWindowLayoutMixin:
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setMinimumWidth(260)
+        left_scroll.setMinimumWidth(180)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         left_container = QWidget()
         left_scroll.setWidget(left_container)
@@ -52,7 +88,10 @@ class MainWindowLayoutMixin:
 
         site_frame = QFrame()
         site_frame.setObjectName("siteFrame")
+        self._configure_left_section(site_frame)
         site_layout = QVBoxLayout(site_frame)
+        site_layout.setContentsMargins(10, 10, 10, 8)
+        site_layout.setSpacing(6)
         site_title = QLabel("线路选择")
         site_title.setObjectName("headingLabel")
         site_layout.addWidget(site_title)
@@ -68,12 +107,13 @@ class MainWindowLayoutMixin:
         account_layout.setColumnMinimumWidth(1, 160)
         self.username_combo = QComboBox()
         self.username_combo.setEditable(True)
+        self._configure_left_control(self.username_combo, max_width=190)
         self.resolve_button = QPushButton("自动定位数据库")
+        self._configure_left_control(self.resolve_button, max_width=120)
         self.resolve_button.clicked.connect(self._resolve_database)
         self.resolved_path_edit = QLineEdit()
         self.resolved_path_edit.setPlaceholderText("自动解析或手动选择的数据源路径")
-        self.resolved_path_edit.setMinimumHeight(34)
-        self.resolved_path_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._configure_left_control(self.resolved_path_edit)
         self.db_status_label = QLabel("输入用户名后可自动定位本地聊天数据库，也可手动选择数据源。")
         self.db_status_label.setWordWrap(True)
         account_layout.addWidget(QLabel("用户名"), 0, 0)
@@ -83,6 +123,7 @@ class MainWindowLayoutMixin:
         account_layout.addWidget(self.resolved_path_edit, 1, 1, 1, 2)
         account_layout.addWidget(self.db_status_label, 2, 0, 1, 3)
         left.addWidget(account_box)
+        self._configure_left_section(account_box)
 
         self.fallback_box = QGroupBox("手动数据源")
         fallback_layout = QGridLayout(self.fallback_box)
@@ -90,17 +131,19 @@ class MainWindowLayoutMixin:
         fallback_layout.setColumnMinimumWidth(1, 160)
         self.manual_db_edit = QLineEdit()
         self.manual_db_edit.setPlaceholderText("自动定位失败时选择 msg_0.db / sqlite / txt")
-        self.manual_db_edit.setMinimumHeight(34)
-        self.manual_db_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._configure_left_control(self.manual_db_edit)
         browse_manual_btn = QPushButton("浏览")
+        self._configure_left_control(browse_manual_btn, max_width=70)
         browse_manual_btn.clicked.connect(self._pick_manual_data_source)
         use_manual_btn = QPushButton("使用数据源")
+        self._configure_left_control(use_manual_btn, max_width=100)
         use_manual_btn.clicked.connect(self._load_manual_data_source)
         fallback_layout.addWidget(QLabel("文件"), 0, 0)
         fallback_layout.addWidget(self.manual_db_edit, 0, 1)
         fallback_layout.addWidget(browse_manual_btn, 0, 2)
         fallback_layout.addWidget(use_manual_btn, 1, 2)
         left.addWidget(self.fallback_box)
+        self._configure_left_section(self.fallback_box)
 
         filter_box = QGroupBox("筛选条件")
         filter_layout = QVBoxLayout(filter_box)
@@ -127,6 +170,10 @@ class MainWindowLayoutMixin:
         time_row.addWidget(self.time_active_label, 1, 0, 1, 4)
         filter_layout.addWidget(self.advanced_time_frame)
         self.group_list = QListWidget()
+        self._configure_left_expanding_control(
+            self.group_list,
+            min_height=140,
+        )
         self.group_list.itemChanged.connect(self._handle_group_item_changed)
         filter_layout.addWidget(self.group_list)
         group_bar = QHBoxLayout()
@@ -142,6 +189,7 @@ class MainWindowLayoutMixin:
         group_bar.addStretch(1)
         filter_layout.addLayout(group_bar)
         left.addWidget(filter_box)
+        self._configure_left_section(filter_box)
 
         block_box = QGroupBox("屏蔽名单")
         block_layout = QVBoxLayout(block_box)
@@ -150,7 +198,10 @@ class MainWindowLayoutMixin:
         block_layout.addLayout(global_row)
         self.global_block_names_edit = QTextEdit()
         self.global_block_names_edit.setPlaceholderText("全局屏蔽名称，每行一个，也可用逗号/分号分隔")
-        self.global_block_names_edit.setMaximumHeight(90)
+        self._configure_left_expanding_control(
+            self.global_block_names_edit,
+            min_height=LEFT_TEXT_MIN_HEIGHT,
+        )
         block_layout.addWidget(self.global_block_names_edit)
         global_btn_row = QHBoxLayout()
         self.global_block_save_btn = QPushButton("保存全局")
@@ -169,7 +220,10 @@ class MainWindowLayoutMixin:
         block_layout.addLayout(chooser_row)
         self.block_names_edit = QTextEdit()
         self.block_names_edit.setPlaceholderText("每行一个名称，也可用逗号/分号分隔")
-        self.block_names_edit.setMaximumHeight(100)
+        self._configure_left_expanding_control(
+            self.block_names_edit,
+            min_height=LEFT_TEXT_MIN_HEIGHT,
+        )
         block_layout.addWidget(self.block_names_edit)
         btn_row = QHBoxLayout()
         self.block_rule_save_btn = QPushButton("保存")
@@ -184,10 +238,13 @@ class MainWindowLayoutMixin:
         block_layout.addWidget(self.block_rule_status_label)
         self.block_rule_summary_view = QTextEdit()
         self.block_rule_summary_view.setReadOnly(True)
-        self.block_rule_summary_view.setMinimumHeight(120)
-        self.block_rule_summary_view.setMaximumHeight(140)
+        self._configure_left_expanding_control(
+            self.block_rule_summary_view,
+            min_height=120,
+        )
         block_layout.addWidget(self.block_rule_summary_view)
         left.addWidget(block_box)
+        self._configure_left_section(block_box)
 
         action_box = QGroupBox("状态")
         action_layout = QVBoxLayout(action_box)
@@ -198,6 +255,7 @@ class MainWindowLayoutMixin:
         action_layout.addWidget(self.status_title)
         action_layout.addWidget(self.status_label)
         left.addWidget(action_box)
+        self._configure_left_section(action_box)
 
         right_container = QWidget()
         right_container.setMinimumWidth(360)

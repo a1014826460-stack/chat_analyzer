@@ -120,17 +120,18 @@ def extract_draw_info(site: str, data: dict[str, Any] | None = None) -> DrawInfo
         return DrawInfo(current_period="")
     payload = data if data is not None else _FETCHERS[site]()
     try:
-        if site == "pc28":
-            info = _parse_pc28(payload)
-        elif site == "macao":
-            info = _parse_macao(payload)
-        elif site == "australia":
-            info = _parse_australia(payload)
-        elif site == "norway":
-            info = _parse_norway(payload)
-        else:
-            info = DrawInfo(current_period="")
+        info = _parse_draw_info_payload(site, payload)
     except Exception as exc:
+        if data is None:
+            try:
+                payload = _FETCHERS[site]()
+                info = _parse_draw_info_payload(site, payload)
+                if info.current_period:
+                    logger.info("[%s] 开奖信息首次解析失败后重试成功: %s", site_label(site), exc)
+                    _last_good_draw[site] = info
+                    return info
+            except Exception:
+                logger.debug("[%s] 开奖信息重试仍失败", site_label(site), exc_info=True)
         fallback = _extrapolate_fallback(site)
         if fallback.current_period:
             logger.warning("[%s] 开奖信息解析失败，使用上一份有效数据: %s", site_label(site), exc)
@@ -140,6 +141,18 @@ def extract_draw_info(site: str, data: dict[str, Any] | None = None) -> DrawInfo
     if info.current_period:
         _last_good_draw[site] = info
     return info
+
+
+def _parse_draw_info_payload(site: str, payload: dict[str, Any]) -> DrawInfo:
+    if site == "pc28":
+        return _parse_pc28(payload)
+    if site == "macao":
+        return _parse_macao(payload)
+    if site == "australia":
+        return _parse_australia(payload)
+    if site == "norway":
+        return _parse_norway(payload)
+    return DrawInfo(current_period="")
 
 
 def fetch_all_draw_infos() -> dict[str, DrawInfo]:

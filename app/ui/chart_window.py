@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -16,6 +18,54 @@ from PySide6.QtWidgets import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class BarChartWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.totals: dict[str, float] = {}
+        self.setMinimumHeight(220)
+
+    def set_totals(self, totals: dict[str, float]) -> None:
+        self.totals = {str(key): float(value or 0) for key, value in totals.items() if float(value or 0) > 0}
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(16, 12, -16, -12)
+        painter.fillRect(self.rect(), QColor("#fbfaf7"))
+        painter.setPen(QPen(QColor("#2f2b25")))
+        title_font = QFont("Microsoft YaHei UI", 10)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.drawText(rect.left(), rect.top(), "玩法下注柱形图")
+
+        if not self.totals:
+            painter.setPen(QColor("#8f8578"))
+            painter.drawText(rect, Qt.AlignCenter, "暂无可绘制的下注数据")
+            return
+
+        items = sorted(self.totals.items(), key=lambda item: item[1], reverse=True)[:12]
+        max_value = max(value for _play, value in items) or 1.0
+        chart_top = rect.top() + 30
+        row_height = max(22, min(34, (rect.height() - 34) // max(1, len(items))))
+        label_width = 76
+        value_width = 88
+        bar_left = rect.left() + label_width
+        bar_max_width = max(40, rect.width() - label_width - value_width)
+        colors = [QColor("#d97745"), QColor("#2f7f73"), QColor("#b13f3f"), QColor("#6b7f2f")]
+
+        body_font = QFont("Microsoft YaHei UI", 9)
+        painter.setFont(body_font)
+        for index, (play, amount) in enumerate(items):
+            y = chart_top + index * row_height
+            painter.setPen(QColor("#3a332d"))
+            painter.drawText(rect.left(), y + row_height - 7, play)
+            width = int(bar_max_width * (amount / max_value))
+            painter.fillRect(bar_left, y + 5, width, row_height - 10, colors[index % len(colors)])
+            painter.setPen(QColor("#6c6257"))
+            painter.drawText(bar_left + bar_max_width + 8, y + row_height - 7, f"{amount:,.0f}")
 
 
 class ChartWindow(QWidget):
@@ -45,12 +95,16 @@ class ChartWindow(QWidget):
 
         self.group_list = QListWidget()
         self.group_list.itemChanged.connect(self._on_group_item_changed)
+        self.group_list.setMaximumHeight(96)
         root.addWidget(self.group_list)
 
         self.status_label = QLabel(self._status_text)
         self.status_label.setWordWrap(True)
         self.status_label.setObjectName("emphasisLabel")
         root.addWidget(self.status_label)
+
+        self.bar_chart = BarChartWidget()
+        root.addWidget(self.bar_chart, 2)
 
         self.activity_view = QTextEdit()
         self.activity_view.setReadOnly(True)
@@ -112,16 +166,18 @@ class ChartWindow(QWidget):
     def _refresh_activity(self) -> None:
         selected = self.selected_groups()
         rows = [row for row in self._rows if not selected or str(row.get("group", "")) in selected]
+        self.bar_chart.set_totals(self._totals_by_play(rows))
         lines = []
         for row in rows[-120:]:
             ts = row.get("time")
             ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "-"
+            display_name = str(row.get("bettor") or row.get("username") or "")
             lines.append(
                 " | ".join(
                     [
                         ts_text,
                         str(row.get("group", "")),
-                        str(row.get("username", "")),
+                        display_name,
                         str(row.get("period", "")),
                         str(row.get("play", "")),
                         f"{float(row.get('amount', 0) or 0):,.0f}",
@@ -129,6 +185,15 @@ class ChartWindow(QWidget):
                 )
             )
         self.activity_view.setPlainText("\n".join(lines))
+
+    def _totals_by_play(self, rows: list[dict[str, object]]) -> dict[str, float]:
+        totals: dict[str, float] = defaultdict(float)
+        for row in rows:
+            play = str(row.get("play", "")).strip()
+            if not play:
+                continue
+            totals[play] += float(row.get("amount", 0) or 0)
+        return dict(totals)
 
     def _select_all_groups(self) -> None:
         logger.debug("Chart group filter: select all")
