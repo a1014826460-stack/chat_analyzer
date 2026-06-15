@@ -319,7 +319,7 @@ class ChatLogService:
         period_window_end: datetime | None,
         period_interval_sec: int,
     ) -> tuple[list[dict[str, object]], StatsResult]:
-        filtered = self.filter_blocked_messages(messages, blocked_names, blocked_ids)
+        filtered = self.filter_blocked_messages(messages, [], blocked_ids)
         visual_rows = self.extract_bet_visual_data(
             filtered,
             blocked_names=blocked_names,
@@ -450,6 +450,10 @@ class ChatLogService:
         resolved_events = self._dedupe_resolved_events(
             self._resolve_group_bet_events(messages, direct_period_context=direct_period_context)
         )
+        blocked_identity_keys, blocked_sender_keys = self._blocked_event_identity_sets(
+            resolved_events,
+            blocked_name_set,
+        )
         latest: dict[tuple[str, str, str], dict[str, object]] = {}
         direct_totals: dict[tuple[str, str, str], float] = defaultdict(float)
 
@@ -464,11 +468,14 @@ class ChatLogService:
             if sender_key and sender_key in blocked_id_set:
                 continue
             group_block_names = self._blocked_names_for_group(event.group)
-            source_name = event.bettor if event.source_kind == "receipt" and event.bettor else event.username
-            normalized_source_name = self._normalize_text(source_name)
-            if normalized_source_name in blocked_name_set:
+            event_name_keys = self._event_block_name_keys(event)
+            if sender_key and sender_key in blocked_sender_keys:
                 continue
-            if normalized_source_name in group_block_names:
+            if event_name_keys & blocked_identity_keys:
+                continue
+            if event_name_keys & blocked_name_set:
+                continue
+            if event_name_keys & group_block_names:
                 continue
 
             bettor_name = event.bettor or event.username
@@ -608,7 +615,7 @@ class ChatLogService:
             if not events:
                 continue
             for event in events:
-                if event.kind == "cancel":
+                if event.kind in {"bet", "cancel"}:
                     username, sender_id = self._resolve_receipt_owner(
                         event,
                         msg,
@@ -800,6 +807,36 @@ class ChatLogService:
     def _is_group_blocked_name(self, group: str, username: str) -> bool:
         return self._normalize_text(username) in self._blocked_names_for_group(group)
 
+    def _event_block_name_keys(self, event: ResolvedBetEvent) -> set[str]:
+        names = {
+            self._normalize_text(event.username),
+            self._normalize_text(event.bettor),
+        }
+        return {name for name in names if name}
+
+    def _blocked_event_identity_sets(
+        self,
+        events: list[ResolvedBetEvent],
+        blocked_name_set: set[str],
+    ) -> tuple[set[str], set[str]]:
+        identity_keys: set[str] = set()
+        sender_keys: set[str] = set()
+        for event in events:
+            event_name_keys = self._event_block_name_keys(event)
+            if not event_name_keys & blocked_name_set:
+                continue
+            identity_keys.update(event_name_keys)
+            sender_key = self._normalize_text(event.sender_id)
+            if sender_key:
+                sender_keys.add(sender_key)
+        if not sender_keys:
+            return identity_keys, sender_keys
+        for event in events:
+            sender_key = self._normalize_text(event.sender_id)
+            if sender_key and sender_key in sender_keys:
+                identity_keys.update(self._event_block_name_keys(event))
+        return identity_keys, sender_keys
+
     def _parse_bets(self, content: str) -> list[tuple[str, float]]:
         events: list[tuple[str, float]] = []
         for match in SIMPLE_BET_PATTERN.finditer(content):
@@ -958,6 +995,19 @@ class ChatLogService:
         if candidates:
             chosen = candidates[-1]
             return chosen.username, chosen.sender_id
+        fallback_candidates = [
+            pending
+            for candidates_for_user in pending_by_user.values()
+            for pending in candidates_for_user
+            if (
+                (not period or not pending.period or pending.period == period)
+                and msg.ts >= pending.ts
+                and msg.ts - pending.ts <= RECEIPT_MATCH_WINDOW
+            )
+        ]
+        unique_users = {(pending.username, pending.sender_id) for pending in fallback_candidates}
+        if len(unique_users) == 1:
+            return next(iter(unique_users))
         return msg.username, msg.sender_id
 
     def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:

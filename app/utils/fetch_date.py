@@ -229,12 +229,13 @@ def _parse_macao(data: dict[str, Any]) -> DrawInfo:
         raise ValueError("澳门: API 返回空 drawList")
     first = draw_list[0]
     current_period = _str_val(first.get("qihao"))
+    next_time = _parse_ts(first.get("nextOpenTime"))
     return DrawInfo(
         current_period=current_period,
         current_time=_parse_ts(first.get("opentime")),
-        next_countdown=0,
+        next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else _SITE_INTERVAL_SEC["macao"],
         next_period=_str_val(first.get("nextQihao")) or _increment_period(current_period),
-        next_time=_parse_ts(first.get("nextOpenTime")),
+        next_time=next_time,
         auto_period=current_period,
     )
 

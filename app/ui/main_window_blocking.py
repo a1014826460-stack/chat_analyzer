@@ -218,4 +218,7 @@ class MainWindowBlockingMixin:
 
     def _reload_messages_after_block_rule_change(self) -> None:
         if self._current_source_path():
+            active_site = getattr(self, "_active_site", "") or ""
+            if active_site:
+                self._last_message_cursor.pop(active_site, None)
             self._load_filtered_messages()

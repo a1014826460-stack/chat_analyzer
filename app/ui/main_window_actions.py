@@ -32,6 +32,17 @@ class MainWindowActionsMixin:
                 ids.append(str(item.data(Qt.UserRole) or ""))
         return ids
 
+    def _selected_group_mode(self) -> str:
+        if not hasattr(self, "group_list"):
+            return "custom" if self._selected_group_ids() else "none"
+        total = self.group_list.count()
+        checked = len(self._selected_group_ids())
+        if total > 0 and checked == total:
+            return "all"
+        if checked == 0:
+            return "none"
+        return "custom"
+
     def _has_any_group_items(self) -> bool:
         return self.group_list.count() > 0
 
@@ -124,10 +135,16 @@ class MainWindowActionsMixin:
         advanced_time_start = self._settings_datetime_value("start_edit")
         advanced_time_end = self._settings_datetime_value("end_edit")
         payload = dict(getattr(self, "settings", {}))
+        username = self.username_combo.currentText().strip()
+        recent_usernames = [self.username_combo.itemText(i) for i in range(self.username_combo.count())]
+        if username:
+            recent_usernames = [item for item in recent_usernames if item and item != username]
+            recent_usernames.insert(0, username)
+        recent_usernames = recent_usernames[:12]
         payload.update(
             {
-                "username": self.username_combo.currentText().strip(),
-                "recent_usernames": [self.username_combo.itemText(i) for i in range(self.username_combo.count())],
+                "username": username,
+                "recent_usernames": recent_usernames,
                 "db_dir": str(source_path.parent) if source_path else "",
                 "data_source": str(source_path) if source_path else "",
                 "export_dir": str(payload.get("export_dir", "")).strip(),
@@ -135,6 +152,7 @@ class MainWindowActionsMixin:
                 "blocked_names": global_block_names,
                 "blocked_names_by_group": self.group_block_rules,
                 "selected_group_ids": self._selected_group_ids(),
+                "selected_group_mode": self._selected_group_mode(),
                 "selected_block_group_key": self._selected_block_group_key(),
                 "fallback_db_path": self.manual_db_edit.text().strip(),
                 "lock_threshold_sec": self._lock_threshold_sec,

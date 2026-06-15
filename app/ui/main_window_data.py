@@ -143,7 +143,8 @@ class MainWindowDataMixin:
             for item in settings.get("selected_group_ids", [])
             if str(item).strip()
         }
-        restore_selection = bool(selected_group_ids)
+        selected_group_mode = str(settings.get("selected_group_mode", "")).strip()
+        restore_selection = bool(selected_group_ids) and selected_group_mode != "all"
         self.group_list.blockSignals(True)
         self.group_list.clear()
         for group in groups:
@@ -153,7 +154,13 @@ class MainWindowDataMixin:
             item.setData(32, group.group_id)
             item.setData(33, group.group_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if not restore_selection or group.group_id in selected_group_ids else Qt.Unchecked)
+            if selected_group_mode == "none":
+                check_state = Qt.Unchecked
+            elif selected_group_mode == "all" or not restore_selection or group.group_id in selected_group_ids:
+                check_state = Qt.Checked
+            else:
+                check_state = Qt.Unchecked
+            item.setCheckState(check_state)
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
         self._refresh_block_rule_group_selector()
@@ -242,6 +249,7 @@ class MainWindowDataMixin:
         active_site: str,
         old_cursor_snapshot: tuple[int, int] | None,
     ) -> dict[str, object]:
+        self.chat_service.set_group_block_rules(options.blocked_names_by_group)
         messages = self.chat_service.load_messages_with_cache(source_path, options)
         visual_rows, stats = self.chat_service.analyze_bets(
             messages,
@@ -266,6 +274,7 @@ class MainWindowDataMixin:
             "new_cursor": new_cursor,
             "short_circuit": False,
             "current_sig": current_sig,
+            "replace_chart": not options.incremental_cursor_value,
         }
 
     def _log_load_diagnostics(
@@ -315,11 +324,14 @@ class MainWindowDataMixin:
             self._last_message_cursor[self._active_site] = new_cursor
         self.status_label.setText(f"已加载 {len(self.current_messages):,} 条消息。")
         self._refresh_message_view()
-        self._update_chart_data()
+        self._update_chart_data(replace=bool(result.get("replace_chart", False)))
         self._sync_chart_status()
         logger.info("Load messages applied count=%d", len(self.current_messages))
 
     def _load_filtered_messages(self) -> None:
+        if getattr(self, "_message_load_in_progress", False):
+            logger.debug("Skip message load; previous load is still running")
+            return
         try:
             source_path, options, current_sig, _incremental = self._build_load_options(True)
         except FileNotFoundError:
@@ -327,6 +339,7 @@ class MainWindowDataMixin:
             if hasattr(self, "_set_status"):
                 self._set_status("没有数据源，请先选择数据源。", "info")
             return
+        self._message_load_in_progress = True
         self._message_load_sequence += 1
         load_seq = self._message_load_sequence
         self.status_label.setText("正在加载消息...")
@@ -352,6 +365,7 @@ class MainWindowDataMixin:
         future.add_done_callback(_forward_result)
 
     def _handle_load_result_ready(self, result: object) -> None:
+        self._message_load_in_progress = False
         if not isinstance(result, dict):
             return
         if int(result.get("seq", 0) or 0) != self._message_load_sequence:
@@ -364,9 +378,48 @@ class MainWindowDataMixin:
             return
         self._apply_load_result(result)
 
-    def _update_chart_data(self) -> None:
+    def _on_message_refresh_tick(self) -> None:
+        if getattr(self, "_message_load_in_progress", False):
+            logger.debug("Skip auto message refresh; previous load is still running")
+            return
+        if MainWindowDataMixin._active_site_is_within_lock_threshold(self):
+            logger.info(
+                "Skip auto message refresh; site=%s countdown=%s threshold=%s",
+                getattr(self, "_active_site", "") or "",
+                MainWindowDataMixin._active_site_countdown(self),
+                int(getattr(self, "_lock_threshold_sec", 0) or 0),
+            )
+            if hasattr(self, "_sync_chart_status"):
+                self._sync_chart_status()
+            return
+        self._load_filtered_messages()
+
+    def _active_site_countdown(self) -> int | None:
+        active_site = getattr(self, "_active_site", "") or ""
+        if not active_site:
+            return None
+        draw_infos = getattr(self, "_draw_infos", {}) or {}
+        info = draw_infos.get(active_site) if isinstance(draw_infos, dict) else None
+        if info is None:
+            return None
+        try:
+            return int(getattr(info, "next_countdown", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+
+    def _active_site_is_within_lock_threshold(self) -> bool:
+        threshold = int(getattr(self, "_lock_threshold_sec", 0) or 0)
+        if threshold <= 0:
+            return False
+        countdown = MainWindowDataMixin._active_site_countdown(self)
+        return countdown is not None and 0 <= countdown <= threshold
+
+    def _update_chart_data(self, replace: bool = False) -> None:
         if hasattr(self, "chart_window"):
-            self.chart_window.set_rows(self.current_visual_rows)
+            if replace and hasattr(self.chart_window, "replace_rows"):
+                self.chart_window.replace_rows(self.current_visual_rows)
+            else:
+                self.chart_window.set_rows(self.current_visual_rows)
             self.chart_window.update_activity(self.current_visual_rows)
 
     def _gather_parse_options(self) -> ParseOptions:

@@ -67,6 +67,7 @@ class MainWindow(
         self._lock_threshold_sec = int(self.settings.get("lock_threshold_sec", LOCK_THRESHOLD_DEFAULT_SEC))
         self._site_card_widgets: dict[str, dict[str, QLabel]] = {}
         self._refreshing_sites: set[str] = set()
+        self._draw_retry_counts: dict[str, int] = {}
         self._awaiting_next_period = False
         legacy_period = str(self.settings.get("query_period_override", "")).strip()
         legacy_manual = bool(self.settings.get("manual_period_override", False))
@@ -81,6 +82,7 @@ class MainWindow(
         self._last_loaded_signature = None
         self._last_message_cursor: dict[str, tuple[int, int]] = {}
         self._message_load_sequence = 0
+        self._message_load_in_progress = False
         self._splitter_initialized = False
         self._is_first_launch = bool(self.settings.get("is_first_launch", True))
 
@@ -88,6 +90,9 @@ class MainWindow(
         self._refresh_timer.timeout.connect(self._on_refresh_tick)
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._on_countdown_tick)
+        self._message_refresh_timer = QTimer(self)
+        self._message_refresh_timer.setInterval(5000)
+        self._message_refresh_timer.timeout.connect(self._on_message_refresh_tick)
         self._load_result_ready.connect(self._handle_load_result_ready)
         self._draw_infos_ready.connect(self._apply_draw_infos)
         self._single_draw_info_ready.connect(self._apply_single_draw_info)
@@ -201,10 +206,12 @@ class MainWindow(
         self._splitter_initialized = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
         self._countdown_timer.start(1000)
+        self._message_refresh_timer.start()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._refresh_timer.stop()
         self._countdown_timer.stop()
+        self._message_refresh_timer.stop()
         self._worker.shutdown(wait=False, cancel_futures=True)
         self._data_worker.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)

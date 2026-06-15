@@ -1242,6 +1242,7 @@ def test_fetch_date_parses_original_site_payload_shapes() -> None:
     assert pc28.next_period == "1002"
     assert macao.current_period == "2001"
     assert macao.next_period == "2002"
+    assert macao.next_countdown == 180
     assert australia.current_period == "3001"
     assert australia.next_period == "3002"
     assert australia.next_countdown == 120
@@ -1280,6 +1281,18 @@ def test_extract_draw_info_retries_transient_empty_pc28_payload(monkeypatch) -> 
 
     assert info.current_period == "1002"
     assert payloads == []
+
+
+def test_fetch_date_macao_without_next_time_uses_site_interval_countdown() -> None:
+    from app.utils.fetch_date import extract_draw_info
+
+    macao = extract_draw_info(
+        "macao",
+        {"data": {"drawList": [{"qihao": "2001", "opentime": "2026-06-10 12:03:00"}]}},
+    )
+
+    assert macao.next_period == "2002"
+    assert macao.next_countdown == 180
 
 
 def test_blocking_mixin_splits_chinese_punctuation() -> None:
@@ -1353,6 +1366,44 @@ def test_load_filtered_messages_uses_background_worker() -> None:
     assert invoked_inline == []
     assert len(dummy._data_worker.submissions) == 1
     assert dummy._load_result_ready.emitted == []
+
+
+def test_main_window_run_load_pipeline_syncs_group_block_rules() -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from app.models import ParseOptions, StatsResult
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls: list[tuple[str, object]] = []
+
+    class DummyService:
+        def set_group_block_rules(self, rules):
+            calls.append(("rules", rules))
+
+        def load_messages_with_cache(self, source_path, options):
+            return []
+
+        def analyze_bets(self, *args):
+            calls.append(("analyze", args))
+            return [], StatsResult(totals={})
+
+        def get_cached_cursor(self, messages):
+            return None
+
+    dummy = SimpleNamespace(
+        chat_service=DummyService(),
+        _log_load_diagnostics=lambda *args: None,
+    )
+    options = ParseOptions(
+        blocked_names_by_group={
+            "g1": {"group_id": "g1", "group_name": "摩羯座网盘4.28-3.68", "names": ["旺达"]}
+        }
+    )
+
+    MainWindowDataMixin._run_load_pipeline(dummy, Path("sample.db"), options, ("sig",), 1, "pc28", None)
+
+    assert calls[0] == ("rules", options.blocked_names_by_group)
 
 
 def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -> None:
@@ -2669,6 +2720,9 @@ def _bind_realtime_countdown_helpers(dummy) -> None:
     )
     dummy._apply_single_draw_info = lambda payload: MainWindowRealtimeMixin._apply_single_draw_info(dummy, payload)
     dummy._refreshing_site_set = lambda: MainWindowRealtimeMixin._refreshing_site_set(dummy)
+    dummy._draw_retry_count = lambda site: MainWindowRealtimeMixin._draw_retry_count(dummy, site)
+    dummy._set_draw_retry_count = lambda site, count: MainWindowRealtimeMixin._set_draw_retry_count(dummy, site, count)
+    dummy._clear_draw_retry_count = lambda site: MainWindowRealtimeMixin._clear_draw_retry_count(dummy, site)
     dummy._update_site_card_widgets = lambda site, info: None
     dummy._extrapolate_next_draw_info = lambda site, info: MainWindowRealtimeMixin._extrapolate_next_draw_info(
         dummy, site, info
@@ -2760,7 +2814,7 @@ def test_main_window_countdown_tick_updates_all_sites_and_fetches_only_expired(m
     assert dummy._draw_infos["norway"].current_period == "4001"
 
 
-def test_main_window_countdown_tick_extrapolates_expired_site_when_refresh_fails(monkeypatch) -> None:
+def test_main_window_countdown_refresh_failure_waits_five_seconds_before_retry(monkeypatch) -> None:
     from types import SimpleNamespace
 
     from app.models import DrawInfo
@@ -2773,6 +2827,7 @@ def test_main_window_countdown_tick_extrapolates_expired_site_when_refresh_fails
         _refresh_active_site_info=lambda: None,
         _render_site_cards=lambda: None,
         _refreshing_sites={"pc28"},
+        _draw_retry_counts={},
     )
     _bind_realtime_countdown_helpers(dummy)
 
@@ -2780,10 +2835,181 @@ def test_main_window_countdown_tick_extrapolates_expired_site_when_refresh_fails
     future = SimpleNamespace(result=lambda: (_ for _ in ()).throw(ValueError("empty issue list")))
     MainWindowRealtimeMixin._handle_single_draw_info_loaded(dummy, "pc28", fallback, future)
 
-    assert dummy._draw_infos["pc28"].current_period == "1002"
-    assert dummy._draw_infos["pc28"].next_period == "1003"
-    assert dummy._draw_infos["pc28"].next_countdown > 0
+    assert dummy._draw_infos["pc28"].current_period == "1001"
+    assert dummy._draw_infos["pc28"].next_period == "1002"
+    assert dummy._draw_infos["pc28"].next_countdown == 5
+    assert dummy._draw_retry_counts == {"pc28": 1}
     assert dummy._refreshing_sites == set()
+
+
+def test_main_window_countdown_refresh_uses_fallback_after_three_retries(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="3444964", next_period="3444965", next_countdown=1)},
+        _refresh_active_site_info=lambda: None,
+        _render_site_cards=lambda: None,
+        _refreshing_sites={"pc28"},
+        _draw_retry_counts={"pc28": 3},
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    fallback = MainWindowRealtimeMixin._extrapolate_next_draw_info(
+        dummy,
+        "pc28",
+        dummy._draw_infos["pc28"],
+    )
+    future = SimpleNamespace(result=lambda: (_ for _ in ()).throw(ValueError("empty issue list")))
+    MainWindowRealtimeMixin._handle_single_draw_info_loaded(dummy, "pc28", fallback, future)
+
+    assert dummy._draw_infos["pc28"].current_period == "3444965"
+    assert dummy._draw_infos["pc28"].next_period == "3444966"
+    assert dummy._draw_infos["pc28"].next_countdown == 210
+    assert dummy._draw_retry_counts == {}
+    assert dummy._refreshing_sites == set()
+
+
+def test_main_window_extrapolated_draw_advances_to_next_period() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    dummy = SimpleNamespace()
+    dummy._increment_period_text = lambda period, delta: MainWindowRealtimeMixin._increment_period_text(dummy, period, delta)
+
+    info = MainWindowRealtimeMixin._extrapolate_next_draw_info(
+        dummy,
+        "pc28",
+        DrawInfo(current_period="3444964", next_period="3444965", next_countdown=0),
+    )
+
+    assert info.current_period == "3444965"
+    assert info.next_period == "3444966"
+    assert info.auto_period == "3444965"
+
+
+def test_main_window_apply_new_active_period_resets_cursor_and_loads_next_period() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    calls: list[str] = []
+
+    class DummyInput:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def hasFocus(self) -> bool:
+            return False
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="3444964", next_period="3444965", next_countdown=0)},
+        _last_message_cursor={"pc28": (10, 20)},
+        _query_period_overrides_by_site={},
+        _stats_locked=True,
+        _awaiting_next_period=True,
+        _refreshing_sites={"pc28"},
+        period_input=DummyInput(),
+        _update_site_card_widgets=lambda site, info: calls.append("card"),
+        _refresh_active_site_info=lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy),
+        _sync_chart_status=lambda: calls.append("status"),
+        _load_filtered_messages=lambda: calls.append("load"),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+    )
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._format_countdown = lambda value: MainWindowRealtimeMixin._format_countdown(dummy, value)
+    dummy._refreshing_site_set = lambda: MainWindowRealtimeMixin._refreshing_site_set(dummy)
+
+    MainWindowRealtimeMixin._apply_single_draw_info(
+        dummy,
+        ("pc28", DrawInfo(current_period="3444965", next_period="3444966", next_countdown=210), None),
+    )
+
+    assert dummy.period_input.value == "3444966"
+    assert dummy._last_message_cursor == {}
+    assert dummy._stats_locked is False
+    assert dummy._awaiting_next_period is False
+    assert "load" in calls
+
+
+def test_main_window_query_period_change_clears_chart_when_current_period_lags() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo, StatsResult
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    calls: list[str] = []
+
+    class DummyInput:
+        def __init__(self) -> None:
+            self.value = "3444965"
+
+        def hasFocus(self) -> bool:
+            return False
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="3444964", next_period="3444965", next_countdown=0)},
+        _last_message_cursor={"pc28": (10, 20)},
+        _query_period_overrides_by_site={},
+        _stats_locked=True,
+        _awaiting_next_period=True,
+        _refreshing_sites={"pc28"},
+        current_messages=[object()],
+        current_visual_rows=[{"period": "3444965", "play": "大", "amount": 100.0}],
+        current_stats=StatsResult(totals={"大": 100.0}),
+        chart_window=SimpleNamespace(replace_rows=lambda rows: calls.append(("replace", list(rows)))),
+        period_input=DummyInput(),
+        _update_site_card_widgets=lambda site, info: calls.append("card"),
+        _refresh_active_site_info=lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy),
+        _sync_chart_status=lambda: calls.append("status"),
+        _load_filtered_messages=lambda: calls.append("load"),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+    )
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._format_countdown = lambda value: MainWindowRealtimeMixin._format_countdown(dummy, value)
+    dummy._refreshing_site_set = lambda: MainWindowRealtimeMixin._refreshing_site_set(dummy)
+
+    MainWindowRealtimeMixin._apply_single_draw_info(
+        dummy,
+        ("pc28", DrawInfo(current_period="3444964", next_period="3444966", next_countdown=210), None),
+    )
+
+    assert dummy.period_input.value == "3444966"
+    assert dummy.current_messages == []
+    assert dummy.current_visual_rows == []
+    assert dummy.current_stats == StatsResult(totals={}, totals_by_group={})
+    assert ("replace", []) in calls
+    assert "load" in calls
 
 
 def test_main_window_countdown_refresh_failure_uses_retry_countdown(monkeypatch) -> None:
@@ -2834,6 +3060,44 @@ def test_main_window_refresh_tick_does_not_poll_before_countdown_zero(monkeypatc
     )
 
     MainWindowRealtimeMixin._on_refresh_tick(dummy)
+
+    assert calls == []
+
+
+def test_main_window_message_refresh_tick_loads_messages_and_skips_when_busy() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls: list[str] = []
+    dummy = SimpleNamespace(
+        _message_load_in_progress=False,
+        _load_filtered_messages=lambda: calls.append("load"),
+    )
+
+    MainWindowDataMixin._on_message_refresh_tick(dummy)
+    dummy._message_load_in_progress = True
+    MainWindowDataMixin._on_message_refresh_tick(dummy)
+
+    assert calls == ["load"]
+
+
+def test_main_window_message_refresh_tick_skips_when_active_site_is_locked() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls: list[str] = []
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="3444964", next_period="3444965", next_countdown=20)},
+        _lock_threshold_sec=20,
+        _message_load_in_progress=False,
+        _load_filtered_messages=lambda: calls.append("load"),
+    )
+
+    MainWindowDataMixin._on_message_refresh_tick(dummy)
 
     assert calls == []
 
@@ -2964,17 +3228,18 @@ def test_site_card_uses_expanding_height_instead_of_fixed_short_height() -> None
     assert frame.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
 
 
-def test_chart_window_renders_bar_chart_totals_and_bettor_names() -> None:
+def test_chart_window_renders_vertical_stacked_allowed_play_totals() -> None:
     import os
     from datetime import datetime
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QListWidget, QTextEdit
 
-    from app.ui.chart_window import BarChartWidget, ChartWindow
+    from app.ui.chart_window import ALLOWED_CHART_PLAYS, THEME_COLORS, VerticalStackedBarChartWidget, ChartWindow
 
     app = QApplication.instance() or QApplication([])
     chart = ChartWindow()
+    chart._stack_timer.stop()
     rows = [
         {
             "time": datetime(2026, 6, 13, 19, 36, 22),
@@ -3006,13 +3271,252 @@ def test_chart_window_renders_bar_chart_totals_and_bettor_names() -> None:
     ]
 
     chart.set_rows(rows)
+    chart._append_increment_layer()
 
-    assert isinstance(chart.bar_chart, BarChartWidget)
-    assert chart.bar_chart.totals == {"大单": 7800.0, "13": 500.0}
-    activity_text = chart.activity_view.toPlainText()
-    assert "桂林" in activity_text
-    assert "朝阳" in activity_text
-    assert "TfPISL2u5" not in activity_text
+    assert isinstance(chart.bar_chart, VerticalStackedBarChartWidget)
+    assert chart.bar_chart.categories == list(ALLOWED_CHART_PLAYS)
+    assert chart.bar_chart.current_totals == {
+        "大单": 7800.0,
+        "小单": 0.0,
+        "大双": 0.0,
+        "小双": 0.0,
+        "大": 0.0,
+        "小": 0.0,
+        "单": 0.0,
+        "双": 0.0,
+    }
+    assert len(chart.bar_chart.layers) == 1
+    assert chart.bar_chart.layers[0].color == THEME_COLORS[0]
+    assert chart.bar_chart.layers[0].values["大单"] == 7800.0
+    assert "13" not in chart.bar_chart.current_totals
+    stats_text = chart.stats_text_view.toPlainText()
+    assert "2026-06-13 19:36:22 - 摩羯座网盘4.28-3.68 - 桂林 - 大单 - 2,800" in stats_text
+    assert "2026-06-13 19:36:24 - 摩羯座网盘4.28-3.68 - 朝阳 - 13 - 500" not in stats_text
+    assert "大单: 7,800" not in stats_text
+    assert len(chart.findChildren(QTextEdit)) == 1
+    assert len(chart.findChildren(QListWidget)) == 1
+    assert not hasattr(chart, "activity_view")
+    chart.close()
+
+
+def test_chart_window_keeps_period_layers_when_totals_temporarily_decrease() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    chart.set_rows([{"group": "一群", "period": "1040954", "play": "大", "amount": 100.0}])
+    chart._append_increment_layer()
+    chart.set_rows([{"group": "一群", "period": "1040954", "play": "大", "amount": 80.0}])
+    chart._append_increment_layer()
+
+    assert len(chart.bar_chart.layers) == 1
+    assert chart.bar_chart.layers[0].values["大"] == 100.0
+    assert chart.bar_chart.current_totals["大"] == 100.0
+    chart.close()
+
+
+def test_chart_window_visible_group_filter_does_not_clear_period_layers() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+    chart.set_rows(
+        [
+            {"group": "一群", "period": "1040954", "play": "大", "amount": 100.0},
+            {"group": "二群", "period": "1040954", "play": "小", "amount": 60.0},
+        ]
+    )
+    chart._append_increment_layer()
+
+    chart.group_list.item(1).setCheckState(Qt.Unchecked)
+
+    assert len(chart.bar_chart.layers) == 1
+    assert chart.bar_chart.layers[0].values["大"] == 100.0
+    assert chart.bar_chart.layers[0].values["小"] == 0.0
+    assert chart._all_layers[0].values["小"] == 60.0
+    assert chart.bar_chart.current_totals["大"] == 100.0
+    assert chart.bar_chart.current_totals["小"] == 0.0
+
+    chart.group_list.item(1).setCheckState(Qt.Checked)
+    assert chart.bar_chart.current_totals["小"] == 60.0
+    chart.close()
+
+
+def test_chart_window_keeps_current_period_history_across_incremental_set_rows() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import THEME_COLORS, ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 13, 19, 36, 22),
+                "group": "一群",
+                "bettor": "桂林",
+                "period": "1040954",
+                "play": "大",
+                "amount": 100.0,
+            }
+        ]
+    )
+    chart._append_increment_layer()
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 13, 19, 36, 27),
+                "group": "一群",
+                "bettor": "朝阳",
+                "period": "1040954",
+                "play": "小",
+                "amount": 30.0,
+            }
+        ]
+    )
+    chart._append_increment_layer()
+
+    assert [layer.color for layer in chart.bar_chart.layers] == THEME_COLORS[:2]
+    assert chart.bar_chart.layers[0].values["大"] == 100.0
+    assert chart.bar_chart.layers[1].values["小"] == 30.0
+    assert chart.bar_chart.current_totals["大"] == 100.0
+    assert chart.bar_chart.current_totals["小"] == 30.0
+    stats_text = chart.stats_text_view.toPlainText()
+    assert "2026-06-13 19:36:22 - 一群 - 桂林 - 大 - 100" in stats_text
+    assert "2026-06-13 19:36:27 - 一群 - 朝阳 - 小 - 30" in stats_text
+    chart.close()
+
+
+def test_chart_window_stats_text_shows_newest_first_and_preserves_scroll_position() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 15, 10, 0, 0),
+                "group": "一群",
+                "bettor": "旧用户",
+                "period": "3444965",
+                "play": "大",
+                "amount": 100.0,
+            },
+            {
+                "time": datetime(2026, 6, 15, 10, 0, 5),
+                "group": "一群",
+                "bettor": "新用户",
+                "period": "3444965",
+                "play": "小",
+                "amount": 50.0,
+            },
+        ]
+    )
+    assert chart.stats_text_view.toPlainText().splitlines()[0] == "2026-06-15 10:00:05 - 一群 - 新用户 - 小 - 50"
+
+    scrollbar = chart.stats_text_view.verticalScrollBar()
+    scrollbar.setValue(0)
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 15, 10, 0, 10),
+                "group": "一群",
+                "bettor": "最新用户",
+                "period": "3444965",
+                "play": "单",
+                "amount": 30.0,
+            }
+        ]
+    )
+
+    assert chart.stats_text_view.verticalScrollBar().value() == 0
+    assert chart.stats_text_view.toPlainText().splitlines()[0] == "2026-06-15 10:00:10 - 一群 - 最新用户 - 单 - 30"
+    chart.close()
+
+
+def test_chart_window_replaces_period_rows_when_filter_returns_empty_for_same_period() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 15, 15, 28, 51),
+                "group": "摩羯座网盘4.28-3.68",
+                "bettor": "旺达",
+                "period": "3444965",
+                "play": "小单",
+                "amount": 700.0,
+            }
+        ]
+    )
+    chart.replace_rows([])
+
+    assert "旺达" not in chart.stats_text_view.toPlainText()
+    assert chart.bar_chart.current_totals == chart._zero_totals()
+    chart.close()
+
+
+def test_chart_window_appends_increment_layers_with_cycling_colors() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import THEME_COLORS, ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    chart.set_rows([{"group": "一群", "play": "大", "amount": 100.0}])
+    chart._append_increment_layer()
+    chart.set_rows([{"group": "一群", "play": "大", "amount": 150.0}, {"group": "一群", "play": "小", "amount": 30.0}])
+    chart._append_increment_layer()
+
+    assert [layer.color for layer in chart.bar_chart.layers] == THEME_COLORS[:2]
+    assert chart.bar_chart.layers[0].values["大"] == 100.0
+    assert chart.bar_chart.layers[1].values["大"] == 50.0
+    assert chart.bar_chart.layers[1].values["小"] == 30.0
+    assert chart.bar_chart.current_totals["大"] == 150.0
+    assert chart.bar_chart.current_totals["小"] == 30.0
     chart.close()
 
 
@@ -3266,6 +3770,65 @@ def test_main_window_actions_save_settings_persists_global_block_names_separatel
     assert payload["blocked_names_by_group"] == {
         "g1": {"group_id": "g1", "group_name": "GroupA", "names": ["Blocked"]}
     }
+
+
+def test_main_window_actions_save_settings_moves_current_username_to_recent_front() -> None:
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def __init__(self) -> None:
+            self.items = ["tester", "齐天大圣"]
+
+        def currentText(self):
+            return "齐天大圣"
+
+        def count(self):
+            return len(self.items)
+
+        def itemText(self, index: int):
+            return self.items[index]
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return []
+
+        def _selected_block_group_key(self):
+            return ""
+
+        def _global_block_names(self):
+            return []
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["username"] == "齐天大圣"
+    assert payload["recent_usernames"][:2] == ["齐天大圣", "tester"]
 
 
 def test_main_window_does_not_promote_legacy_blocked_names_when_group_rules_exist(monkeypatch) -> None:
@@ -3748,6 +4311,43 @@ def test_load_groups_restores_saved_group_selection(tmp_path: Path) -> None:
     assert dummy.group_list.item(1).checkState() == Qt.Checked
 
 
+def test_load_groups_restores_explicit_all_selection_even_when_group_ids_changed(tmp_path: Path) -> None:
+    import sqlite3
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    msg_db = tmp_path / "msg_0.db"
+    con = sqlite3.connect(msg_db)
+    con.execute("create table message (sid text)")
+    con.executemany("insert into message values (?)", [("new1",), ("new2",)])
+    con.commit()
+    con.close()
+
+    class DummyService:
+        def list_groups_from_db(self, _source_path):
+            from app.models import ChatGroup
+
+            return [ChatGroup("new1", "新一群"), ChatGroup("new2", "新二群")]
+
+    app = QApplication.instance() or QApplication([])
+    dummy = SimpleNamespace(
+        settings={"selected_group_mode": "all", "selected_group_ids": ["old1", "old2"]},
+        group_list=QListWidget(),
+        chat_service=DummyService(),
+        _current_source_path=lambda: msg_db,
+        _refresh_block_rule_group_selector=lambda: None,
+    )
+
+    MainWindowDataMixin._load_groups_from_current_source(dummy)
+
+    assert dummy.group_list.item(0).checkState() == Qt.Checked
+    assert dummy.group_list.item(1).checkState() == Qt.Checked
+
+
 def test_main_window_global_block_ui_uses_chinese_text(monkeypatch) -> None:
     import os
 
@@ -3865,6 +4465,114 @@ def test_chat_service_global_block_list_applies_to_all_groups() -> None:
     filtered = service.filter_blocked_messages(messages, blocked_names=["Robot"], blocked_ids=[])
 
     assert filtered == []
+
+
+def test_chat_service_receipt_block_list_matches_bettor_and_resolved_nickname() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    play = "大"
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 15, 10, 0, 0),
+            group="摩羯座网盘4.28-3.68",
+            username="齐天大圣",
+            sender_id="user-1",
+            content=f"{play}100 3444965",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 15, 10, 0, 5),
+            group="摩羯座网盘4.28-3.68",
+            username="Robot",
+            sender_id="robot-1",
+            content=(
+                "@猴子 : \n"
+                "下注期数: 3444965\n"
+                "下注内容: \n"
+                "------------\n"
+                f"{play}100(1.98赔率)\n"
+                "------------\n"
+                "余额：1000"
+            ),
+        ),
+    ]
+
+    blocked_by_bettor, stats_by_bettor = service.analyze_bets(
+        messages,
+        blocked_names=["猴子"],
+        blocked_ids=[],
+        period_filter="3444965",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+    blocked_by_nickname, stats_by_nickname = service.analyze_bets(
+        messages,
+        blocked_names=["齐天大圣"],
+        blocked_ids=[],
+        period_filter="3444965",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+
+    assert blocked_by_bettor == []
+    assert stats_by_bettor.totals == {}
+    assert blocked_by_nickname == []
+    assert stats_by_nickname.totals == {}
+
+
+def test_chat_service_group_block_rule_filters_bettor_in_matching_group_only() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service.set_group_block_rules(
+        {
+            "摩羯座网盘4.28-3.68": {
+                "group_id": "摩羯座网盘4.28-3.68",
+                "group_name": "摩羯座网盘4.28-3.68",
+                "names": ["旺达"],
+            }
+        }
+    )
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 15, 15, 28, 51),
+            group="摩羯座网盘4.28-3.68",
+            username="旺达",
+            sender_id="wanda-1",
+            content="小单700 3444965",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 15, 15, 28, 53),
+            group="处女座 4.2 4.6高倍",
+            username="神经",
+            sender_id="shen-1",
+            content="小双30 小单30 3444965",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3444965",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=210,
+    )
+
+    assert all(row["bettor"] != "旺达" for row in rows)
+    assert stats.totals == {"小单": 30.0, "小双": 30.0}
 
 
 def test_chat_service_decodes_frontend_aas_ciphertext_from_legacy_exe() -> None:

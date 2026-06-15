@@ -5,7 +5,7 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout
 
-from app.models import DrawInfo
+from app.models import DrawInfo, StatsResult
 from app.ui.main_window_theme import THEME
 from app.utils.fetch_date import _SITE_INTERVAL_SEC, extract_draw_info, fetch_all_draw_infos, site_label, site_list
 
@@ -202,9 +202,25 @@ class MainWindowRealtimeMixin:
             info = future.result()
             error = None
         except Exception as exc:
-            logger.warning("[%s] 线路刷新失败，使用本地推导数据: %s", site_label(site), exc)
-            info = fallback
+            retry_count = self._draw_retry_count(site) + 1
+            if retry_count <= 3:
+                logger.warning(
+                    "[%s] 线路刷新失败，5秒后第 %d/3 次重试: %s",
+                    site_label(site),
+                    retry_count,
+                    exc,
+                )
+                self._set_draw_retry_count(site, retry_count)
+                current = self._draw_infos.get(site, DrawInfo(current_period=""))
+                current.next_countdown = 5
+                info = current
+            else:
+                logger.warning("[%s] 线路刷新重试3次仍失败，使用本地推导数据: %s", site_label(site), exc)
+                self._clear_draw_retry_count(site)
+                info = fallback
             error = exc
+        else:
+            self._clear_draw_retry_count(site)
         payload = (site, info, error)
         if hasattr(self, "_single_draw_info_ready"):
             self._single_draw_info_ready.emit(payload)
@@ -214,10 +230,54 @@ class MainWindowRealtimeMixin:
     def _apply_single_draw_info(self, payload) -> None:
         site, info, _error = payload
         self._refreshing_site_set().discard(site)
+        previous = self._draw_infos.get(site)
+        previous_period = str(getattr(previous, "current_period", "") or "").strip()
+        incoming_period = str(getattr(info, "current_period", "") or "").strip()
+        period_override = MainWindowRealtimeMixin._current_period_override(self)
+        previous_query_period = (
+            period_override or MainWindowRealtimeMixin._default_query_period(self, previous)
+            if previous is not None
+            else ""
+        )
+        incoming_query_period = period_override or MainWindowRealtimeMixin._default_query_period(self, info)
+        active_period_changed = bool(
+            self._active_site == site
+            and incoming_period
+            and previous_period
+            and incoming_period != previous_period
+        )
+        active_query_period_changed = bool(
+            self._active_site == site
+            and incoming_query_period
+            and previous_query_period
+            and incoming_query_period != previous_query_period
+        )
         self._draw_infos[site] = info
         self._update_site_card_widgets(site, info)
         if self._active_site == site:
+            if active_period_changed or active_query_period_changed:
+                MainWindowRealtimeMixin._handle_active_site_period_changed(self, site)
             self._refresh_active_site_info()
+
+    def _handle_active_site_period_changed(self, site: str) -> None:
+        last_cursor = getattr(self, "_last_message_cursor", None)
+        if isinstance(last_cursor, dict):
+            last_cursor.pop(site, None)
+        self._stats_locked = False
+        self._awaiting_next_period = False
+        if hasattr(self, "current_messages"):
+            self.current_messages = []
+        if hasattr(self, "current_visual_rows"):
+            self.current_visual_rows = []
+        if hasattr(self, "current_stats"):
+            self.current_stats = StatsResult(totals={}, totals_by_group={})
+        if hasattr(self, "chart_window") and hasattr(self.chart_window, "replace_rows"):
+            self.chart_window.replace_rows([])
+        info = self._draw_infos.get(site, DrawInfo(current_period=""))
+        if hasattr(self, "period_input"):
+            self._sync_period_input_from_site(info)
+        if not MainWindowRealtimeMixin._has_manual_period_override(self) and hasattr(self, "_load_filtered_messages"):
+            self._load_filtered_messages()
 
     def _refreshing_site_set(self) -> set[str]:
         refreshing = getattr(self, "_refreshing_sites", None)
@@ -225,6 +285,25 @@ class MainWindowRealtimeMixin:
             return refreshing
         self._refreshing_sites = set()
         return self._refreshing_sites
+
+    def _draw_retry_count(self, site: str) -> int:
+        counts = getattr(self, "_draw_retry_counts", None)
+        if not isinstance(counts, dict):
+            self._draw_retry_counts = {}
+            counts = self._draw_retry_counts
+        return int(counts.get(site, 0) or 0)
+
+    def _set_draw_retry_count(self, site: str, count: int) -> None:
+        counts = getattr(self, "_draw_retry_counts", None)
+        if not isinstance(counts, dict):
+            self._draw_retry_counts = {}
+            counts = self._draw_retry_counts
+        counts[site] = int(count)
+
+    def _clear_draw_retry_count(self, site: str) -> None:
+        counts = getattr(self, "_draw_retry_counts", None)
+        if isinstance(counts, dict):
+            counts.pop(site, None)
 
     def _extrapolate_next_draw_info(self, site: str, info: DrawInfo) -> DrawInfo:
         interval = _SITE_INTERVAL_SEC.get(site, 180)
@@ -254,6 +333,8 @@ class MainWindowRealtimeMixin:
         return str(getattr(self, "_query_period_overrides_by_site", {}).get(self._active_site or "", "")).strip()
 
     def _has_manual_period_override(self) -> bool:
+        if not hasattr(self, "_current_period_override"):
+            return False
         return bool(self._current_period_override())
 
     def _sync_period_input_from_site(self, info: DrawInfo) -> None:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -19,53 +19,116 @@ from PySide6.QtWidgets import (
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_CHART_PLAYS = ("大单", "小单", "大双", "小双", "大", "小", "单", "双")
+THEME_COLORS = ["#34dbcb", "#34c2db", "#3498db", "#346edb", "#3445db"]
 
-class BarChartWidget(QWidget):
+
+@dataclass(frozen=True)
+class ChartLayer:
+    color: str
+    values: dict[str, float]
+    groups: frozenset[str] = frozenset()
+    group_values: dict[str, dict[str, float]] | None = None
+
+
+class VerticalStackedBarChartWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.totals: dict[str, float] = {}
-        self.setMinimumHeight(220)
+        self.categories = list(ALLOWED_CHART_PLAYS)
+        self.layers: list[ChartLayer] = []
+        self.current_totals = self._zero_totals()
+        self.setMinimumHeight(260)
+
+    def set_layers(self, layers: list[ChartLayer], current_totals: dict[str, float]) -> None:
+        self.layers = [
+            ChartLayer(layer.color, {category: float(layer.values.get(category, 0.0) or 0.0) for category in self.categories})
+            for layer in layers
+        ]
+        self.current_totals = self._normalized_totals(current_totals)
+        self.update()
 
     def set_totals(self, totals: dict[str, float]) -> None:
-        self.totals = {str(key): float(value or 0) for key, value in totals.items() if float(value or 0) > 0}
-        self.update()
+        normalized = self._normalized_totals(totals)
+        layers = [ChartLayer(THEME_COLORS[0], normalized)] if any(normalized.values()) else []
+        self.set_layers(layers, normalized)
+
+    def _normalized_totals(self, totals: dict[str, float]) -> dict[str, float]:
+        normalized = self._zero_totals()
+        for category in self.categories:
+            normalized[category] = max(0.0, float(totals.get(category, 0.0) or 0.0))
+        return normalized
+
+    def _zero_totals(self) -> dict[str, float]:
+        return {category: 0.0 for category in self.categories}
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(16, 12, -16, -12)
         painter.fillRect(self.rect(), QColor("#fbfaf7"))
+
+        rect = self.rect().adjusted(18, 14, -18, -14)
         painter.setPen(QPen(QColor("#2f2b25")))
         title_font = QFont("Microsoft YaHei UI", 10)
         title_font.setBold(True)
         painter.setFont(title_font)
-        painter.drawText(rect.left(), rect.top(), "玩法下注柱形图")
+        painter.drawText(rect.left(), rect.top(), "玩法下注堆积柱形图")
 
-        if not self.totals:
+        if not self.layers or not any(self.current_totals.values()):
             painter.setPen(QColor("#8f8578"))
             painter.drawText(rect, Qt.AlignCenter, "暂无可绘制的下注数据")
             return
 
-        items = sorted(self.totals.items(), key=lambda item: item[1], reverse=True)[:12]
-        max_value = max(value for _play, value in items) or 1.0
-        chart_top = rect.top() + 30
-        row_height = max(22, min(34, (rect.height() - 34) // max(1, len(items))))
-        label_width = 76
-        value_width = 88
-        bar_left = rect.left() + label_width
-        bar_max_width = max(40, rect.width() - label_width - value_width)
-        colors = [QColor("#d97745"), QColor("#2f7f73"), QColor("#b13f3f"), QColor("#6b7f2f")]
+        chart_left = rect.left() + 54
+        chart_top = rect.top() + 34
+        chart_right = rect.right() - 12
+        chart_bottom = rect.bottom() - 46
+        chart_width = max(1, chart_right - chart_left)
+        chart_height = max(1, chart_bottom - chart_top)
+        baseline = chart_bottom
+        max_value = max(self.current_totals.values()) or 1.0
 
-        body_font = QFont("Microsoft YaHei UI", 9)
-        painter.setFont(body_font)
-        for index, (play, amount) in enumerate(items):
-            y = chart_top + index * row_height
+        axis_pen = QPen(QColor("#d8d0c5"))
+        painter.setPen(axis_pen)
+        painter.drawLine(chart_left, chart_top, chart_left, chart_bottom)
+        painter.drawLine(chart_left, chart_bottom, chart_right, chart_bottom)
+
+        grid_font = QFont("Microsoft YaHei UI", 8)
+        painter.setFont(grid_font)
+        for step in range(1, 5):
+            y = chart_bottom - int(chart_height * step / 4)
+            painter.setPen(QPen(QColor("#ebe5dc")))
+            painter.drawLine(chart_left, y, chart_right, y)
+            painter.setPen(QColor("#8f8578"))
+            painter.drawText(rect.left(), y + 4, f"{max_value * step / 4:,.0f}")
+
+        slot_width = chart_width / max(1, len(self.categories))
+        bar_width = max(12.0, min(46.0, slot_width * 0.54))
+        label_font = QFont("Microsoft YaHei UI", 8)
+        painter.setFont(label_font)
+
+        for index, category in enumerate(self.categories):
+            center_x = chart_left + slot_width * index + slot_width / 2
+            left = center_x - bar_width / 2
+            stacked_height = 0.0
+            for layer in self.layers:
+                value = float(layer.values.get(category, 0.0) or 0.0)
+                if value <= 0:
+                    continue
+                height = chart_height * (value / max_value)
+                top = baseline - stacked_height - height
+                painter.fillRect(QRectF(left, top, bar_width, height), QColor(layer.color))
+                stacked_height += height
+
+            total = self.current_totals.get(category, 0.0)
+            if total > 0:
+                painter.setPen(QColor("#51483f"))
+                painter.drawText(QRectF(left - 18, baseline - stacked_height - 20, bar_width + 36, 16), Qt.AlignCenter, f"{total:,.0f}")
+
             painter.setPen(QColor("#3a332d"))
-            painter.drawText(rect.left(), y + row_height - 7, play)
-            width = int(bar_max_width * (amount / max_value))
-            painter.fillRect(bar_left, y + 5, width, row_height - 10, colors[index % len(colors)])
-            painter.setPen(QColor("#6c6257"))
-            painter.drawText(bar_left + bar_max_width + 8, y + row_height - 7, f"{amount:,.0f}")
+            painter.drawText(QRectF(center_x - slot_width / 2, baseline + 8, slot_width, 22), Qt.AlignCenter, category)
+
+
+BarChartWidget = VerticalStackedBarChartWidget
 
 
 class ChartWindow(QWidget):
@@ -75,54 +138,93 @@ class ChartWindow(QWidget):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._rows: list[dict[str, object]] = []
+        self._period_rows: list[dict[str, object]] = []
+        self._period_row_indexes: dict[tuple[object, ...], int] = {}
         self._status_mode = "empty"
         self._status_text = "暂无投注数据"
+        self._last_totals = self._zero_totals()
+        self._last_group_totals: dict[str, dict[str, float]] = {}
+        self._last_period_key: tuple[str, ...] | None = None
+        self._next_color_index = 0
+        self._all_layers: list[ChartLayer] = []
 
         root = QVBoxLayout(self)
-        top_bar = QHBoxLayout()
-        top_bar.addWidget(QLabel("可见群组"))
-        self.group_all_btn = QPushButton("全选")
-        self.group_invert_btn = QPushButton("反选")
-        self.group_clear_btn = QPushButton("清空")
-        self.group_all_btn.clicked.connect(self._select_all_groups)
-        self.group_invert_btn.clicked.connect(self._invert_groups)
-        self.group_clear_btn.clicked.connect(self._clear_groups)
-        top_bar.addWidget(self.group_all_btn)
-        top_bar.addWidget(self.group_invert_btn)
-        top_bar.addWidget(self.group_clear_btn)
-        top_bar.addStretch(1)
-        root.addLayout(top_bar)
-
-        self.group_list = QListWidget()
-        self.group_list.itemChanged.connect(self._on_group_item_changed)
-        self.group_list.setMaximumHeight(96)
-        root.addWidget(self.group_list)
 
         self.status_label = QLabel(self._status_text)
         self.status_label.setWordWrap(True)
         self.status_label.setObjectName("emphasisLabel")
         root.addWidget(self.status_label)
 
-        self.bar_chart = BarChartWidget()
-        root.addWidget(self.bar_chart, 2)
+        self.bar_chart = VerticalStackedBarChartWidget()
+        root.addWidget(self.bar_chart, 3)
 
-        self.activity_view = QTextEdit()
-        self.activity_view.setReadOnly(True)
-        root.addWidget(self.activity_view, 1)
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(self._build_stats_panel(), 2)
+        bottom_row.addWidget(self._build_groups_panel(), 1)
+        root.addLayout(bottom_row, 2)
+
+        self._stack_timer = QTimer(self)
+        self._stack_timer.setInterval(5000)
+        self._stack_timer.timeout.connect(self._append_increment_layer)
+        self._stack_timer.start()
 
         if show_close:
             close_btn = QPushButton("关闭")
             close_btn.clicked.connect(self.hide)
             root.addWidget(close_btn, alignment=Qt.AlignLeft)
 
+    def _build_stats_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.addWidget(QLabel("实时统计文本"))
+        self.stats_text_view = QTextEdit()
+        self.stats_text_view.setReadOnly(True)
+        self.stats_text_view.setMinimumHeight(140)
+        layout.addWidget(self.stats_text_view)
+        return panel
+
+    def _build_groups_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 0, 0, 0)
+        layout.addWidget(QLabel("可见群组"))
+
+        buttons = QHBoxLayout()
+        self.group_all_btn = QPushButton("全选")
+        self.group_invert_btn = QPushButton("反选")
+        self.group_clear_btn = QPushButton("清空")
+        self.group_all_btn.clicked.connect(self._select_all_groups)
+        self.group_invert_btn.clicked.connect(self._invert_groups)
+        self.group_clear_btn.clicked.connect(self._clear_groups)
+        buttons.addWidget(self.group_all_btn)
+        buttons.addWidget(self.group_invert_btn)
+        buttons.addWidget(self.group_clear_btn)
+        layout.addLayout(buttons)
+
+        self.group_list = QListWidget()
+        self.group_list.itemChanged.connect(self._on_group_item_changed)
+        self.group_list.setMinimumHeight(140)
+        layout.addWidget(self.group_list)
+        return panel
+
     def set_rows(self, rows: list[dict[str, object]]) -> None:
-        self._rows = list(rows)
-        self._sync_group_list(rows)
+        incoming = list(rows)
+        self._merge_period_rows(incoming)
+        self._sync_group_list(self._period_rows)
         self._refresh_activity()
         logger.debug("Chart rows updated: %d rows", len(rows))
 
-    def update_activity(self, rows: list[dict[str, object]]) -> None:
+    def replace_rows(self, rows: list[dict[str, object]]) -> None:
+        self._period_rows = []
+        self._period_row_indexes = {}
+        self._reset_layers()
+        self._last_period_key = None
         self.set_rows(rows)
+
+    def update_activity(self, rows: list[dict[str, object]]) -> None:
+        self._merge_period_rows(list(rows))
+        self._refresh_activity()
 
     def set_status(self, mode: str, text: str | None = None) -> None:
         self._status_mode = mode
@@ -164,36 +266,187 @@ class ChartWindow(QWidget):
         self.group_list.blockSignals(False)
 
     def _refresh_activity(self) -> None:
-        selected = self.selected_groups()
-        rows = [row for row in self._rows if not selected or str(row.get("group", "")) in selected]
-        self.bar_chart.set_totals(self._totals_by_play(rows))
-        lines = []
-        for row in rows[-120:]:
+        totals = self._visible_totals_from_layers()
+        self._refresh_stats_text()
+        self.bar_chart.set_layers(self._visible_layers(), totals)
+
+    def _refresh_stats_text(self) -> None:
+        lines: list[str] = []
+        scrollbar = self.stats_text_view.verticalScrollBar()
+        scroll_value = scrollbar.value()
+        for row in reversed(self._filtered_allowed_rows()[-200:]):
             ts = row.get("time")
             ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "-"
-            display_name = str(row.get("bettor") or row.get("username") or "")
+            display_name = str(row.get("bettor") or row.get("nickname") or row.get("username") or "").strip()
             lines.append(
-                " | ".join(
+                " - ".join(
                     [
                         ts_text,
-                        str(row.get("group", "")),
+                        str(row.get("group", "")).strip(),
                         display_name,
-                        str(row.get("period", "")),
-                        str(row.get("play", "")),
+                        str(row.get("play", "")).strip(),
                         f"{float(row.get('amount', 0) or 0):,.0f}",
                     ]
                 )
             )
-        self.activity_view.setPlainText("\n".join(lines))
+        self.stats_text_view.setPlainText("\n".join(lines))
+        scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
 
-    def _totals_by_play(self, rows: list[dict[str, object]]) -> dict[str, float]:
-        totals: dict[str, float] = defaultdict(float)
-        for row in rows:
+    def _append_increment_layer(self) -> None:
+        period_key = self._period_key()
+        current_totals = self._all_allowed_totals()
+        if period_key != self._last_period_key:
+            self._reset_layers()
+            self._last_period_key = period_key
+
+        increments = {
+            category: max(0.0, current_totals[category] - self._last_totals[category])
+            for category in ALLOWED_CHART_PLAYS
+        }
+        group_totals = self._all_allowed_totals_by_group()
+        group_increments = self._group_increments(group_totals)
+        if any(increments.values()):
+            color = THEME_COLORS[self._next_color_index % len(THEME_COLORS)]
+            self._next_color_index += 1
+            self._all_layers.append(
+                ChartLayer(
+                    color=color,
+                    values=increments,
+                    groups=frozenset(group_increments),
+                    group_values=group_increments,
+                )
+            )
+            self._last_totals = {
+                category: max(self._last_totals[category], current_totals[category])
+                for category in ALLOWED_CHART_PLAYS
+            }
+            self._last_group_totals = self._max_group_totals(self._last_group_totals, group_totals)
+        self._refresh_activity()
+
+    def _reset_layers(self) -> None:
+        self._last_totals = self._zero_totals()
+        self._last_group_totals = {}
+        self._next_color_index = 0
+        self._all_layers = []
+        self.bar_chart.set_layers([], self._last_totals)
+
+    def _period_key(self) -> tuple[str, ...]:
+        return tuple(sorted({str(row.get("period", "")).strip() for row in self._period_rows if str(row.get("period", "")).strip()}))
+
+    def _filtered_rows(self) -> list[dict[str, object]]:
+        selected = self.selected_groups()
+        return [row for row in self._period_rows if not selected or str(row.get("group", "")) in selected]
+
+    def _filtered_allowed_rows(self) -> list[dict[str, object]]:
+        return [row for row in self._filtered_rows() if str(row.get("play", "")).strip() in ALLOWED_CHART_PLAYS]
+
+    def _all_allowed_totals(self) -> dict[str, float]:
+        totals = self._zero_totals()
+        for group_totals in self._all_allowed_totals_by_group().values():
+            for category in ALLOWED_CHART_PLAYS:
+                totals[category] += group_totals[category]
+        return totals
+
+    def _all_allowed_totals_by_group(self) -> dict[str, dict[str, float]]:
+        totals: dict[str, dict[str, float]] = {}
+        for row in self._period_rows:
             play = str(row.get("play", "")).strip()
-            if not play:
+            group = str(row.get("group", "")).strip()
+            if play not in ALLOWED_CHART_PLAYS or not group:
                 continue
-            totals[play] += float(row.get("amount", 0) or 0)
-        return dict(totals)
+            group_totals = totals.setdefault(group, self._zero_totals())
+            group_totals[play] += float(row.get("amount", 0) or 0)
+        return totals
+
+    def _visible_layers(self) -> list[ChartLayer]:
+        selected = self.selected_groups()
+        if not selected:
+            return list(self._all_layers)
+        visible: list[ChartLayer] = []
+        for layer in self._all_layers:
+            group_values = layer.group_values or {}
+            values = self._zero_totals()
+            for group in selected:
+                for category, amount in group_values.get(group, {}).items():
+                    if category in values:
+                        values[category] += float(amount or 0.0)
+            if any(values.values()):
+                visible.append(ChartLayer(layer.color, values, frozenset(selected), group_values))
+        return visible
+
+    def _visible_totals_from_layers(self) -> dict[str, float]:
+        totals = self._zero_totals()
+        for layer in self._visible_layers():
+            for category in ALLOWED_CHART_PLAYS:
+                totals[category] += float(layer.values.get(category, 0.0) or 0.0)
+        return totals
+
+    def _group_increments(self, group_totals: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
+        increments: dict[str, dict[str, float]] = {}
+        for group, totals in group_totals.items():
+            previous = self._last_group_totals.get(group, self._zero_totals())
+            values = {
+                category: max(0.0, totals[category] - previous[category])
+                for category in ALLOWED_CHART_PLAYS
+            }
+            if any(values.values()):
+                increments[group] = values
+        return increments
+
+    def _max_group_totals(
+        self,
+        previous: dict[str, dict[str, float]],
+        current: dict[str, dict[str, float]],
+    ) -> dict[str, dict[str, float]]:
+        merged = {group: dict(values) for group, values in previous.items()}
+        for group, totals in current.items():
+            existing = merged.setdefault(group, self._zero_totals())
+            for category in ALLOWED_CHART_PLAYS:
+                existing[category] = max(existing[category], totals[category])
+        return merged
+
+    def _zero_totals(self) -> dict[str, float]:
+        return {category: 0.0 for category in ALLOWED_CHART_PLAYS}
+
+    def _merge_period_rows(self, rows: list[dict[str, object]]) -> None:
+        incoming_periods = {str(row.get("period", "")).strip() for row in rows if str(row.get("period", "")).strip()}
+        existing_periods = {str(row.get("period", "")).strip() for row in self._period_rows if str(row.get("period", "")).strip()}
+        if incoming_periods and existing_periods and incoming_periods != existing_periods:
+            self._period_rows = []
+            self._period_row_indexes = {}
+            self._last_period_key = None
+            self._reset_layers()
+        for row in rows:
+            key = self._row_identity(row)
+            existing_index = self._period_row_indexes.get(key)
+            if existing_index is not None:
+                self._period_rows[existing_index] = dict(row)
+                continue
+            self._period_row_indexes[key] = len(self._period_rows)
+            self._period_rows.append(dict(row))
+
+    def _row_identity(self, row: dict[str, object]) -> tuple[object, ...]:
+        row_id = str(row.get("row_id", "")).strip()
+        if row_id:
+            return ("row_id", row_id)
+        ts = row.get("time")
+        ts_key = ts.isoformat() if hasattr(ts, "isoformat") else str(ts or "")
+        bettor = str(row.get("bettor") or row.get("nickname") or row.get("username") or "").strip()
+        if bettor:
+            return (
+                "bettor",
+                str(row.get("group", "")).strip(),
+                bettor,
+                str(row.get("period", "")).strip(),
+                str(row.get("play", "")).strip(),
+            )
+        return (
+            "fallback",
+            ts_key,
+            str(row.get("group", "")).strip(),
+            str(row.get("period", "")).strip(),
+            str(row.get("play", "")).strip(),
+        )
 
     def _select_all_groups(self) -> None:
         logger.debug("Chart group filter: select all")
@@ -206,8 +459,7 @@ class ChartWindow(QWidget):
             item = self.group_list.item(index)
             item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
         self.group_list.blockSignals(False)
-        self._refresh_activity()
-        self.groups_changed.emit()
+        self._handle_group_filter_changed()
 
     def _clear_groups(self) -> None:
         logger.debug("Chart group filter: clear")
@@ -218,9 +470,11 @@ class ChartWindow(QWidget):
         for index in range(self.group_list.count()):
             self.group_list.item(index).setCheckState(state)
         self.group_list.blockSignals(False)
-        self._refresh_activity()
-        self.groups_changed.emit()
+        self._handle_group_filter_changed()
 
     def _on_group_item_changed(self, _item: QListWidgetItem) -> None:
+        self._handle_group_filter_changed()
+
+    def _handle_group_filter_changed(self) -> None:
         self._refresh_activity()
         self.groups_changed.emit()
