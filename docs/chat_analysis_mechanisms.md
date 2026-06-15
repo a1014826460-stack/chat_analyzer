@@ -21,18 +21,21 @@
   - `_refresh_timer.start(5000)`：每 5 秒刷新一次当前激活线路的开奖信息。
   - `_countdown_timer.start(1000)`：每 1 秒更新一次倒计时显示。
 
-当前激活线路的刷新链路如下：
+当前激活线路的校准链路如下：
 
-1. `main_window_realtime._on_refresh_tick()`
-2. `fetch_date.extract_draw_info(site)`
-3. 对应站点的抓取函数，例如 `fetch_pc_28_date()`、`fetch_macao_date()`
-4. 对应解析器，例如 `_parse_pc28()`、`_parse_macao()`
-5. 回写到 `self._draw_infos[self._active_site]`
+1. `main_window_realtime._on_countdown_tick()` 每秒根据本地 `next_time` 或 `next_countdown` 更新倒计时。
+2. 倒计时归零时，`_advance_site_locally()` 先按线路窗口本地切到下一期，并通过 `_apply_single_draw_info()` 立即清空当前期消息、下注图表和实时统计文本。
+3. 本地切期后，`_schedule_draw_calibration()` 把该线路的接口校准安排到 10 秒后，避免站点正在开奖时返回旧期号或空数据。
+4. 到达校准时间后，`_submit_due_draw_calibrations()` 才提交 `fetch_date.extract_draw_info(site)`。
+5. 接口返回同一期或更新期号时，系统用 API 数据校准倒计时和期号；接口返回旧期号时，系统拒绝回滚 UI。
 
-失败处理分两层：
+失败处理分三层：
 
-- 网络失败或接口失败：`_on_refresh_tick()` 会记录异常日志，但保留当前内存里的旧开奖信息。
-- 解析失败：`extract_draw_info()` 会尝试 `_extrapolate_fallback(site)`，基于上一份成功数据和线路默认间隔推导一个回退结果。
+- 本地切期：倒计时归零时不等待接口，立即进入下一期并清空当期统计。
+- 延迟校准：本地切期 10 秒后才请求外部接口，降低开奖瞬间拿到旧期或空数据的概率。
+- 有界重试：接口提交失败、请求失败、解析失败、返回 `source!="api"` 或返回旧期号时，每 5 秒重试一次，最多 3 次；仍失败则保留本地推导期号，后续周期继续校准。
+
+`fetch_date.extract_draw_info()` 仍会维护 `_last_good_draw`，解析失败时 `_extrapolate_fallback(site)` 会基于上一份成功 API 数据和线路间隔推进已经经过的完整周期。因此 PC28 这类线路在接口失败后不会再长期停留在旧期号，例如不会因为抓取失败一直卡在 `3445293`；本地时钟会继续按 210 秒窗口推进，等接口恢复后再校准。
 
 如果一条线路从来没有拿到过有效数据，那么 `_last_good_draw` 为空，回退结果只能是空 `DrawInfo(current_period="")`。这也是为什么首次启动时如果接口异常，界面上可能只看到空期号和空倒计时。
 

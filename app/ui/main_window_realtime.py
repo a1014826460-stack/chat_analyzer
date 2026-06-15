@@ -169,6 +169,7 @@ class MainWindowRealtimeMixin:
             if info is None:
                 continue
             self._advance_site_countdown(site, info, now)
+        self._submit_due_draw_calibrations(now)
         if hasattr(self, "_render_site_cards"):
             self._render_site_cards()
         if self._active_site:
@@ -200,7 +201,7 @@ class MainWindowRealtimeMixin:
         return DrawInfo(
             current_period=current_period,
             current_time=start_time,
-            next_countdown=interval,
+            next_countdown=max(0, int((next_time - now).total_seconds())),
             next_period=self._increment_period_text(current_period, 1),
             next_time=next_time,
             auto_period=current_period,
@@ -213,48 +214,51 @@ class MainWindowRealtimeMixin:
     def _schedule_draw_calibration(self, site: str, due_at: datetime) -> None:
         self._calibration_due_map()[site] = due_at
 
+    def _submit_due_draw_calibrations(self, now: datetime) -> None:
+        due_map = self._calibration_due_map()
+        for site, due_at in list(due_map.items()):
+            if due_at > now:
+                continue
+            due_map.pop(site, None)
+            self._submit_site_draw_refresh(site, self._draw_infos.get(site, DrawInfo(current_period="")))
+
     def _submit_site_draw_refresh(self, site: str, info: DrawInfo) -> None:
         refreshing_sites = self._refreshing_site_set()
         if site in refreshing_sites:
             return
         refreshing_sites.add(site)
-        fallback = self._extrapolate_next_draw_info(site, info)
         worker = getattr(self, "_worker", None)
         if worker is None:
-            self._apply_single_draw_info((site, fallback, None))
+            refreshing_sites.discard(site)
+            self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
             return
         try:
             future = worker.submit(extract_draw_info, site)
         except Exception:
-            logger.warning("[%s] 提交线路刷新失败，使用本地推导数据", site_label(site), exc_info=True)
-            self._apply_single_draw_info((site, fallback, None))
+            logger.warning("[%s] failed to submit draw calibration, retry scheduled", site_label(site), exc_info=True)
+            refreshing_sites.discard(site)
+            self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
             return
-        future.add_done_callback(lambda finished, value=site, backup=fallback: self._handle_single_draw_info_loaded(value, backup, finished))
+        future.add_done_callback(lambda finished, value=site: self._handle_single_draw_info_loaded(value, None, finished))
 
-    def _handle_single_draw_info_loaded(self, site: str, fallback: DrawInfo, future) -> None:
+
+    def _handle_single_draw_info_loaded(self, site: str, fallback: DrawInfo | None, future) -> None:
+        error = None
         try:
             info = future.result()
-            error = None
         except Exception as exc:
-            retry_count = self._draw_retry_count(site) + 1
-            if retry_count <= 3:
-                logger.warning(
-                    "[%s] 线路刷新失败，5秒后第 %d/3 次重试: %s",
-                    site_label(site),
-                    retry_count,
-                    exc,
-                )
-                self._set_draw_retry_count(site, retry_count)
-                current = self._draw_infos.get(site, DrawInfo(current_period=""))
-                current.next_countdown = 5
-                info = current
-            else:
-                logger.warning("[%s] 线路刷新重试3次仍失败，使用本地推导数据: %s", site_label(site), exc)
-                self._clear_draw_retry_count(site)
-                info = fallback
             error = exc
-        else:
-            self._clear_draw_retry_count(site)
+            info = None
+
+        self._refreshing_site_set().discard(site)
+        if info is None or getattr(info, "source", "api") != "api" or self._is_stale_draw_info(site, info):
+            if self._schedule_calibration_retry(site):
+                logger.warning("[%s] draw calibration failed or returned stale data, retry scheduled: %s", site_label(site), error or info)
+            else:
+                logger.warning("[%s] draw calibration failed after retries, keeping inferred period: %s", site_label(site), error or info)
+            return
+
+        self._clear_draw_retry_count(site)
         payload = (site, info, error)
         if hasattr(self, "_single_draw_info_ready"):
             self._single_draw_info_ready.emit(payload)
@@ -338,6 +342,30 @@ class MainWindowRealtimeMixin:
         counts = getattr(self, "_draw_retry_counts", None)
         if isinstance(counts, dict):
             counts.pop(site, None)
+
+    def _compare_period_text(self, left: str, right: str) -> int:
+        left_text = str(left or "").strip()
+        right_text = str(right or "").strip()
+        if left_text.isdigit() and right_text.isdigit():
+            left_int = int(left_text)
+            right_int = int(right_text)
+            return (left_int > right_int) - (left_int < right_int)
+        return (left_text > right_text) - (left_text < right_text)
+
+    def _is_stale_draw_info(self, site: str, info: DrawInfo) -> bool:
+        current = self._draw_infos.get(site)
+        if current is None or not current.current_period or not info.current_period:
+            return False
+        return self._compare_period_text(info.current_period, current.current_period) < 0
+
+    def _schedule_calibration_retry(self, site: str) -> bool:
+        retry_count = self._draw_retry_count(site) + 1
+        if retry_count > CALIBRATION_MAX_RETRIES:
+            self._clear_draw_retry_count(site)
+            return False
+        self._set_draw_retry_count(site, retry_count)
+        self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
+        return True
 
     def _extrapolate_next_draw_info(self, site: str, info: DrawInfo) -> DrawInfo:
         interval = _SITE_INTERVAL_SEC.get(site, 180)
