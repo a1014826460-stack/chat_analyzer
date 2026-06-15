@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout
 
@@ -11,6 +11,10 @@ from app.utils.fetch_date import _SITE_INTERVAL_SEC, extract_draw_info, fetch_al
 
 
 logger = logging.getLogger(__name__)
+
+CALIBRATION_DELAY_SEC = 10
+CALIBRATION_RETRY_DELAY_SEC = 5
+CALIBRATION_MAX_RETRIES = 3
 
 
 class MainWindowRealtimeMixin:
@@ -177,7 +181,37 @@ class MainWindowRealtimeMixin:
             info.next_countdown -= 1
         if info.next_countdown > 0:
             return
-        self._submit_site_draw_refresh(site, info)
+        local_info = self._advance_site_locally(site, info, now)
+        self._apply_single_draw_info((site, local_info, None))
+        self._schedule_draw_calibration(site, now + timedelta(seconds=CALIBRATION_DELAY_SEC))
+
+    def _calibration_due_map(self) -> dict[str, datetime]:
+        due_at = getattr(self, "_draw_calibration_due_at", None)
+        if not isinstance(due_at, dict):
+            self._draw_calibration_due_at = {}
+            due_at = self._draw_calibration_due_at
+        return due_at
+
+    def _advance_site_locally(self, site: str, info: DrawInfo, now: datetime) -> DrawInfo:
+        interval = info.interval_sec or _SITE_INTERVAL_SEC.get(site, 180)
+        start_time = info.next_time or now
+        current_period = info.next_period or self._increment_period_text(info.current_period, 1)
+        next_time = start_time + timedelta(seconds=interval)
+        return DrawInfo(
+            current_period=current_period,
+            current_time=start_time,
+            next_countdown=interval,
+            next_period=self._increment_period_text(current_period, 1),
+            next_time=next_time,
+            auto_period=current_period,
+            start_time=start_time,
+            interval_sec=interval,
+            source="inferred",
+            last_api_success_at=info.last_api_success_at,
+        )
+
+    def _schedule_draw_calibration(self, site: str, due_at: datetime) -> None:
+        self._calibration_due_map()[site] = due_at
 
     def _submit_site_draw_refresh(self, site: str, info: DrawInfo) -> None:
         refreshing_sites = self._refreshing_site_set()

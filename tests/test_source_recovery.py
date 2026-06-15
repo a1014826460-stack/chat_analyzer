@@ -2850,9 +2850,86 @@ def _bind_realtime_countdown_helpers(dummy) -> None:
     dummy._extrapolate_next_draw_info = lambda site, info: MainWindowRealtimeMixin._extrapolate_next_draw_info(
         dummy, site, info
     )
+    dummy._calibration_due_map = lambda: MainWindowRealtimeMixin._calibration_due_map(dummy)
+    dummy._advance_site_locally = lambda site, info, now: MainWindowRealtimeMixin._advance_site_locally(
+        dummy, site, info, now
+    )
+    dummy._schedule_draw_calibration = lambda site, due_at: MainWindowRealtimeMixin._schedule_draw_calibration(
+        dummy, site, due_at
+    )
     dummy._increment_period_text = lambda period, delta: MainWindowRealtimeMixin._increment_period_text(
         dummy, period, delta
     )
+
+
+def test_main_window_countdown_zero_advances_locally_and_schedules_calibration(monkeypatch) -> None:
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo, StatsResult
+    from app.ui import main_window_realtime
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    submitted: list[str] = []
+    monkeypatch.setattr(
+        main_window_realtime,
+        "extract_draw_info",
+        lambda site: (_ for _ in ()).throw(AssertionError("countdown zero must not fetch immediately")),
+    )
+
+    class DummyWorker:
+        def submit(self, func, site):
+            submitted.append(site)
+            return SimpleNamespace(add_done_callback=lambda callback: None)
+
+    now = datetime(2026, 6, 10, 12, 3, 30)
+    replace_calls: list[list[object]] = []
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={},
+        _last_message_cursor={"pc28": (10, 20)},
+        _query_period_overrides_by_site={},
+        _stats_locked=True,
+        _awaiting_next_period=True,
+        _refreshing_sites=set(),
+        _worker=DummyWorker(),
+        current_messages=[object()],
+        current_visual_rows=[{"period": "1001"}],
+        current_stats=StatsResult(totals={"x": 1.0}),
+        chart_window=SimpleNamespace(replace_rows=lambda rows: replace_calls.append(list(rows))),
+        _update_site_card_widgets=lambda site, info: None,
+        _refresh_active_site_info=lambda: None,
+        _load_filtered_messages=lambda: None,
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    info = DrawInfo(
+        current_period="1001",
+        next_period="1002",
+        current_time=datetime(2026, 6, 10, 12, 0, 0),
+        start_time=datetime(2026, 6, 10, 12, 0, 0),
+        next_time=now,
+        next_countdown=0,
+        interval_sec=210,
+    )
+    dummy._draw_infos["pc28"] = info
+
+    MainWindowRealtimeMixin._advance_site_countdown(dummy, "pc28", info, now)
+
+    advanced = dummy._draw_infos["pc28"]
+    assert advanced.current_period == "1002"
+    assert advanced.next_period == "1003"
+    assert advanced.start_time == now
+    assert advanced.next_time == datetime(2026, 6, 10, 12, 7, 0)
+    assert advanced.next_countdown == 210
+    assert advanced.source == "inferred"
+    assert dummy.current_messages == []
+    assert dummy.current_visual_rows == []
+    assert dummy.current_stats == StatsResult(totals={}, totals_by_group={})
+    assert replace_calls == [[]]
+    assert dummy._draw_calibration_due_at["pc28"] == now + timedelta(seconds=10)
+    assert submitted == []
+    assert dummy._refreshing_sites == set()
 
 
 def test_main_window_countdown_tick_submits_refresh_only_when_countdown_reaches_zero(monkeypatch) -> None:
@@ -2869,17 +2946,11 @@ def test_main_window_countdown_tick_submits_refresh_only_when_countdown_reaches_
         lambda site: (_ for _ in ()).throw(AssertionError("network refresh must run in worker")),
     )
 
-    class DummyWorker:
-        def submit(self, func, site):
-            submitted.append((func, site))
-            return SimpleNamespace(add_done_callback=lambda callback: None)
-
     dummy = SimpleNamespace(
         _active_site="pc28",
         _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=2)},
         _refresh_active_site_info=lambda: None,
         _refreshing_sites=set(),
-        _worker=DummyWorker(),
     )
     _bind_realtime_countdown_helpers(dummy)
 
@@ -2888,9 +2959,12 @@ def test_main_window_countdown_tick_submits_refresh_only_when_countdown_reaches_
     assert dummy._draw_infos["pc28"].next_countdown == 1
 
     MainWindowRealtimeMixin._on_countdown_tick(dummy)
-    assert submitted == [(main_window_realtime.extract_draw_info, "pc28")]
-    assert dummy._draw_infos["pc28"].current_period == "1001"
-    assert dummy._refreshing_sites == {"pc28"}
+    assert submitted == []
+    assert dummy._draw_infos["pc28"].current_period == "1002"
+    assert dummy._draw_infos["pc28"].next_period == "1003"
+    assert dummy._draw_infos["pc28"].next_countdown == 210
+    assert "pc28" in dummy._draw_calibration_due_at
+    assert dummy._refreshing_sites == set()
 
 
 def test_main_window_countdown_tick_updates_all_sites_and_fetches_only_expired(monkeypatch) -> None:
@@ -2908,11 +2982,6 @@ def test_main_window_countdown_tick_updates_all_sites_and_fetches_only_expired(m
         lambda site: DrawInfo(current_period="9002", next_period="9003", next_countdown=8),
     )
 
-    class DummyWorker:
-        def submit(self, func, site):
-            submitted.append(site)
-            return SimpleNamespace(add_done_callback=lambda callback: None)
-
     dummy = SimpleNamespace(
         _active_site="pc28",
         _draw_infos={
@@ -2924,17 +2993,19 @@ def test_main_window_countdown_tick_updates_all_sites_and_fetches_only_expired(m
         _refresh_active_site_info=lambda: None,
         _render_site_cards=lambda: None,
         _refreshing_sites=set(),
-        _worker=DummyWorker(),
     )
     _bind_realtime_countdown_helpers(dummy)
 
     MainWindowRealtimeMixin._on_countdown_tick(dummy)
 
-    assert submitted == ["macao", "norway"]
+    assert submitted == []
     assert dummy._draw_infos["pc28"].next_countdown == 2
     assert dummy._draw_infos["australia"].next_countdown == 4
-    assert dummy._draw_infos["macao"].current_period == "2001"
-    assert dummy._draw_infos["norway"].current_period == "4001"
+    assert dummy._draw_infos["macao"].current_period == "2002"
+    assert dummy._draw_infos["macao"].next_period == "2003"
+    assert dummy._draw_infos["norway"].current_period == "4002"
+    assert dummy._draw_infos["norway"].next_period == "4003"
+    assert set(dummy._draw_calibration_due_at) == {"macao", "norway"}
 
 
 def test_main_window_countdown_refresh_failure_waits_five_seconds_before_retry(monkeypatch) -> None:
@@ -3161,9 +3232,12 @@ def test_main_window_countdown_refresh_failure_uses_retry_countdown(monkeypatch)
     MainWindowRealtimeMixin._on_countdown_tick(dummy)
     MainWindowRealtimeMixin._on_countdown_tick(dummy)
 
-    assert submitted == ["pc28"]
-    assert dummy._draw_infos["pc28"].current_period == "1001"
-    assert dummy._refreshing_sites == {"pc28"}
+    assert submitted == []
+    assert dummy._draw_infos["pc28"].current_period == "1002"
+    assert dummy._draw_infos["pc28"].next_period == "1003"
+    assert dummy._draw_infos["pc28"].next_countdown == 210
+    assert "pc28" in dummy._draw_calibration_due_at
+    assert dummy._refreshing_sites == set()
 
 
 def test_main_window_refresh_tick_does_not_poll_before_countdown_zero(monkeypatch) -> None:
