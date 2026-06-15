@@ -306,23 +306,31 @@ def _parse_norway(data: dict[str, Any]) -> DrawInfo:
 def _extrapolate_fallback(site: str) -> DrawInfo:
     previous = _last_good_draw.get(site)
     if previous is None or not previous.current_period:
-        return DrawInfo(current_period="")
+        return DrawInfo(current_period="", source="inferred")
 
-    interval = _SITE_INTERVAL_SEC.get(site, 180)
+    interval = previous.interval_sec or _SITE_INTERVAL_SEC.get(site, 180)
     now = datetime.now()
-    current_time = previous.current_time or now
-    next_time = previous.next_time or (current_time + timedelta(seconds=interval))
+    start_time = previous.start_time or previous.current_time or now
+    next_time = previous.next_time or (start_time + timedelta(seconds=interval))
+    periods_elapsed = 0
     while next_time <= now:
-        current_time = next_time
-        next_time = current_time + timedelta(seconds=interval)
+        start_time = next_time
+        next_time = next_time + timedelta(seconds=interval)
+        periods_elapsed += 1
+
+    current_period = _increment_period(previous.current_period, periods_elapsed)
 
     return DrawInfo(
-        current_period=_increment_period(previous.current_period, 0),
-        current_time=current_time,
+        current_period=current_period,
+        current_time=start_time,
         next_countdown=max(0, int((next_time - now).total_seconds())),
-        next_period=_increment_period(previous.current_period),
+        next_period=_increment_period(current_period),
         next_time=next_time,
-        auto_period=_increment_period(previous.current_period, 0),
+        auto_period=current_period,
+        start_time=start_time,
+        interval_sec=interval,
+        source="inferred",
+        last_api_success_at=previous.last_api_success_at,
     )
 
 

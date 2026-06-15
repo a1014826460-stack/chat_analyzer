@@ -1329,9 +1329,17 @@ def test_fetch_date_australia_derives_next_time_from_countdown(monkeypatch) -> N
     assert info.interval_sec == 180
 
 
-def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty() -> None:
+def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty(monkeypatch) -> None:
+    from datetime import datetime
+
     from app.utils import fetch_date
 
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 6, 10, 12, 1, 0)
+
+    monkeypatch.setattr(fetch_date, "datetime", FixedDateTime)
     fetch_date._last_good_draw.clear()
     first = fetch_date.extract_draw_info(
         "pc28",
@@ -1344,6 +1352,42 @@ def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty
     assert fallback.current_period == "1001"
     assert fallback.next_period == "1002"
     assert fallback.next_countdown >= 0
+
+
+def test_extract_draw_info_fallback_advances_period_after_elapsed_windows(monkeypatch) -> None:
+    from datetime import datetime
+
+    from app.models import DrawInfo
+    from app.utils import fetch_date
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 6, 10, 12, 10, 0)
+
+    monkeypatch.setattr(fetch_date, "datetime", FixedDateTime)
+    fetch_date._last_good_draw.clear()
+    fetch_date._last_good_draw["pc28"] = DrawInfo(
+        current_period="1001",
+        current_time=FixedDateTime(2026, 6, 10, 12, 0, 0),
+        next_countdown=210,
+        next_period="1002",
+        next_time=FixedDateTime(2026, 6, 10, 12, 3, 30),
+        auto_period="1001",
+        start_time=FixedDateTime(2026, 6, 10, 12, 0, 0),
+        interval_sec=210,
+        source="api",
+        last_api_success_at=FixedDateTime(2026, 6, 10, 12, 0, 5),
+    )
+
+    fallback = fetch_date.extract_draw_info("pc28", {"issue": []})
+
+    assert fallback.current_period == "1003"
+    assert fallback.next_period == "1004"
+    assert fallback.start_time == FixedDateTime(2026, 6, 10, 12, 7, 0)
+    assert fallback.next_time == FixedDateTime(2026, 6, 10, 12, 10, 30)
+    assert fallback.source == "inferred"
+    assert fallback.last_api_success_at == FixedDateTime(2026, 6, 10, 12, 0, 5)
 
 
 def test_extract_draw_info_retries_transient_empty_pc28_payload(monkeypatch) -> None:
