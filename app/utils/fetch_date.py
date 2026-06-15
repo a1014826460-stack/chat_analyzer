@@ -161,16 +161,18 @@ def _normalize_draw_schedule(site: str, info: DrawInfo, *, source: str, now: dat
     interval = _SITE_INTERVAL_SEC.get(site, 180)
     start_time = info.start_time or info.current_time
     next_time = info.next_time
+    derived_from_interval = False
 
-    if next_time is None and start_time is not None:
-        next_time = start_time + timedelta(seconds=interval)
     if next_time is None and info.next_countdown > 0:
         next_time = now + timedelta(seconds=int(info.next_countdown))
+    if next_time is None and start_time is not None:
+        next_time = start_time + timedelta(seconds=interval)
+        derived_from_interval = True
     if start_time is None and next_time is not None:
         start_time = next_time - timedelta(seconds=interval)
 
     if info.next_countdown <= 0 and next_time is not None:
-        info.next_countdown = max(0, int((next_time - now).total_seconds()))
+        info.next_countdown = interval if derived_from_interval else max(0, int((next_time - now).total_seconds()))
     if not info.next_period and info.current_period:
         info.next_period = _increment_period(info.current_period)
     if not info.auto_period:
@@ -263,7 +265,7 @@ def _parse_macao(data: dict[str, Any]) -> DrawInfo:
     return DrawInfo(
         current_period=current_period,
         current_time=_parse_ts(first.get("opentime")),
-        next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else _SITE_INTERVAL_SEC["macao"],
+        next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else 0,
         next_period=_str_val(first.get("nextQihao")) or _increment_period(current_period),
         next_time=next_time,
         auto_period=current_period,

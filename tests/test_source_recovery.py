@@ -1314,7 +1314,12 @@ def test_fetch_date_australia_derives_next_time_from_countdown(monkeypatch) -> N
 
     info = fetch_date.extract_draw_info(
         "australia",
-        {"qi": "3001", "next": {"qi": "3002", "sec": 120}},
+        {
+            "qi": "3001",
+            "time": "2026-06-10 12:00:00",
+            "current_time": "2026-06-10 12:00:00",
+            "next": {"qi": "3002", "sec": 120},
+        },
     )
 
     assert info.current_period == "3001"
