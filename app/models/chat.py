@@ -69,6 +69,10 @@ class DrawInfo:
     next_period: str = ""
     next_time: datetime | None = None
     auto_period: str = ""
+    start_time: datetime | None = None
+    interval_sec: int = 0
+    source: str = "api"
+    last_api_success_at: datetime | None = None
 
 
 @dataclass

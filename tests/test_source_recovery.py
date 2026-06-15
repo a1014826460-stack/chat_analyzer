@@ -1250,6 +1250,18 @@ def test_fetch_date_parses_original_site_payload_shapes() -> None:
     assert norway.next_period == "4002"
 
 
+def test_draw_info_exposes_local_schedule_metadata_defaults() -> None:
+    from app.models import DrawInfo
+
+    info = DrawInfo(current_period="1001")
+
+    assert info.current_period == "1001"
+    assert info.start_time is None
+    assert info.interval_sec == 0
+    assert info.source == "api"
+    assert info.last_api_success_at is None
+
+
 def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty() -> None:
     from app.utils import fetch_date
 
