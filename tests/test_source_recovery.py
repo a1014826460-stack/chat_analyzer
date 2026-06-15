@@ -1262,6 +1262,68 @@ def test_draw_info_exposes_local_schedule_metadata_defaults() -> None:
     assert info.last_api_success_at is None
 
 
+def test_fetch_date_pc28_sets_schedule_metadata_from_absolute_next_time() -> None:
+    from datetime import datetime
+
+    from app.utils.fetch_date import extract_draw_info
+
+    info = extract_draw_info(
+        "pc28",
+        {"issue": [{"qishu": "1001", "time": "2026-06-10 12:00:00", "next": 1781107410}]},
+    )
+
+    assert info.current_period == "1001"
+    assert info.next_period == "1002"
+    assert info.start_time == datetime(2026, 6, 10, 12, 0, 0)
+    assert info.current_time == datetime(2026, 6, 10, 12, 0, 0)
+    assert info.next_time == datetime.fromtimestamp(1781107410)
+    assert info.interval_sec == 210
+    assert info.source == "api"
+    assert info.last_api_success_at is not None
+
+
+def test_fetch_date_macao_without_next_time_derives_schedule_from_interval() -> None:
+    from datetime import datetime
+
+    from app.utils.fetch_date import extract_draw_info
+
+    info = extract_draw_info(
+        "macao",
+        {"data": {"drawList": [{"qihao": "2001", "opentime": "2026-06-10 12:03:00"}]}},
+    )
+
+    assert info.current_period == "2001"
+    assert info.next_period == "2002"
+    assert info.start_time == datetime(2026, 6, 10, 12, 3, 0)
+    assert info.next_time == datetime(2026, 6, 10, 12, 6, 0)
+    assert info.interval_sec == 180
+    assert info.next_countdown >= 0
+
+
+def test_fetch_date_australia_derives_next_time_from_countdown(monkeypatch) -> None:
+    from datetime import datetime
+
+    from app.utils import fetch_date
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 6, 10, 12, 0, 0)
+
+    monkeypatch.setattr(fetch_date, "datetime", FixedDateTime)
+
+    info = fetch_date.extract_draw_info(
+        "australia",
+        {"qi": "3001", "next": {"qi": "3002", "sec": 120}},
+    )
+
+    assert info.current_period == "3001"
+    assert info.next_period == "3002"
+    assert info.next_countdown == 120
+    assert info.next_time == FixedDateTime(2026, 6, 10, 12, 2, 0)
+    assert info.interval_sec == 180
+
+
 def test_extract_draw_info_falls_back_to_last_good_pc28_when_issue_list_is_empty() -> None:
     from app.utils import fetch_date
 

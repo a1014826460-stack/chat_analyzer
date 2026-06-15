@@ -125,7 +125,7 @@ def extract_draw_info(site: str, data: dict[str, Any] | None = None) -> DrawInfo
         if data is None:
             try:
                 payload = _FETCHERS[site]()
-                info = _parse_draw_info_payload(site, payload)
+                info = _normalize_draw_schedule(site, _parse_draw_info_payload(site, payload), source="api")
                 if info.current_period:
                     logger.info("[%s] 开奖信息首次解析失败后重试成功: %s", site_label(site), exc)
                     _last_good_draw[site] = info
@@ -138,6 +138,7 @@ def extract_draw_info(site: str, data: dict[str, Any] | None = None) -> DrawInfo
         else:
             logger.warning("[%s] 开奖信息解析失败，且没有可用回退数据: %s", site_label(site), exc)
         return fallback
+    info = _normalize_draw_schedule(site, info, source="api")
     if info.current_period:
         _last_good_draw[site] = info
     return info
@@ -153,6 +154,35 @@ def _parse_draw_info_payload(site: str, payload: dict[str, Any]) -> DrawInfo:
     if site == "norway":
         return _parse_norway(payload)
     return DrawInfo(current_period="")
+
+
+def _normalize_draw_schedule(site: str, info: DrawInfo, *, source: str, now: datetime | None = None) -> DrawInfo:
+    now = now or datetime.now()
+    interval = _SITE_INTERVAL_SEC.get(site, 180)
+    start_time = info.start_time or info.current_time
+    next_time = info.next_time
+
+    if next_time is None and start_time is not None:
+        next_time = start_time + timedelta(seconds=interval)
+    if next_time is None and info.next_countdown > 0:
+        next_time = now + timedelta(seconds=int(info.next_countdown))
+    if start_time is None and next_time is not None:
+        start_time = next_time - timedelta(seconds=interval)
+
+    if info.next_countdown <= 0 and next_time is not None:
+        info.next_countdown = max(0, int((next_time - now).total_seconds()))
+    if not info.next_period and info.current_period:
+        info.next_period = _increment_period(info.current_period)
+    if not info.auto_period:
+        info.auto_period = info.current_period
+
+    info.start_time = start_time
+    info.current_time = info.current_time or start_time
+    info.next_time = next_time
+    info.interval_sec = interval
+    info.source = source
+    info.last_api_success_at = now if source == "api" and info.current_period else None
+    return info
 
 
 def fetch_all_draw_infos() -> dict[str, DrawInfo]:
