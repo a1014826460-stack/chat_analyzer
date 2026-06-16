@@ -36,6 +36,7 @@ class ParseOptions:
     period_window_start: datetime | None = None
     period_window_end: datetime | None = None
     period_interval_sec: int = 0
+    lock_threshold_sec: int = 0
     incremental_since: datetime | None = None
     incremental_cursor_value: int = 0
     incremental_cursor_rand: int = 0

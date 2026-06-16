@@ -260,6 +260,7 @@ class MainWindowDataMixin:
             options.period_window_start,
             options.period_window_end,
             options.period_interval_sec,
+            options.lock_threshold_sec,
         )
         self._log_load_diagnostics(source_path, options, messages, visual_rows, stats)
         new_cursor = self.chat_service.get_cached_cursor(messages)
@@ -450,4 +451,5 @@ class MainWindowDataMixin:
             period_filter=period_filter,
             site=site,
             period_interval_sec=period_interval_sec,
+            lock_threshold_sec=int(getattr(self, "_lock_threshold_sec", 0) or 0),
         )

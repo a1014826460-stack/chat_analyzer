@@ -86,6 +86,8 @@ class DirectPeriodContext:
     period: str
     start: datetime
     end: datetime
+    accept_start: datetime
+    accept_end: datetime
 
 
 @dataclass
@@ -318,6 +320,7 @@ class ChatLogService:
         period_window_start: datetime | None,
         period_window_end: datetime | None,
         period_interval_sec: int,
+        lock_threshold_sec: int = 0,
     ) -> tuple[list[dict[str, object]], StatsResult]:
         filtered = self.filter_blocked_messages(messages, [], blocked_ids)
         visual_rows = self.extract_bet_visual_data(
@@ -329,6 +332,7 @@ class ChatLogService:
             period_window_start=period_window_start,
             period_window_end=period_window_end,
             period_interval_sec=period_interval_sec,
+            lock_threshold_sec=lock_threshold_sec,
         )
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -355,6 +359,7 @@ class ChatLogService:
         period_window_start: datetime | None,
         period_window_end: datetime | None,
         period_interval_sec: int,
+        lock_threshold_sec: int = 0,
     ) -> StatsResult:
         return self.analyze_bets(
             messages,
@@ -365,6 +370,7 @@ class ChatLogService:
             period_window_start,
             period_window_end,
             period_interval_sec,
+            lock_threshold_sec,
         )[1]
 
     def filter_blocked_messages(
@@ -436,6 +442,7 @@ class ChatLogService:
         period_window_start: datetime | None,
         period_window_end: datetime | None,
         period_interval_sec: int,
+        lock_threshold_sec: int = 0,
     ) -> list[dict[str, object]]:
         blocked_name_set = {self._normalize_text(name) for name in blocked_names}
         blocked_id_set = {self._normalize_text(item) for item in (blocked_ids or [])}
@@ -446,6 +453,7 @@ class ChatLogService:
             start=period_window_start,
             end=period_window_end,
             interval_sec=period_interval_sec,
+            lock_threshold_sec=lock_threshold_sec,
         )
         resolved_events = self._dedupe_resolved_events(
             self._resolve_group_bet_events(messages, direct_period_context=direct_period_context)
@@ -533,6 +541,7 @@ class ChatLogService:
         start: datetime | None,
         end: datetime | None,
         interval_sec: int,
+        lock_threshold_sec: int = 0,
     ) -> DirectPeriodContext | None:
         period_text = str(period or "").strip()
         if not period_text or end is None:
@@ -543,7 +552,11 @@ class ChatLogService:
             return None
         if start >= end:
             return None
-        return DirectPeriodContext(period=period_text, start=start, end=end)
+        accept_start = start + timedelta(seconds=10)
+        accept_end = end - timedelta(seconds=max(0, int(lock_threshold_sec or 0)))
+        if accept_start > accept_end:
+            return None
+        return DirectPeriodContext(period=period_text, start=start, end=end, accept_start=accept_start, accept_end=accept_end)
 
     def _event_misses_period_filter(self, event: ResolvedBetEvent, normalized_period_filter: str) -> bool:
         if not normalized_period_filter:
@@ -921,7 +934,7 @@ class ChatLogService:
         if latest_ts is None:
             return []
         if direct_period_context is not None:
-            return [(direct_period_context.start, direct_period_context.end, direct_period_context.period)]
+            return [(direct_period_context.accept_start, direct_period_context.accept_end, direct_period_context.period)]
 
         window_start = latest_ts - DIRECT_GROUP_PERIOD_WINDOW
         markers: list[tuple[datetime, str, str]] = []
@@ -959,9 +972,9 @@ class ChatLogService:
     ) -> str:
         for start, end, period in periods:
             if fixed_window:
-                if ts <= start:
+                if ts < start:
                     continue
-                if end is not None and ts > end:
+                if end is not None and ts >= end:
                     continue
                 return period
             if ts < start:

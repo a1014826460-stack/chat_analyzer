@@ -767,6 +767,176 @@ def test_chat_service_direct_group_accumulates_amount_per_bettor_period_play() -
     assert stats.totals == {"大": 30.0}
 
 
+def test_chat_service_direct_group_uses_site_window_without_robot_markers() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 55, 12),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 58, 5),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="小20",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3445723",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 10, 17, 55, 0),
+        period_window_end=datetime(2026, 6, 10, 17, 58, 30),
+        period_interval_sec=210,
+        lock_threshold_sec=20,
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "3445723", "大", 10.0),
+        ("Alice", "3445723", "小", 20.0),
+    ]
+    assert stats.totals == {"大": 10.0, "小": 20.0}
+
+
+def test_chat_service_direct_group_excludes_warmup_and_locked_window_messages() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 55, 5),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 55, 10),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="小20",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 58, 12),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="单30",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3445723",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 10, 17, 55, 0),
+        period_window_end=datetime(2026, 6, 10, 17, 58, 30),
+        period_interval_sec=210,
+        lock_threshold_sec=20,
+    )
+
+    assert [(row["play"], row["amount"]) for row in rows] == [("小", 20.0)]
+    assert stats.totals == {"小": 20.0}
+
+
+def test_chat_service_cancel_removes_all_current_period_direct_group_rows() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 55, 12),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10 小20",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 56, 0),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="取消",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3445723",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 10, 17, 55, 0),
+        period_window_end=datetime(2026, 6, 10, 17, 58, 30),
+        period_interval_sec=210,
+        lock_threshold_sec=20,
+    )
+
+    assert rows == []
+    assert stats.totals == {}
+
+
+def test_chat_service_named_cancel_removes_all_current_period_rows() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 55, 12),
+            group="普通群A",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10 小20",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 10, 17, 56, 0),
+            group="普通群A",
+            username="Robot",
+            sender_id="robot-1",
+            content="Alice 取消",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3445723",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 10, 17, 55, 0),
+        period_window_end=datetime(2026, 6, 10, 17, 58, 30),
+        period_interval_sec=210,
+        lock_threshold_sec=20,
+    )
+
+    assert rows == []
+    assert stats.totals == {}
+
+
 def test_chat_service_cancel_removes_receipt_group_latest_row_without_residue() -> None:
     from datetime import datetime
 
@@ -1619,6 +1789,7 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
     dummy.period_input = DummyText()
     dummy.group_block_rules = {"groupa": {"names": ["Blocked"]}}
     dummy._active_site = "pc28"
+    dummy._lock_threshold_sec = 25
 
     options = dummy._gather_parse_options()
 
@@ -1629,6 +1800,7 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
     assert options.period_filter == "9001"
     assert options.site == "pc28"
     assert options.period_interval_sec > 0
+    assert options.lock_threshold_sec == 25
 
 
 def test_main_window_data_gather_parse_options_does_not_flatten_group_rules_into_global_names() -> None:
