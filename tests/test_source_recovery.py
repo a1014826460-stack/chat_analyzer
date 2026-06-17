@@ -201,6 +201,103 @@ def test_chat_service_extracts_direct_group_start_and_end_markers() -> None:
     assert service._extract_direct_group_marker(end_msg) == ("end", "123456")
 
 
+def test_chat_service_treats_machine_nickname_as_direct_group_robot() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._is_group_member_robot("GroupA", "robot-1", "机器人") is True
+    assert service._is_group_member_robot("GroupA", "robot-1", "开奖机器") is True
+    assert service._is_group_member_robot("GroupA", "user-1", "Alice") is False
+
+
+def test_chat_service_direct_group_excludes_machine_nickname_bets() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 17, 19, 20, 11),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="机器人",
+            sender_id="rm7HObZVI",
+            content="大100 小100",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 17, 19, 20, 20),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="Alice",
+            sender_id="alice-1",
+            content="大50",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="20260617230",
+        site="australia",
+        period_window_start=datetime(2026, 6, 17, 19, 20, 0),
+        period_window_end=datetime(2026, 6, 17, 19, 23, 0),
+        period_interval_sec=180,
+    )
+
+    assert [(row["username"], row["play"], row["amount"]) for row in rows] == [("Alice", "大", 50.0)]
+    assert stats.totals == {"大": 50.0}
+
+
+def test_chat_service_direct_group_uses_first_machine_period_message_as_start_marker() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 17, 19, 19, 55),
+            group="蜜雪冰城全天加拿大（4.2-4.6）",
+            username="Bob",
+            sender_id="bob-1",
+            content="大100",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 17, 19, 20, 0),
+            group="蜜雪冰城全天加拿大（4.2-4.6）",
+            username="机器人",
+            sender_id="zdUCgmuiV",
+            content="---[S260617335-001]---\n当前260617335，欢迎猜猜",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 17, 19, 20, 5),
+            group="蜜雪冰城全天加拿大（4.2-4.6）",
+            username="Alice",
+            sender_id="alice-1",
+            content="小200",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="260617335",
+        site="norway",
+        period_window_start=datetime(2026, 6, 17, 19, 19, 30),
+        period_window_end=datetime(2026, 6, 17, 19, 23, 0),
+        period_interval_sec=210,
+    )
+
+    assert [(row["username"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "260617335", "小", 200.0)
+    ]
+    assert stats.totals == {"小": 200.0}
+
+
 def test_chat_service_receipt_owner_prefers_recent_same_period_pending_record() -> None:
     from collections import defaultdict
     from datetime import datetime, timedelta
@@ -1104,6 +1201,69 @@ def test_chat_service_sqlite_messages_map_group_id_to_groupinfo_name(tmp_path: P
     assert messages[0].group == "摩羯座网盘4.28-3.68"
 
 
+def test_chat_service_sqlite_messages_map_sender_id_to_group_member_nickname(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import datetime
+
+    from app.models import ParseOptions
+    from app.services.chat_service import ChatLogService
+
+    db_path = tmp_path / "msg_0.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        create table message (
+            sid text,
+            sender text,
+            time integer,
+            client_time integer,
+            rand integer,
+            element_descriptions text,
+            content blob
+        )
+        """
+    )
+    con.execute(
+        "insert into message values (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "818653745",
+            "Qs1xWRFOw",
+            0,
+            int(datetime(2026, 6, 16, 20, 40, 34).timestamp()),
+            7,
+            "",
+            "27.30",
+        ),
+    )
+    con.commit()
+    con.close()
+
+    im_con = sqlite3.connect(tmp_path / "im.db")
+    im_con.execute("create table groupinfo (group_id text, group_name text)")
+    im_con.execute("create table groupmemberinfo (group_id text, user_id text, remark text, name_card text, nick_name text)")
+    im_con.execute("insert into groupinfo values (?, ?)", ("818653745", "金财集团<金财帝国>"))
+    im_con.execute(
+        "insert into groupmemberinfo values (?, ?, ?, ?, ?)",
+        ("818653745", "Qs1xWRFOw", "", "", "丑的惊动了党"),
+    )
+    im_con.commit()
+    im_con.close()
+
+    messages = ChatLogService().load_messages_from_sqlite(
+        db_path,
+        ParseOptions(
+            group_ids=["818653745"],
+            start_time=datetime(2026, 6, 16, 20, 40, 0),
+            end_time=datetime(2026, 6, 16, 20, 41, 0),
+        ),
+    )
+
+    assert len(messages) == 1
+    assert messages[0].group == "金财集团<金财帝国>"
+    assert messages[0].username == "丑的惊动了党"
+    assert messages[0].sender_id == "Qs1xWRFOw"
+
+
 def test_chat_service_extract_message_text_preserves_multiline_receipt_context() -> None:
     from app.services.chat_service import ChatLogService
 
@@ -1742,8 +1902,10 @@ def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -
 
 
 def test_main_window_data_gather_parse_options_includes_group_and_period_context() -> None:
+    from datetime import datetime
     from PySide6.QtCore import Qt
 
+    from app.models import DrawInfo
     from app.ui.main_window_data import MainWindowDataMixin
 
     class DummyItem:
@@ -1789,6 +1951,15 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
     dummy.period_input = DummyText()
     dummy.group_block_rules = {"groupa": {"names": ["Blocked"]}}
     dummy._active_site = "pc28"
+    dummy._draw_infos = {
+        "pc28": DrawInfo(
+            current_period="9000",
+            next_period="9001",
+            start_time=datetime(2026, 6, 10, 17, 55, 0),
+            next_time=datetime(2026, 6, 10, 17, 58, 30),
+            interval_sec=210,
+        )
+    }
     dummy._lock_threshold_sec = 25
 
     options = dummy._gather_parse_options()
@@ -1799,8 +1970,55 @@ def test_main_window_data_gather_parse_options_includes_group_and_period_context
     assert options.blocked_names == ["Blocked"]
     assert options.period_filter == "9001"
     assert options.site == "pc28"
-    assert options.period_interval_sec > 0
+    assert options.period_window_start == datetime(2026, 6, 10, 17, 55, 0)
+    assert options.period_window_end == datetime(2026, 6, 10, 17, 58, 30)
+    assert options.period_interval_sec == 210
     assert options.lock_threshold_sec == 25
+
+
+def test_main_window_data_gather_parse_options_includes_active_site_window() -> None:
+    from datetime import datetime
+
+    from app.models import DrawInfo
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyList:
+        def count(self):
+            return 0
+
+    class DummyCombo:
+        def currentText(self):
+            return ""
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowDataMixin):
+        pass
+
+    dummy = DummyWindow()
+    dummy.group_list = DummyList()
+    dummy.username_combo = DummyCombo()
+    dummy.period_input = DummyText()
+    dummy.group_block_rules = {}
+    dummy._active_site = "pc28"
+    dummy._draw_infos = {
+        "pc28": DrawInfo(
+            current_period="3445799",
+            next_period="3445800",
+            start_time=datetime(2026, 6, 10, 17, 55, 0),
+            next_time=datetime(2026, 6, 10, 17, 58, 30),
+            interval_sec=210,
+        )
+    }
+
+    options = dummy._gather_parse_options()
+
+    assert options.period_filter == "3445800"
+    assert options.period_window_start == datetime(2026, 6, 10, 17, 55, 0)
+    assert options.period_window_end == datetime(2026, 6, 10, 17, 58, 30)
+    assert options.period_interval_sec == 210
 
 
 def test_main_window_data_gather_parse_options_does_not_flatten_group_rules_into_global_names() -> None:
@@ -1861,7 +2079,7 @@ def test_main_window_data_gather_parse_options_does_not_flatten_group_rules_into
     }
 
 
-def test_main_window_data_load_initial_state_restores_period_and_activation_gate() -> None:
+def test_main_window_data_load_initial_state_forces_default_query_period_and_activation_gate() -> None:
     from app.ui.main_window_data import MainWindowDataMixin
 
     class DummyCombo:
@@ -1931,8 +2149,6 @@ def test_main_window_data_load_initial_state_restores_period_and_activation_gate
     dummy.end_edit = DummyDateTimeEdit()
     dummy.tabs = DummyTabs()
     dummy.license_page = object()
-    dummy._manual_period_override = True
-    dummy._query_period_override = "7788"
     dummy._require_activation = True
     dummy._active_site = ""
     dummy.license_service = DummyLicenseService()
@@ -1942,11 +2158,11 @@ def test_main_window_data_load_initial_state_restores_period_and_activation_gate
     assert dummy.username_combo.items == ["Alice", "Bob"]
     assert dummy.username_combo.current == "Alice"
     assert dummy.manual_db_edit.value == "D:/db.sqlite"
-    assert dummy.period_input.value == "7788"
+    assert dummy.period_input.value == ""
     assert dummy.tabs.current is dummy.license_page
 
 
-def test_main_window_data_load_initial_state_restores_period_override_map() -> None:
+def test_main_window_data_load_initial_state_does_not_restore_period_override_map() -> None:
     from app.ui.main_window_data import MainWindowDataMixin
 
     class DummyCombo:
@@ -2026,8 +2242,8 @@ def test_main_window_data_load_initial_state_restores_period_override_map() -> N
 
     dummy._load_initial_state()
 
-    assert dummy._query_period_overrides_by_site == {"pc28": "7788"}
-    assert dummy.period_input.value == "7788"
+    assert dummy._query_period_overrides_by_site == {}
+    assert dummy.period_input.value == ""
 
 
 def test_main_window_data_load_initial_state_restores_advanced_time_filter() -> None:
@@ -2097,7 +2313,7 @@ def test_main_window_data_load_initial_state_restores_advanced_time_filter() -> 
     assert dummy.end_edit.value.toPython() == datetime(2026, 6, 12, 3, 35, 0)
 
 
-def test_main_window_data_load_initial_state_seeds_legacy_period_into_active_site() -> None:
+def test_main_window_data_load_initial_state_leaves_period_blank_without_loaded_draw_info() -> None:
     from app.ui.main_window_data import MainWindowDataMixin
 
     class DummyCombo:
@@ -2169,8 +2385,6 @@ def test_main_window_data_load_initial_state_seeds_legacy_period_into_active_sit
     dummy.end_edit = DummyDateTimeEdit()
     dummy.tabs = DummyTabs()
     dummy.license_page = object()
-    dummy._query_period_override = "7788"
-    dummy._manual_period_override = True
     dummy._query_period_overrides_by_site = {}
     dummy._active_site = "macao"
     dummy._require_activation = True
@@ -2178,8 +2392,8 @@ def test_main_window_data_load_initial_state_seeds_legacy_period_into_active_sit
 
     dummy._load_initial_state()
 
-    assert dummy._query_period_overrides_by_site == {"macao": "7788"}
-    assert dummy.period_input.value == "7788"
+    assert dummy._query_period_overrides_by_site == {}
+    assert dummy.period_input.value == ""
 
 
 def test_main_window_advanced_time_toggle_shows_filter_frame() -> None:
@@ -2641,7 +2855,7 @@ def test_main_window_layout_uses_readable_chinese_labels() -> None:
 
     button_texts = {button.text() for button in dummy.analysis_page.findChildren(QPushButton)}
 
-    assert {"自动定位数据库", "浏览", "使用数据源", "全选", "反选", "上一页", "下一页"} <= button_texts
+    assert {"自动定位数据库", "浏览", "使用数据源", "全选", "反选", "原始聊天记录"} <= button_texts
     assert dummy.resolved_path_edit.placeholderText() == "自动解析或手动选择的数据源路径"
     assert dummy.manual_db_edit.placeholderText() == "自动定位失败时选择 msg_0.db / sqlite / txt"
     dummy.analysis_page.close()
@@ -2690,7 +2904,7 @@ def test_realtime_and_chart_status_labels_are_chinese() -> None:
     assert dummy.auto_refresh_label.text == "运行中"
 
 
-def test_main_window_realtime_period_override_is_stored_per_site() -> None:
+def test_main_window_realtime_period_input_ignores_saved_override_map() -> None:
     from types import SimpleNamespace
 
     from app.models import DrawInfo
@@ -2743,11 +2957,11 @@ def test_main_window_realtime_period_override_is_stored_per_site() -> None:
     dummy._refresh_active_site_info = lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy)
 
     MainWindowRealtimeMixin._refresh_active_site_info(dummy)
-    assert dummy.period_input.value == "7788"
+    assert dummy.period_input.value == "1002"
 
     MainWindowRealtimeMixin._select_site(dummy, "macao")
-    assert dummy.period_input.value == "8899"
-    assert dummy._query_period_overrides_by_site["pc28"] == "7788"
+    assert dummy.period_input.value == "2002"
+    assert dummy._query_period_overrides_by_site == {}
 
 
 def test_main_window_realtime_auto_period_clears_stale_override_matching_next_period() -> None:
@@ -2832,7 +3046,7 @@ def test_main_window_realtime_period_sync_does_not_overwrite_focused_user_input(
     assert dummy.period_input.value == "3444518"
 
 
-def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selected_site() -> None:
+def test_main_window_realtime_select_site_forces_default_query_period_on_first_selected_site() -> None:
     from types import SimpleNamespace
 
     from app.models import DrawInfo
@@ -2854,8 +3068,6 @@ def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selecte
     dummy = SimpleNamespace(
         _active_site="",
         _query_period_overrides_by_site={},
-        _query_period_override="7788",
-        _manual_period_override=True,
         _draw_infos={"macao": DrawInfo(current_period="2001", next_period="2002")},
         period_input=DummyPeriodInput(),
         active_site_label=SimpleNamespace(setText=lambda value: None),
@@ -2883,11 +3095,11 @@ def test_main_window_realtime_select_site_seeds_legacy_period_into_first_selecte
 
     MainWindowRealtimeMixin._select_site(dummy, "macao")
 
-    assert dummy._query_period_overrides_by_site == {"macao": "7788"}
-    assert dummy.period_input.value == "7788"
+    assert dummy._query_period_overrides_by_site == {}
+    assert dummy.period_input.value == "2002"
 
 
-def test_main_window_realtime_select_site_saves_after_legacy_period_migration() -> None:
+def test_main_window_realtime_select_site_does_not_save_legacy_period_migration() -> None:
     from types import SimpleNamespace
 
     from app.models import DrawInfo
@@ -2910,8 +3122,6 @@ def test_main_window_realtime_select_site_saves_after_legacy_period_migration() 
     dummy = SimpleNamespace(
         _active_site="",
         _query_period_overrides_by_site={},
-        _query_period_override="7788",
-        _manual_period_override=True,
         _draw_infos={"macao": DrawInfo(current_period="2001", next_period="2002")},
         period_input=DummyPeriodInput(),
         active_site_label=SimpleNamespace(setText=lambda value: None),
@@ -2939,10 +3149,10 @@ def test_main_window_realtime_select_site_saves_after_legacy_period_migration() 
 
     MainWindowRealtimeMixin._select_site(dummy, "macao")
 
-    assert save_calls == ["saved"]
+    assert save_calls == []
 
 
-def test_main_window_realtime_select_site_preserves_legacy_period_on_previous_site() -> None:
+def test_main_window_realtime_select_site_does_not_preserve_legacy_period_on_previous_site() -> None:
     from types import SimpleNamespace
 
     from app.models import DrawInfo
@@ -2964,8 +3174,6 @@ def test_main_window_realtime_select_site_preserves_legacy_period_on_previous_si
     dummy = SimpleNamespace(
         _active_site="pc28",
         _query_period_overrides_by_site={},
-        _query_period_override="7788",
-        _manual_period_override=True,
         _draw_infos={
             "pc28": DrawInfo(current_period="1001", next_period="1002"),
             "macao": DrawInfo(current_period="2001", next_period="2002"),
@@ -2996,7 +3204,7 @@ def test_main_window_realtime_select_site_preserves_legacy_period_on_previous_si
 
     MainWindowRealtimeMixin._select_site(dummy, "macao")
 
-    assert dummy._query_period_overrides_by_site == {"pc28": "7788"}
+    assert dummy._query_period_overrides_by_site == {}
     assert dummy._query_period_override == ""
     assert dummy.period_input.value == "2002"
 
@@ -3175,7 +3383,7 @@ def test_main_window_countdown_tick_submits_refresh_only_when_countdown_reaches_
     assert submitted == []
     assert dummy._draw_infos["pc28"].current_period == "1002"
     assert dummy._draw_infos["pc28"].next_period == "1003"
-    assert dummy._draw_infos["pc28"].next_countdown == 210
+    assert 208 <= dummy._draw_infos["pc28"].next_countdown <= 210
     assert "pc28" in dummy._draw_calibration_due_at
     assert dummy._refreshing_sites == set()
 
@@ -3617,6 +3825,74 @@ def test_main_window_query_period_change_clears_chart_when_current_period_lags()
     assert dummy.current_stats == StatsResult(totals={}, totals_by_group={})
     assert ("replace", []) in calls
     assert "load" in calls
+
+
+def test_main_window_next_period_update_clears_stale_manual_query_override() -> None:
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo, StatsResult
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    calls: list[object] = []
+
+    class DummyInput:
+        def __init__(self) -> None:
+            self.value = "3445740"
+
+        def hasFocus(self) -> bool:
+            return False
+
+        def blockSignals(self, _value: bool) -> None:
+            return None
+
+        def setText(self, value: str) -> None:
+            self.value = value
+
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="3445798", next_period="3445799", next_countdown=0)},
+        _last_message_cursor={"pc28": (10, 20)},
+        _query_period_overrides_by_site={"pc28": "3445740"},
+        _query_period_override="3445740",
+        _manual_period_override=True,
+        _stats_locked=True,
+        _awaiting_next_period=True,
+        _refreshing_sites={"pc28"},
+        current_messages=[object()],
+        current_visual_rows=[{"period": "3445740", "play": "大", "amount": 100.0}],
+        current_stats=StatsResult(totals={"大": 100.0}),
+        chart_window=SimpleNamespace(replace_rows=lambda rows: calls.append(("replace", list(rows)))),
+        period_input=DummyInput(),
+        _update_site_card_widgets=lambda site, info: calls.append("card"),
+        _refresh_active_site_info=lambda: MainWindowRealtimeMixin._refresh_active_site_info(dummy),
+        _sync_chart_status=lambda: calls.append("status"),
+        _load_filtered_messages=lambda: calls.append("load"),
+        _save_settings=lambda: calls.append("save"),
+        active_site_label=SimpleNamespace(setText=lambda value: None),
+        active_period_label=SimpleNamespace(setText=lambda value: None),
+        next_period_label=SimpleNamespace(setText=lambda value: None),
+        countdown_label=SimpleNamespace(setText=lambda value: None),
+    )
+    dummy._default_query_period = lambda info: MainWindowRealtimeMixin._default_query_period(dummy, info)
+    dummy._current_period_override = lambda: MainWindowRealtimeMixin._current_period_override(dummy)
+    dummy._sync_period_input_from_site = lambda info: MainWindowRealtimeMixin._sync_period_input_from_site(dummy, info)
+    dummy._format_countdown = lambda value: MainWindowRealtimeMixin._format_countdown(dummy, value)
+    dummy._refreshing_site_set = lambda: MainWindowRealtimeMixin._refreshing_site_set(dummy)
+
+    MainWindowRealtimeMixin._apply_single_draw_info(
+        dummy,
+        ("pc28", DrawInfo(current_period="3445799", next_period="3445800", next_countdown=210), None),
+    )
+
+    assert dummy.period_input.value == "3445800"
+    assert dummy._query_period_overrides_by_site == {}
+    assert dummy._query_period_override == ""
+    assert dummy._manual_period_override is False
+    assert dummy.current_messages == []
+    assert dummy.current_visual_rows == []
+    assert ("replace", []) in calls
+    assert "load" in calls
+    assert "save" in calls
 
 
 def test_main_window_countdown_refresh_failure_uses_retry_countdown(monkeypatch) -> None:
@@ -4069,6 +4345,36 @@ def test_chart_window_stats_text_shows_newest_first_and_preserves_scroll_positio
 
     assert chart.stats_text_view.verticalScrollBar().value() == 0
     assert chart.stats_text_view.toPlainText().splitlines()[0] == "2026-06-15 10:00:10 - 一群 - 最新用户 - 单 - 30"
+    chart.close()
+
+
+def test_chart_window_update_activity_immediately_syncs_bar_chart_with_rows() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ALLOWED_CHART_PLAYS, ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    play_a, play_b = ALLOWED_CHART_PLAYS[0], ALLOWED_CHART_PLAYS[1]
+    rows = [
+        {"time": datetime(2026, 6, 17, 10, 0, 0), "group": "G1", "bettor": "A", "period": "p1", "play": play_a, "amount": 100.0},
+        {"time": datetime(2026, 6, 17, 10, 0, 1), "group": "G2", "bettor": "B", "period": "p1", "play": play_b, "amount": 50.0},
+    ]
+
+    chart.set_rows(rows)
+    chart.update_activity(rows)
+
+    assert len(chart.bar_chart.layers) == 1
+    assert chart.bar_chart.current_totals[play_a] == 100.0
+    assert chart.bar_chart.current_totals[play_b] == 50.0
+    assert play_a in chart.stats_text_view.toPlainText()
+    assert play_b in chart.stats_text_view.toPlainText()
     chart.close()
 
 
@@ -4696,7 +5002,7 @@ def test_main_window_actions_save_settings_persists_advanced_time_filter() -> No
     assert payload["advanced_time_end"] == "2026-06-12T03:35:00"
 
 
-def test_main_window_actions_save_settings_preserves_legacy_period_until_migrated() -> None:
+def test_main_window_actions_save_settings_drops_legacy_period_override() -> None:
     from app.ui.main_window_actions import MainWindowActionsMixin
 
     saved_payloads: list[dict[str, object]] = []
@@ -4742,15 +5048,13 @@ def test_main_window_actions_save_settings_preserves_legacy_period_until_migrate
     dummy._lock_threshold_sec = 20
     dummy._is_first_launch = False
     dummy._query_period_overrides_by_site = {}
-    dummy._query_period_override = "7788"
-    dummy._manual_period_override = True
 
     dummy._save_settings()
 
     payload = saved_payloads[-1]
     assert payload["query_period_overrides_by_site"] == {}
-    assert payload["query_period_override"] == "7788"
-    assert payload["manual_period_override"] is True
+    assert payload["query_period_override"] == ""
+    assert payload["manual_period_override"] is False
 
 
 def test_resolve_database_failure_preserves_saved_data_source(monkeypatch) -> None:
@@ -5296,3 +5600,272 @@ def test_license_generator_dialog_buttons_have_readable_feedback() -> None:
             break
     assert dialog.status_label.text() == "机器码已复制到剪贴板。"
     dialog.close()
+
+
+def test_raw_chat_dialog_formats_and_filters_messages() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 16, 17, 55, 1),
+                group="PC28-A",
+                username="Alice",
+                sender_id="alice-id",
+                content="大单100",
+            ),
+            ChatMessage(
+                ts=datetime(2026, 6, 16, 17, 55, 2),
+                group="PC28-B",
+                username="Bob",
+                sender_id="bob-id",
+                content="小双200",
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "2026-06-16 17:55:01 | PC28-A | Alice | alice-id" in text
+    assert "大单100" in text
+    assert "2026-06-16 17:55:02 | PC28-B | Bob | bob-id" in text
+    assert "小双200" in text
+
+    dialog.group_filter.setCurrentText("PC28-B")
+    app.processEvents()
+
+    filtered_text = dialog.message_view.toPlainText()
+    assert "Bob | bob-id" in filtered_text
+    assert "小双200" in filtered_text
+    assert "Alice | alice-id" not in filtered_text
+    assert "大单100" not in filtered_text
+    dialog.close()
+
+
+def test_raw_chat_dialog_preserves_current_page_when_messages_refresh() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 16, 17, 55, index),
+            group="PC28-A",
+            username=f"User{index}",
+            sender_id=f"user-{index}",
+            content=f"消息{index}",
+        )
+        for index in range(1, 4)
+    ]
+    dialog = RawChatDialog(messages, page_size=1)
+
+    dialog._next_page()
+    assert dialog.message_page == 1
+    assert "消息2" in dialog.message_view.toPlainText()
+
+    dialog.set_messages(
+        messages
+        + [
+            ChatMessage(
+                ts=datetime(2026, 6, 16, 17, 55, 4),
+                group="PC28-A",
+                username="User4",
+                sender_id="user-4",
+                content="消息4",
+            )
+        ]
+    )
+    app.processEvents()
+
+    assert dialog.message_page == 1
+    assert "消息2" in dialog.message_view.toPlainText()
+    dialog.close()
+
+
+def test_raw_chat_dialog_preserves_scroll_position_when_messages_refresh() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 16, 17, 55, index),
+            group="PC28-A",
+            username=f"User{index}",
+            sender_id=f"user-{index}",
+            content="消息" + ("X" * 100),
+        )
+        for index in range(1, 8)
+    ]
+    dialog = RawChatDialog(messages, page_size=7)
+    dialog.message_view.verticalScrollBar().setValue(dialog.message_view.verticalScrollBar().maximum())
+    before = dialog.message_view.verticalScrollBar().value()
+
+    dialog.set_messages(messages + [ChatMessage(
+        ts=datetime(2026, 6, 16, 17, 55, 8),
+        group="PC28-A",
+        username="User8",
+        sender_id="user-8",
+        content="消息" + ("Y" * 100),
+    )])
+    app.processEvents()
+
+    after = dialog.message_view.verticalScrollBar().value()
+    assert after >= before
+    dialog.close()
+
+
+def test_main_window_opens_and_reuses_raw_chat_dialog() -> None:
+    import os
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    app = QApplication.instance() or QApplication([])
+    first_message = ChatMessage(
+        ts=datetime(2026, 6, 16, 17, 55, 1),
+        group="PC28-A",
+        username="Alice",
+        sender_id="alice-id",
+        content="大单100",
+    )
+    second_message = ChatMessage(
+        ts=datetime(2026, 6, 16, 17, 56, 1),
+        group="PC28-A",
+        username="Alice",
+        sender_id="alice-id",
+        content="小单200",
+    )
+    dummy = SimpleNamespace(current_messages=[first_message], raw_chat_dialog=None)
+
+    MainWindowActionsMixin._open_raw_chat_dialog(dummy)
+    first_dialog = dummy.raw_chat_dialog
+    assert first_dialog is not None
+    assert "大单100" in first_dialog.message_view.toPlainText()
+
+    dummy.current_messages = [second_message]
+    MainWindowActionsMixin._open_raw_chat_dialog(dummy)
+    app.processEvents()
+
+    assert dummy.raw_chat_dialog is first_dialog
+    assert "小单200" in first_dialog.message_view.toPlainText()
+    assert "大单100" not in first_dialog.message_view.toPlainText()
+    first_dialog.close()
+
+
+def test_main_window_accumulates_raw_chat_history_across_refreshes() -> None:
+    import os
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    app = QApplication.instance() or QApplication([])
+    first_message = ChatMessage(
+        ts=datetime(2026, 6, 16, 17, 55, 1),
+        group="PC28-A",
+        username="Alice",
+        sender_id="alice-id",
+        content="大单100",
+    )
+    second_message = ChatMessage(
+        ts=datetime(2026, 6, 16, 17, 56, 1),
+        group="PC28-A",
+        username="Alice",
+        sender_id="alice-id",
+        content="小单200",
+    )
+    dummy = SimpleNamespace(
+        current_messages=[first_message],
+        raw_chat_messages=[],
+        raw_chat_dialog=None,
+    )
+
+    MainWindowActionsMixin._record_raw_chat_messages(dummy, dummy.current_messages)
+    dummy.current_messages = [second_message]
+    MainWindowActionsMixin._record_raw_chat_messages(dummy, dummy.current_messages)
+
+    MainWindowActionsMixin._open_raw_chat_dialog(dummy)
+    app.processEvents()
+    text = dummy.raw_chat_dialog.message_view.toPlainText()
+
+    assert "大单100" in text
+    assert "小单200" in text
+    assert len(dummy.raw_chat_messages) == 2
+    dummy.raw_chat_dialog.close()
+
+
+def test_main_window_bound_raw_chat_history_accumulates_across_refreshes() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    class DummyWindow(MainWindowActionsMixin):
+        pass
+
+    app = QApplication.instance() or QApplication([])
+    dummy = DummyWindow()
+    dummy.current_messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 16, 17, 55, 1),
+            group="PC28-A",
+            username="Alice",
+            sender_id="alice-id",
+            content="大单100",
+        )
+    ]
+    dummy.raw_chat_messages = []
+    dummy.raw_chat_dialog = None
+
+    dummy._record_raw_chat_messages(dummy.current_messages)
+    dummy.current_messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 16, 17, 56, 1),
+            group="PC28-A",
+            username="Alice",
+            sender_id="alice-id",
+            content="小单200",
+        )
+    ]
+    dummy._record_raw_chat_messages(dummy.current_messages)
+    dummy._open_raw_chat_dialog()
+    text = dummy.raw_chat_dialog.message_view.toPlainText()
+
+    assert "大单100" in text
+    assert "小单200" in text
+    assert len(dummy.raw_chat_messages) == 2
+    dummy.raw_chat_dialog.close()

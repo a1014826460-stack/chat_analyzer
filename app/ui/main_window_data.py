@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, Qt
@@ -29,30 +30,19 @@ class MainWindowDataMixin:
         if hasattr(self, "resolved_path_edit"):
             self.resolved_path_edit.setText(str(self.settings.get("data_source", "")).strip())
         self.manual_db_edit.setText(str(self.settings.get("fallback_db_path", "")).strip())
-        overrides_raw = self.settings.get("query_period_overrides_by_site", {})
-        self._query_period_overrides_by_site = {
-            str(key): str(value).strip()
-            for key, value in dict(overrides_raw if isinstance(overrides_raw, dict) else {}).items()
-            if str(value).strip()
-        }
-        legacy_period = str(self.settings.get("query_period_override", getattr(self, "_query_period_override", ""))).strip()
-        legacy_manual = bool(self.settings.get("manual_period_override", getattr(self, "_manual_period_override", False)))
-        if legacy_manual and legacy_period and self._active_site and self._active_site not in self._query_period_overrides_by_site:
-            self._query_period_overrides_by_site[self._active_site] = legacy_period
-        current_override = str(self._query_period_overrides_by_site.get(self._active_site or "", "")).strip()
-        if self._active_site:
-            self._query_period_override = current_override
-            self._manual_period_override = bool(current_override)
-        else:
-            self._query_period_override = legacy_period
-            self._manual_period_override = legacy_manual
+        self._query_period_overrides_by_site = {}
+        self._query_period_override = ""
+        self._manual_period_override = False
         if hasattr(self, "global_block_names_edit") and hasattr(self, "_global_block_names"):
             self.global_block_names_edit.setPlainText("\n".join(self._global_block_names()))
         if hasattr(self, "period_input"):
             if self._active_site:
-                self.period_input.setText(current_override)
+                draw_infos = getattr(self, "_draw_infos", {})
+                current_info = draw_infos.get(self._active_site) if isinstance(draw_infos, dict) else None
+                default_period = self._default_query_period(current_info) if current_info is not None and hasattr(self, "_default_query_period") else ""
+                self.period_input.setText(default_period)
             else:
-                self.period_input.setText(self._query_period_override if self._manual_period_override else "")
+                self.period_input.setText("")
         now = QDateTime.currentDateTime()
         saved_start = self._settings_datetime("advanced_time_start")
         saved_end = self._settings_datetime("advanced_time_end")
@@ -209,6 +199,9 @@ class MainWindowDataMixin:
             tuple(options.blocked_names),
             options.period_filter,
             options.site,
+            options.period_window_start.isoformat(sep=" ") if options.period_window_start else "",
+            options.period_window_end.isoformat(sep=" ") if options.period_window_end else "",
+            options.period_interval_sec,
             incremental,
         )
 
@@ -317,6 +310,8 @@ class MainWindowDataMixin:
 
     def _apply_load_result(self, result: dict[str, object]) -> None:
         self.current_messages = list(result.get("current_messages", []))
+        if hasattr(self, "_record_raw_chat_messages"):
+            self._record_raw_chat_messages(self.current_messages)
         self.current_visual_rows = list(result.get("current_visual_rows", []))
         self.current_stats = result.get("current_stats")
         self._last_loaded_signature = result.get("current_sig")
@@ -433,9 +428,17 @@ class MainWindowDataMixin:
             selected_groups.append(str(item.data(33) or item.text()))
             selected_group_ids.append(str(item.data(32) or ""))
 
-        period_filter = self.period_input.text().strip() if hasattr(self, "period_input") else ""
         site = self._active_site or ""
-        period_interval_sec = _SITE_INTERVAL_SEC.get(site, 180)
+        draw_infos = getattr(self, "_draw_infos", {})
+        current_info = draw_infos.get(site) if site and isinstance(draw_infos, dict) else None
+        period_filter = self.period_input.text().strip() if hasattr(self, "period_input") else ""
+        if current_info is not None:
+            period_filter = period_filter or str(getattr(current_info, "next_period", "") or getattr(current_info, "current_period", "")).strip()
+        period_interval_sec = int(getattr(current_info, "interval_sec", 0) or _SITE_INTERVAL_SEC.get(site, 180))
+        period_window_start = getattr(current_info, "start_time", None) if current_info is not None else None
+        period_window_end = getattr(current_info, "next_time", None) if current_info is not None else None
+        if period_window_start is None and period_window_end is not None and period_interval_sec > 0:
+            period_window_start = period_window_end - timedelta(seconds=period_interval_sec)
         global_block_names = (
             self._global_block_names()
             if hasattr(self, "_global_block_names")
@@ -450,6 +453,8 @@ class MainWindowDataMixin:
             blocked_user_ids=[],
             period_filter=period_filter,
             site=site,
+            period_window_start=period_window_start,
+            period_window_end=period_window_end,
             period_interval_sec=period_interval_sec,
             lock_threshold_sec=int(getattr(self, "_lock_threshold_sec", 0) or 0),
         )

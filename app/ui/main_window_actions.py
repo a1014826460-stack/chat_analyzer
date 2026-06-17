@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import logging
-from math import ceil
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from app.ui.raw_chat_dialog import RawChatDialog
 from app.utils.fetch_date import set_proxy_settings
 from app.utils.proxy import proxy_status_text
 
@@ -205,62 +204,99 @@ class MainWindowActionsMixin:
             return
         self._load_filtered_messages()
 
-    def _refresh_message_view(self) -> None:
-        filtered = self._filtered_messages_for_view()
-        total_pages = max(1, ceil(len(filtered) / self.messages_per_page))
-        self.message_page = min(self.message_page, total_pages - 1)
-        start = self.message_page * self.messages_per_page
-        page_rows = filtered[start : start + self.messages_per_page]
-        self.result_view.clear()
-        cursor = self.result_view.textCursor()
-        for msg in page_rows:
-            cursor.insertHtml(self._message_html(msg))
-            cursor.insertHtml("<br/><br/>")
-        self.result_view.moveCursor(QTextCursor.Start)
-        self.page_label.setText(f"Page {self.message_page + 1} / {total_pages}")
+    def _raw_chat_history(self) -> list[object]:
+        history = getattr(self, "raw_chat_messages", None)
+        if not isinstance(history, list):
+            history = []
+            self.raw_chat_messages = history
+        return history
 
-    def _filtered_messages_for_view(self) -> list:
-        selected_groups = self.chart_window.selected_groups()
-        base_messages = self.current_messages or []
-        if not selected_groups:
-            return base_messages
-        return [msg for msg in base_messages if getattr(msg, "group", "") in selected_groups]
+    def _record_raw_chat_messages(self, messages: list[object]) -> None:
+        history_getter = getattr(self, "_raw_chat_history", None)
+        if callable(history_getter):
+            history = history_getter()
+        else:
+            history = getattr(self, "raw_chat_messages", None)
+            if not isinstance(history, list):
+                history = []
+                self.raw_chat_messages = history
+        seen = {
+            (
+                getattr(msg, "ts", None),
+                getattr(msg, "group", ""),
+                getattr(msg, "username", ""),
+                getattr(msg, "sender_id", ""),
+                getattr(msg, "content", ""),
+                getattr(msg, "raw_client_time", 0),
+                getattr(msg, "raw_rand", 0),
+            )
+            for msg in history
+        }
+        for msg in messages:
+            key = (
+                getattr(msg, "ts", None),
+                getattr(msg, "group", ""),
+                getattr(msg, "username", ""),
+                getattr(msg, "sender_id", ""),
+                getattr(msg, "content", ""),
+                getattr(msg, "raw_client_time", 0),
+                getattr(msg, "raw_rand", 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            history.append(msg)
+
+    def _messages_for_raw_chat_view(self) -> list[object]:
+        history_getter = getattr(self, "_raw_chat_history", None)
+        if callable(history_getter):
+            history = history_getter()
+            if history:
+                return history
+        history = getattr(self, "raw_chat_messages", None)
+        if isinstance(history, list) and history:
+            return history
+        current_messages = getattr(self, "current_messages", [])
+        return list(current_messages) if isinstance(current_messages, list) else []
+
+    def _open_raw_chat_dialog(self) -> None:
+        dialog = getattr(self, "raw_chat_dialog", None)
+        view_getter = getattr(self, "_messages_for_raw_chat_view", None)
+        if callable(view_getter):
+            messages = view_getter()
+        else:
+            history = getattr(self, "raw_chat_messages", None)
+            messages = list(history) if isinstance(history, list) and history else list(getattr(self, "current_messages", []))
+        if dialog is None:
+            parent = self if isinstance(self, QWidget) else None
+            dialog = RawChatDialog(messages, parent)
+            self.raw_chat_dialog = dialog
+        else:
+            dialog.set_messages(messages)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _refresh_message_view(self) -> None:
+        dialog = getattr(self, "raw_chat_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            view_getter = getattr(self, "_messages_for_raw_chat_view", None)
+            if callable(view_getter):
+                messages = view_getter()
+            else:
+                history = getattr(self, "raw_chat_messages", None)
+                messages = list(history) if isinstance(history, list) and history else list(getattr(self, "current_messages", []))
+            dialog.set_messages(messages)
 
     def _prev_page(self) -> None:
-        if self.message_page > 0:
-            self.message_page -= 1
-            self._refresh_message_view()
-            if hasattr(self, "_set_status"):
-                self._set_status(f"已切换到第 {self.message_page + 1} 页。", "debug")
+        dialog = getattr(self, "raw_chat_dialog", None)
+        if dialog is not None:
+            dialog._prev_page()
 
     def _next_page(self) -> None:
-        filtered = self._filtered_messages_for_view()
-        total_pages = max(1, ceil(len(filtered) / self.messages_per_page))
-        if self.message_page + 1 < total_pages:
-            self.message_page += 1
-            self._refresh_message_view()
-            if hasattr(self, "_set_status"):
-                self._set_status(f"已切换到第 {self.message_page + 1} 页。", "debug")
-
-    def _message_html(self, msg) -> str:
-        user_id = getattr(msg, "sender_id", "") or self._find_user_id_by_name(getattr(msg, "username", ""))
-        user_label = f"{getattr(msg, 'username', '')} {user_id}".strip()
-        return (
-            f"{self._pill(msg.ts.strftime('%Y-%m-%d %H:%M'), '#d5fbff')}"
-            f" | {self._pill(getattr(msg, 'group', ''), '#d8efff')}"
-            f" | {self._pill(user_label, '#e3f1ff')}"
-            f"<br/>{self._pill(getattr(msg, 'content', ''), '#f4f8ff')}"
-        )
-
-    def _pill(self, value: str, bg: str) -> str:
-        safe = (
-            str(value)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\n", "<br/>")
-        )
-        return f"<span style='display:inline-block; margin:0 8px 8px 0; padding:6px 10px; background:{bg}; border-radius:12px;'>{safe}</span>"
+        dialog = getattr(self, "raw_chat_dialog", None)
+        if dialog is not None:
+            dialog._next_page()
 
     def _find_user_id_by_name(self, username: str) -> str:
         for msg in self.current_messages:

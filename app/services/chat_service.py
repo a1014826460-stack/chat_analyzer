@@ -172,6 +172,59 @@ class ChatLogService:
             except Exception:
                 pass
 
+    def _sqlite_sender_name_maps(self, msg_db: Path) -> tuple[dict[tuple[str, str], str], dict[str, str]]:
+        im_db = msg_db.parent / "im.db"
+        if not im_db.exists():
+            return {}, {}
+        member_names: dict[tuple[str, str], str] = {}
+        user_names: dict[str, str] = {}
+        try:
+            con = sqlite3.connect(f"file:{im_db.as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            try:
+                member_rows = con.execute(
+                    "select group_id, user_id, remark, name_card, nick_name from groupmemberinfo "
+                    "where group_id is not null and group_id != '' "
+                    "and user_id is not null and user_id != ''"
+                ).fetchall()
+                for row in member_rows:
+                    group_id = str(row["group_id"] or "").strip()
+                    user_id = str(row["user_id"] or "").strip()
+                    display_name = self._first_nonempty_text(row["remark"], row["name_card"], row["nick_name"])
+                    if group_id and user_id and display_name:
+                        member_names[(group_id, user_id)] = display_name
+            except sqlite3.DatabaseError:
+                logger.debug("No groupmemberinfo sender names found in %s", im_db, exc_info=True)
+
+            try:
+                user_rows = con.execute(
+                    "select user_id, remark, nick_name from userinfo "
+                    "where user_id is not null and user_id != ''"
+                ).fetchall()
+                for row in user_rows:
+                    user_id = str(row["user_id"] or "").strip()
+                    display_name = self._first_nonempty_text(row["remark"], row["nick_name"])
+                    if user_id and display_name:
+                        user_names[user_id] = display_name
+            except sqlite3.DatabaseError:
+                logger.debug("No userinfo sender names found in %s", im_db, exc_info=True)
+        except sqlite3.DatabaseError:
+            logger.debug("Failed to load sender names from %s", im_db, exc_info=True)
+            return {}, {}
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+        return member_names, user_names
+
+    def _first_nonempty_text(self, *values: object) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
     def load_messages(self, source_path: Path, options: ParseOptions) -> list[ChatMessage]:
         source_path = Path(source_path)
         if source_path.suffix.lower() == ".txt":
@@ -254,6 +307,7 @@ class ChatLogService:
             con.row_factory = sqlite3.Row
             client_time_unit = self._detect_sqlite_client_time_unit(con)
             group_name_map = self._sqlite_group_name_map(msg_db)
+            member_name_map, user_name_map = self._sqlite_sender_name_maps(msg_db)
             for raw_query in queries:
                 query, params = self._apply_sqlite_query_options(raw_query, options, client_time_unit)
                 try:
@@ -262,15 +316,21 @@ class ChatLogService:
                         for row in rows:
                             ts = self._sqlite_ts_to_datetime(int(row["client_time"] or 0))
                             group_raw = str(row["group_name"] or "Unknown").strip()
+                            sender_id = str(row["sender_id"] or "").strip()
+                            sender_name = (
+                                member_name_map.get((group_raw, sender_id))
+                                or user_name_map.get(sender_id)
+                                or str(row["sender_name"] or "Unknown").strip()
+                            )
                             msg = ChatMessage(
                                 ts=ts,
                                 group=group_name_map.get(group_raw, group_raw),
-                                username=str(row["sender_name"] or "Unknown").strip(),
+                                username=sender_name,
                                 content=self._extract_message_text(
                                     row["element_descriptions"],
                                     row["content"],
                                 ),
-                                sender_id=str(row["sender_id"] or "").strip(),
+                                sender_id=sender_id,
                                 raw_client_time=int(row["client_time"] or 0),
                                 raw_rand=int(row["rand"] or 0),
                             )
@@ -934,7 +994,11 @@ class ChatLogService:
         if latest_ts is None:
             return []
         if direct_period_context is not None:
-            return [(direct_period_context.accept_start, direct_period_context.accept_end, direct_period_context.period)]
+            marker_start = self._find_direct_period_start_marker(messages, direct_period_context)
+            accept_start = max(direct_period_context.accept_start, marker_start) if marker_start else direct_period_context.accept_start
+            if accept_start >= direct_period_context.accept_end:
+                return []
+            return [(accept_start, direct_period_context.accept_end, direct_period_context.period)]
 
         window_start = latest_ts - DIRECT_GROUP_PERIOD_WINDOW
         markers: list[tuple[datetime, str, str]] = []
@@ -963,6 +1027,34 @@ class ChatLogService:
         if current_start is not None and current_period:
             periods.append((current_start, latest_ts + timedelta(seconds=1), current_period))
         return periods
+
+    def _find_direct_period_start_marker(
+        self,
+        messages: list[ChatMessage],
+        direct_period_context: DirectPeriodContext,
+    ) -> datetime | None:
+        period_key = self._normalize_period_text(direct_period_context.period)
+        if not period_key:
+            return None
+        for msg in sorted(messages, key=lambda item: (item.ts, int(item.raw_client_time or 0), int(item.raw_rand or 0))):
+            if msg.ts < direct_period_context.start or msg.ts >= direct_period_context.end:
+                continue
+            if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+                continue
+            content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
+            if period_key in self._period_keys_from_text(content):
+                return msg.ts
+        return None
+
+    def _period_keys_from_text(self, value: object) -> set[str]:
+        text = self._clean_text(value)
+        keys: set[str] = set()
+        for match in re.finditer(r"\d[\d-]{3,}\d", text):
+            keys.add(self._normalize_period_text(match.group(0)))
+        return {key for key in keys if key}
+
+    def _normalize_period_text(self, value: object) -> str:
+        return re.sub(r"\D+", "", self._clean_text(value))
 
     def _resolve_direct_group_period(
         self,
@@ -1114,8 +1206,8 @@ class ChatLogService:
         return ""
 
     def _is_group_member_robot(self, group: str, sender_id: str, fallback_username: str) -> bool:
-        _ = (group, sender_id, fallback_username)
-        return False
+        _ = (group, sender_id)
+        return "机器" in self._clean_text(fallback_username)
 
     def _decode_possible_frontend_ciphertext(self, content: str) -> str:
         text = self._clean_text(content)

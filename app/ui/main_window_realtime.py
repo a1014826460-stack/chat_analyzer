@@ -113,24 +113,10 @@ class MainWindowRealtimeMixin:
 
     def _select_site(self, site: str) -> None:
         logger.info("Switch site: %s", site)
-        previous_site = self._active_site
-        migrated_legacy_override = False
-        if (
-            getattr(self, "_manual_period_override", False)
-            and getattr(self, "_query_period_override", "")
-        ):
-            if not hasattr(self, "_query_period_overrides_by_site") or not isinstance(self._query_period_overrides_by_site, dict):
-                self._query_period_overrides_by_site = {}
-            legacy_override = str(self._query_period_override).strip()
-            if previous_site:
-                migrated_legacy_override = previous_site not in self._query_period_overrides_by_site
-                self._query_period_overrides_by_site.setdefault(previous_site, legacy_override)
-            elif site:
-                migrated_legacy_override = site not in self._query_period_overrides_by_site
-                self._query_period_overrides_by_site.setdefault(site, legacy_override)
         self._active_site = site
-        self._query_period_override = self._current_period_override()
-        self._manual_period_override = self._has_manual_period_override()
+        self._query_period_overrides_by_site = {}
+        self._query_period_override = ""
+        self._manual_period_override = False
         self._stats_locked = False
         self._awaiting_next_period = False
         self._last_message_cursor.pop(site, None)
@@ -140,8 +126,6 @@ class MainWindowRealtimeMixin:
         self._refresh_active_site_info()
         if hasattr(self, "_set_status"):
             self._set_status(f"已切换线路: {site_label(site)}", "info")
-        if migrated_legacy_override and hasattr(self, "_save_settings"):
-            self._save_settings()
         self._load_filtered_messages()
 
     def _refresh_active_site_info(self) -> None:
@@ -271,13 +255,26 @@ class MainWindowRealtimeMixin:
         previous = self._draw_infos.get(site)
         previous_period = str(getattr(previous, "current_period", "") or "").strip()
         incoming_period = str(getattr(info, "current_period", "") or "").strip()
-        period_override = MainWindowRealtimeMixin._current_period_override(self)
-        previous_query_period = (
-            period_override or MainWindowRealtimeMixin._default_query_period(self, previous)
+        previous_default_query_period = (
+            MainWindowRealtimeMixin._default_query_period(self, previous)
             if previous is not None
             else ""
         )
-        incoming_query_period = period_override or MainWindowRealtimeMixin._default_query_period(self, info)
+        incoming_default_query_period = MainWindowRealtimeMixin._default_query_period(self, info)
+        if (
+            self._active_site == site
+            and previous_default_query_period
+            and incoming_default_query_period
+            and incoming_default_query_period != previous_default_query_period
+        ):
+            MainWindowRealtimeMixin._clear_period_override_for_site(self, site)
+        period_override = MainWindowRealtimeMixin._current_period_override(self)
+        previous_query_period = (
+            period_override or previous_default_query_period
+            if previous is not None
+            else ""
+        )
+        incoming_query_period = period_override or incoming_default_query_period
         active_period_changed = bool(
             self._active_site == site
             and incoming_period
@@ -394,6 +391,18 @@ class MainWindowRealtimeMixin:
     def _current_period_override(self) -> str:
         return str(getattr(self, "_query_period_overrides_by_site", {}).get(self._active_site or "", "")).strip()
 
+    def _clear_period_override_for_site(self, site: str) -> None:
+        overrides = getattr(self, "_query_period_overrides_by_site", None)
+        if not isinstance(overrides, dict):
+            self._query_period_overrides_by_site = {}
+            overrides = self._query_period_overrides_by_site
+        removed = overrides.pop(site, None)
+        if self._active_site == site:
+            self._query_period_override = ""
+            self._manual_period_override = False
+        if removed and hasattr(self, "_save_settings"):
+            self._save_settings()
+
     def _has_manual_period_override(self) -> bool:
         if not hasattr(self, "_current_period_override"):
             return False
@@ -402,7 +411,7 @@ class MainWindowRealtimeMixin:
     def _sync_period_input_from_site(self, info: DrawInfo) -> None:
         if hasattr(self.period_input, "hasFocus") and self.period_input.hasFocus():
             return
-        text = self._current_period_override() or self._default_query_period(info)
+        text = self._default_query_period(info)
         self.period_input.blockSignals(True)
         self.period_input.setText(text)
         self.period_input.blockSignals(False)

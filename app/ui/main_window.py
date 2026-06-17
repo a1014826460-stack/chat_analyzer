@@ -54,6 +54,7 @@ class MainWindow(
         self.settings = self.settings_service.load()
 
         self.current_messages = []
+        self.raw_chat_messages = []
         self.current_stats = StatsResult(totals={}, totals_by_group={})
         self.current_visual_rows = []
         self.resolved_db = None

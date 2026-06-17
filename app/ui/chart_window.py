@@ -224,6 +224,7 @@ class ChartWindow(QWidget):
 
     def update_activity(self, rows: list[dict[str, object]]) -> None:
         self._merge_period_rows(list(rows))
+        self._append_increment_layer()
         self._refresh_activity()
 
     def set_status(self, mode: str, text: str | None = None) -> None:
