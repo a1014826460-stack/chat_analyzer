@@ -67,6 +67,22 @@ class MainWindow(
         self.resolved_db = None
         self.global_block_names: list[str] = []
         self.group_block_rules: dict[str, dict[str, object]] = {}
+        self.group_types_by_id: dict[str, str] = {
+            str(key).strip(): str(value).strip()
+            for key, value in dict(self.settings.get("group_types_by_id", {})).items()
+            if str(key).strip() and str(value).strip()
+        }
+        self.group_type_switches_by_id: dict[str, dict[str, object]] = {
+            str(key).strip(): dict(value)
+            for key, value in dict(self.settings.get("group_type_switches_by_id", {})).items()
+            if str(key).strip() and isinstance(value, dict)
+        }
+        self.group_robot_ids: dict[str, str] = {
+            str(key).strip(): str(value).strip()
+            for key, value in dict(self.settings.get("group_robot_ids", {})).items()
+            if str(key).strip() and str(value).strip()
+        }
+        self.chat_service.set_group_robot_ids(self.group_robot_ids)
         self.message_page = 0
         self.messages_per_page = 50
         self._draw_infos = {}

@@ -211,6 +211,65 @@ def test_chat_service_treats_machine_nickname_as_direct_group_robot() -> None:
     assert service._is_group_member_robot("GroupA", "user-1", "Alice") is False
 
 
+def test_chat_service_detects_robot_by_recent_talk_count_and_robot_message_shape() -> None:
+    from datetime import datetime, timedelta
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 0) + timedelta(seconds=index),
+            group="GroupA",
+            username="播报员",
+            sender_id="robot-like",
+            content="彩种：澳洲幸运28\n期号:20260618-230\n结果:4+1+7=12 小 双",
+            group_id="group-a",
+        )
+        for index in range(3)
+    ]
+    messages.append(
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 10),
+            group="GroupA",
+            username="Alice",
+            sender_id="alice-1",
+            content="大100",
+            group_id="group-a",
+        )
+    )
+
+    service.remember_group_robots(messages)
+
+    assert service._is_group_member_robot("GroupA", "robot-like", "播报员", group_id="group-a") is True
+    assert service._is_group_member_robot("GroupA", "alice-1", "Alice", group_id="group-a") is False
+
+
+def test_chat_service_does_not_detect_most_talkative_plain_user_as_robot() -> None:
+    from datetime import datetime, timedelta
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 0) + timedelta(seconds=index),
+            group="GroupA",
+            username="Alice",
+            sender_id="alice-1",
+            content="大家晚上好",
+            group_id="group-a",
+        )
+        for index in range(5)
+    ]
+
+    service.remember_group_robots(messages)
+
+    assert service._is_group_member_robot("GroupA", "alice-1", "Alice", group_id="group-a") is False
+
+
 def test_chat_service_direct_group_excludes_machine_nickname_bets() -> None:
     from datetime import datetime
 
@@ -536,6 +595,147 @@ def test_chat_service_receipt_group_keeps_latest_amount_per_bettor_period_play()
         ("Alice", "1234", "大", 20.0)
     ]
     assert stats.totals == {"大": 20.0}
+
+
+def test_chat_service_group_type_memory_overrides_zodiac_name_for_direct_group() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 0),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大10 1234",
+            group_id="group-direct",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 20),
+            group="白羊座交流群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大20 1234",
+            group_id="group-direct",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"group-direct": "direct"},
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "", "大", 30.0),
+    ]
+    assert stats.totals == {"大": 30.0}
+
+
+def test_chat_service_group_type_memory_uses_group_id_to_separate_same_named_groups() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 0),
+            group="同名群",
+            username="Alice",
+            sender_id="alice-1",
+            content="大100",
+            group_id="direct-id",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 1),
+            group="同名群",
+            username="机器人",
+            sender_id="robot-1",
+            content=(
+                "@雪茜 : \n"
+                "下注期数: 3444525\n"
+                "下注内容: \n"
+                "------------\n"
+                "大800(1.98赔率)\n"
+                "------------\n"
+                "余额：3088"
+            ),
+            group_id="receipt-id",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"direct-id": "direct", "receipt-id": "receipt"},
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("Alice", "", "大", 100.0),
+        ("雪茜", "3444525", "大", 800.0),
+    ]
+    assert stats.totals == {"大": 900.0}
+
+
+def test_chat_service_group_type_memory_routes_non_zodiac_group_as_receipt_group() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 18, 12, 0, 0),
+            group="普通网盘群",
+            username="机器人",
+            sender_id="robot-1",
+            content=(
+                "@雪茜 : \n"
+                "下注期数: 3444525\n"
+                "下注内容: \n"
+                "------------\n"
+                "大800(1.98赔率)\n"
+                "------------\n"
+                "余额：3088"
+            ),
+            group_id="group-receipt",
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3444525",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"group-receipt": "receipt"},
+    )
+
+    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
+        ("雪茜", "3444525", "大", 800.0)
+    ]
+    assert stats.totals == {"大": 800.0}
 
 
 def test_chat_service_parses_robot_multiline_receipt_bets() -> None:
@@ -4747,6 +4947,81 @@ def test_main_window_actions_save_settings_moves_current_username_to_recent_fron
     assert payload["recent_usernames"][:2] == ["齐天大圣", "tester"]
 
 
+def test_main_window_actions_save_settings_persists_group_type_memory() -> None:
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "tester"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "tester" if index == 0 else ""
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return []
+
+        def _selected_group_mode(self):
+            return "none"
+
+        def _selected_block_group_key(self):
+            return ""
+
+        def _global_block_names(self):
+            return []
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {}
+    dummy.group_types_by_id = {"group-1": "receipt"}
+    dummy.group_type_switches_by_id = {
+        "group-1": {
+            "type": "receipt",
+            "switched_at": "2026-06-18T12:00:00",
+            "note": "连续出现标准回执",
+        }
+    }
+    dummy.group_robot_ids = {"group-1": "robot-1"}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["group_types_by_id"] == {"group-1": "receipt"}
+    assert payload["group_type_switches_by_id"] == {
+        "group-1": {
+            "type": "receipt",
+            "switched_at": "2026-06-18T12:00:00",
+            "note": "连续出现标准回执",
+        }
+    }
+    assert payload["group_robot_ids"] == {"group-1": "robot-1"}
+
+
 def test_main_window_does_not_promote_legacy_blocked_names_when_group_rules_exist(monkeypatch) -> None:
     import os
 
@@ -5647,6 +5922,52 @@ def test_raw_chat_dialog_formats_and_filters_messages() -> None:
     assert "小双200" in filtered_text
     assert "Alice | alice-id" not in filtered_text
     assert "大单100" not in filtered_text
+    dialog.close()
+
+
+def test_raw_chat_dialog_supports_semantic_filtering_and_labels() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 16, 17, 55, 1),
+                group="PC28-A",
+                username="Alice",
+                sender_id="alice-id",
+                content="大单100",
+            ),
+            ChatMessage(
+                ts=datetime(2026, 6, 16, 17, 55, 2),
+                group="PC28-A",
+                username="机器人",
+                sender_id="robot-id",
+                content="@Alice :\n下注期数: 3444525\n下注内容:\n------------\n大单100(4.28赔率)\n------------\n余额：1000",
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "用户下注" in text
+    assert "机器人回执/汇总" in text
+
+    dialog.semantic_filter.setCurrentText("机器人回执/汇总")
+    app.processEvents()
+
+    filtered_text = dialog.message_view.toPlainText()
+    assert "机器人回执/汇总" in filtered_text
+    assert "下注期数" in filtered_text
+    assert "用户下注" not in filtered_text
+    assert "大单100 | alice-id" not in filtered_text
     dialog.close()
 
 

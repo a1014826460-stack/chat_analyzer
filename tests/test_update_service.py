@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 from urllib.error import URLError
 
@@ -152,3 +154,40 @@ def test_build_config_artifact_name_tracks_edition(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(build_config, "IS_ADMIN_VERSION", True)
     assert build_config.artifact_name() == "StarTrace-Admin-2.0.0"
+
+
+def test_release_manifest_cli_writes_utf8_json_output_file(tmp_path: Path) -> None:
+    private_pem, _ = _key_pair()
+    key_path = tmp_path / "update_private.pem"
+    artifact = tmp_path / "StarTrace-1.97.0.exe"
+    output = tmp_path / "latest.json"
+    key_path.write_text(private_pem, encoding="utf-8")
+    artifact.write_bytes(b"binary-data")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "tools/release_manifest.py",
+            "--artifact",
+            str(artifact),
+            "--channel",
+            "user",
+            "--version",
+            "1.97.0",
+            "--base-url",
+            "https://www.twsaimahui.com/startrace/user",
+            "--private-key",
+            str(key_path),
+            "--output",
+            str(output),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    raw = output.read_bytes()
+    assert raw.lstrip().startswith(b"{")
+    assert not raw.startswith(b"\xff\xfe")
+    assert json.loads(raw.decode("utf-8"))["version"] == "1.97.0"

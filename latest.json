@@ -1,0 +1,13 @@
+{
+  "channel": "user",
+  "force": false,
+  "min_supported_version": "1.97.0",
+  "notes": "StarTrace 1.97.0",
+  "published_at": "2026-06-18T10:18:31+00:00",
+  "schema": 1,
+  "sha256": "a11327f494d832005212d2acc2bb6128abb15db3f881370f3f3d0aaace1d8837",
+  "size": 81504832,
+  "url": "https://www.twsaimahui.com/startrace/user/StarTrace-1.97.0.exe",
+  "version": "1.97.0",
+  "signature": "KFxJURg35Vhgw073m7e04qu_aGTVYqI6Y2IgWdoOyY3ZB3CmfDXSgfufMZy7GVfAB3Cl6QX3tpHlZCBxBabeCA"
+}

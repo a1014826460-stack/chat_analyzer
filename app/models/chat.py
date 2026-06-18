@@ -17,6 +17,7 @@ class ChatMessage:
     username: str
     content: str
     sender_id: str = ""
+    group_id: str = ""
     raw_client_time: int = 0
     raw_rand: int = 0
 
@@ -27,6 +28,7 @@ class ParseOptions:
     groups: list[str] = field(default_factory=list)
     blocked_names: list[str] = field(default_factory=list)
     blocked_names_by_group: dict[str, dict[str, object]] = field(default_factory=dict)
+    group_types_by_id: dict[str, str] = field(default_factory=dict)
     group_ids: list[str] = field(default_factory=list)
     blocked_user_ids: list[str] = field(default_factory=list)
     start_time: datetime | None = None

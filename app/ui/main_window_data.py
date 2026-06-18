@@ -243,7 +243,9 @@ class MainWindowDataMixin:
         old_cursor_snapshot: tuple[int, int] | None,
     ) -> dict[str, object]:
         self.chat_service.set_group_block_rules(options.blocked_names_by_group)
+        self.chat_service.set_group_robot_ids(dict(getattr(self, "group_robot_ids", {}) or {}))
         messages = self.chat_service.load_messages_with_cache(source_path, options)
+        group_robot_ids = self.chat_service.remember_group_robots(messages)
         visual_rows, stats = self.chat_service.analyze_bets(
             messages,
             options.blocked_names,
@@ -254,6 +256,7 @@ class MainWindowDataMixin:
             options.period_window_end,
             options.period_interval_sec,
             options.lock_threshold_sec,
+            options.group_types_by_id,
         )
         self._log_load_diagnostics(source_path, options, messages, visual_rows, stats)
         new_cursor = self.chat_service.get_cached_cursor(messages)
@@ -264,6 +267,7 @@ class MainWindowDataMixin:
             "current_messages": messages,
             "current_visual_rows": visual_rows,
             "current_stats": stats,
+            "group_robot_ids": group_robot_ids,
             "old_cursor": old_cursor_snapshot,
             "new_cursor": new_cursor,
             "short_circuit": False,
@@ -314,6 +318,9 @@ class MainWindowDataMixin:
             self._record_raw_chat_messages(self.current_messages)
         self.current_visual_rows = list(result.get("current_visual_rows", []))
         self.current_stats = result.get("current_stats")
+        group_robot_ids = result.get("group_robot_ids")
+        if isinstance(group_robot_ids, dict):
+            self.group_robot_ids = {str(key): str(value) for key, value in group_robot_ids.items()}
         self._last_loaded_signature = result.get("current_sig")
         new_cursor = result.get("new_cursor")
         if self._active_site and new_cursor:
@@ -449,6 +456,7 @@ class MainWindowDataMixin:
             groups=selected_groups,
             blocked_names=global_block_names,
             blocked_names_by_group=self.group_block_rules,
+            group_types_by_id=dict(getattr(self, "group_types_by_id", {}) or {}),
             group_ids=selected_group_ids,
             blocked_user_ids=[],
             period_filter=period_filter,

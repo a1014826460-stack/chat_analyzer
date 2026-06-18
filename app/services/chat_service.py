@@ -53,6 +53,7 @@ RECEIPT_PLAY_BET_PATTERN = re.compile(r"^(?P<play>.+?)(?P<amount>\d[\d,]*(?:\.\d
 DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
 RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
 DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
+ROBOT_DETECTION_WINDOW = timedelta(minutes=20)
 DEFAULT_SQLITE_LOAD_WINDOW = timedelta(minutes=5)
 FRONTEND_AAS_KEY = "666888"
 LOG_PREVIEW_LIMIT = 120
@@ -118,9 +119,35 @@ class ResolvedBetEvent:
 class ChatLogService:
     def __init__(self) -> None:
         self._group_block_rules: dict[str, dict[str, object]] = {}
+        self._group_robot_ids: dict[str, str] = {}
 
     def set_group_block_rules(self, rules: dict[str, dict[str, object]] | None) -> None:
         self._group_block_rules = rules or {}
+
+    def set_group_robot_ids(self, robot_ids: dict[str, str] | None) -> None:
+        self._group_robot_ids = {
+            str(group_id).strip(): str(sender_id).strip()
+            for group_id, sender_id in dict(robot_ids or {}).items()
+            if str(group_id).strip() and str(sender_id).strip()
+        }
+
+    def group_robot_ids(self) -> dict[str, str]:
+        return dict(self._group_robot_ids)
+
+    def remember_group_robots(self, messages: list[ChatMessage]) -> dict[str, str]:
+        grouped: dict[str, list[ChatMessage]] = defaultdict(list)
+        for msg in messages:
+            group_key = self._robot_group_key(msg.group, getattr(msg, "group_id", ""))
+            if group_key:
+                grouped[group_key].append(msg)
+
+        for group_key, group_messages in grouped.items():
+            if group_key in self._group_robot_ids:
+                continue
+            robot_sender = self._detect_group_robot_sender(group_messages)
+            if robot_sender:
+                self._group_robot_ids[group_key] = robot_sender
+        return self.group_robot_ids()
 
     def extract_groups(self, messages: list[ChatMessage]) -> list[ChatGroup]:
         groups = sorted({msg.group for msg in messages if msg.group})
@@ -250,7 +277,7 @@ class ChatLogService:
                     group, username, content = (parts[1].strip(), parts[2].strip(), parts[3].strip())
                 else:
                     continue
-            msg = ChatMessage(ts=ts, group=group, username=username, content=content)
+            msg = ChatMessage(ts=ts, group=group, username=username, content=content, group_id=group)
             if self._message_matches_options(msg, options):
                 messages.append(msg)
         return messages
@@ -331,6 +358,7 @@ class ChatLogService:
                                     row["content"],
                                 ),
                                 sender_id=sender_id,
+                                group_id=group_raw,
                                 raw_client_time=int(row["client_time"] or 0),
                                 raw_rand=int(row["rand"] or 0),
                             )
@@ -381,6 +409,7 @@ class ChatLogService:
         period_window_end: datetime | None,
         period_interval_sec: int,
         lock_threshold_sec: int = 0,
+        group_types_by_id: dict[str, str] | None = None,
     ) -> tuple[list[dict[str, object]], StatsResult]:
         filtered = self.filter_blocked_messages(messages, [], blocked_ids)
         visual_rows = self.extract_bet_visual_data(
@@ -393,6 +422,7 @@ class ChatLogService:
             period_window_end=period_window_end,
             period_interval_sec=period_interval_sec,
             lock_threshold_sec=lock_threshold_sec,
+            group_types_by_id=group_types_by_id,
         )
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -420,6 +450,7 @@ class ChatLogService:
         period_window_end: datetime | None,
         period_interval_sec: int,
         lock_threshold_sec: int = 0,
+        group_types_by_id: dict[str, str] | None = None,
     ) -> StatsResult:
         return self.analyze_bets(
             messages,
@@ -431,6 +462,7 @@ class ChatLogService:
             period_window_end,
             period_interval_sec,
             lock_threshold_sec,
+            group_types_by_id,
         )[1]
 
     def filter_blocked_messages(
@@ -503,6 +535,7 @@ class ChatLogService:
         period_window_end: datetime | None,
         period_interval_sec: int,
         lock_threshold_sec: int = 0,
+        group_types_by_id: dict[str, str] | None = None,
     ) -> list[dict[str, object]]:
         blocked_name_set = {self._normalize_text(name) for name in blocked_names}
         blocked_id_set = {self._normalize_text(item) for item in (blocked_ids or [])}
@@ -516,7 +549,11 @@ class ChatLogService:
             lock_threshold_sec=lock_threshold_sec,
         )
         resolved_events = self._dedupe_resolved_events(
-            self._resolve_group_bet_events(messages, direct_period_context=direct_period_context)
+            self._resolve_group_bet_events(
+                messages,
+                direct_period_context=direct_period_context,
+                group_types_by_id=group_types_by_id,
+            )
         )
         blocked_identity_keys, blocked_sender_keys = self._blocked_event_identity_sets(
             resolved_events,
@@ -627,16 +664,29 @@ class ChatLogService:
         self,
         messages: list[ChatMessage],
         direct_period_context: DirectPeriodContext | None = None,
+        group_types_by_id: dict[str, str] | None = None,
     ) -> list[ResolvedBetEvent]:
         grouped: dict[str, list[ChatMessage]] = defaultdict(list)
         for msg in sorted(messages, key=lambda item: (item.ts, int(item.raw_client_time or 0), int(item.raw_rand or 0))):
-            grouped[self._normalize_text(msg.group)].append(msg)
+            grouped[self._message_group_key(msg)].append(msg)
 
         resolved: list[ResolvedBetEvent] = []
         for group_messages in grouped.values():
-            resolved.extend(self._resolve_single_group_bet_events(group_messages, direct_period_context))
+            resolved.extend(
+                self._resolve_single_group_bet_events(
+                    group_messages,
+                    direct_period_context,
+                    group_types_by_id=group_types_by_id,
+                )
+            )
         resolved.sort(key=lambda item: (item.ts, item.group, item.username, item.bettor, item.play, item.kind))
         return resolved
+
+    def _message_group_key(self, msg: ChatMessage) -> str:
+        group_id = str(getattr(msg, "group_id", "") or "").strip()
+        if group_id:
+            return f"id:{self._normalize_text(group_id)}"
+        return f"name:{self._normalize_text(msg.group)}"
 
     def _dedupe_resolved_events(self, events: list[ResolvedBetEvent]) -> list[ResolvedBetEvent]:
         seen: set[tuple[object, ...]] = set()
@@ -665,13 +715,47 @@ class ChatLogService:
         self,
         messages: list[ChatMessage],
         direct_period_context: DirectPeriodContext | None = None,
+        group_types_by_id: dict[str, str] | None = None,
     ) -> list[ResolvedBetEvent]:
         if not messages:
             return []
+        group_type = self._group_type_for_messages(messages, group_types_by_id)
+        if group_type == "receipt":
+            return self._resolve_receipt_group_bet_events(messages)
+        if group_type == "direct":
+            return self._resolve_direct_group_bet_events(messages, direct_period_context)
         group_name = messages[0].group
         if self._is_zodiac_group(group_name):
             return self._resolve_receipt_group_bet_events(messages)
         return self._resolve_direct_group_bet_events(messages, direct_period_context)
+
+    def _group_type_for_messages(
+        self,
+        messages: list[ChatMessage],
+        group_types_by_id: dict[str, str] | None,
+    ) -> str:
+        if not messages or not group_types_by_id:
+            return ""
+        first = messages[0]
+        candidates = (
+            str(getattr(first, "group_id", "") or "").strip(),
+            str(getattr(first, "group", "") or "").strip(),
+        )
+        for key in candidates:
+            if not key:
+                continue
+            group_type = self._normalize_group_type(group_types_by_id.get(key))
+            if group_type:
+                return group_type
+        return ""
+
+    def _normalize_group_type(self, value: object) -> str:
+        text = self._normalize_text(value)
+        if text in {"receipt", "回执", "回执群"}:
+            return "receipt"
+        if text in {"direct", "直接", "直接群"}:
+            return "direct"
+        return ""
 
     def _is_zodiac_group(self, group_name: str) -> bool:
         normalized = self._normalize_text(group_name)
@@ -743,7 +827,7 @@ class ChatLogService:
                 continue
             seen_messages.add(msg_key)
             parsed_content, events = self._parse_bet_events_from_message(msg)
-            if self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+            if self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
                 continue
             period = self._resolve_direct_group_period(
                 msg.ts,
@@ -971,7 +1055,7 @@ class ChatLogService:
     def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
         if not msg.sender_id:
             return None
-        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
             return None
         content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
         period = self._extract_period(content)
@@ -1039,7 +1123,7 @@ class ChatLogService:
         for msg in sorted(messages, key=lambda item: (item.ts, int(item.raw_client_time or 0), int(item.raw_rand or 0))):
             if msg.ts < direct_period_context.start or msg.ts >= direct_period_context.end:
                 continue
-            if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+            if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
                 continue
             content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
             if period_key in self._period_keys_from_text(content):
@@ -1118,7 +1202,7 @@ class ChatLogService:
     def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
         if not msg.sender_id:
             return None
-        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username):
+        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
             return None
         content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
         period = self._extract_period(content)
@@ -1205,9 +1289,61 @@ class ChatLogService:
     def _extract_bettor_name(self, content: str) -> str:
         return ""
 
-    def _is_group_member_robot(self, group: str, sender_id: str, fallback_username: str) -> bool:
-        _ = (group, sender_id)
-        return "机器" in self._clean_text(fallback_username)
+    def _is_group_member_robot(
+        self,
+        group: str,
+        sender_id: str,
+        fallback_username: str,
+        group_id: str = "",
+    ) -> bool:
+        if "机器" in self._clean_text(fallback_username):
+            return True
+        group_key = self._robot_group_key(group, group_id)
+        return bool(group_key and sender_id and self._group_robot_ids.get(group_key) == sender_id)
+
+    def _robot_group_key(self, group: str, group_id: str = "") -> str:
+        raw_group_id = str(group_id or "").strip()
+        if raw_group_id:
+            return raw_group_id
+        return str(group or "").strip()
+
+    def _detect_group_robot_sender(self, messages: list[ChatMessage]) -> str:
+        if not messages:
+            return ""
+        latest_ts = max((msg.ts for msg in messages), default=None)
+        if latest_ts is None:
+            return ""
+        window_start = latest_ts - ROBOT_DETECTION_WINDOW
+        recent = [msg for msg in messages if msg.ts >= window_start and str(msg.sender_id or "").strip()]
+        if not recent:
+            return ""
+        if any("机器" in self._clean_text(msg.username) for msg in recent):
+            return ""
+
+        by_sender: dict[str, list[ChatMessage]] = defaultdict(list)
+        for msg in recent:
+            by_sender[str(msg.sender_id).strip()].append(msg)
+        ranked = sorted(by_sender.items(), key=lambda item: len(item[1]), reverse=True)
+        if not ranked:
+            return ""
+        sender_id, sender_messages = ranked[0]
+        if not any(self._looks_like_robot_message(msg.content) for msg in sender_messages):
+            return ""
+        return sender_id
+
+    def _looks_like_robot_message(self, content: object) -> bool:
+        text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
+        if not text:
+            return False
+        if "下注期数" in text and "下注内容" in text:
+            return True
+        if "彩种" in text and "期号" in text and ("结果" in text or "历史开奖" in text):
+            return True
+        if "当前积分" in text and ("本期下注" in text or "本期未下注" in text):
+            return True
+        if any(token in text for token in ("开始下注", "下注开始", "截止线", "封盘线", "已截止")):
+            return True
+        return False
 
     def _decode_possible_frontend_ciphertext(self, content: str) -> str:
         text = self._clean_text(content)

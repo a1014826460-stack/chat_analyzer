@@ -23,6 +23,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--private-key", required=True, help="Path to Ed25519 private key PEM.")
     parser.add_argument("--min-supported-version", default="", help="Minimum supported version.")
     parser.add_argument("--force", action="store_true", help="Mark update as forced.")
+    parser.add_argument("--output", default="", help="Optional latest.json output path written as UTF-8.")
     return parser.parse_args()
 
 
@@ -41,7 +42,14 @@ def main() -> int:
         force=args.force,
         published_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
-    print(json.dumps(manifest_token_to_json(token), ensure_ascii=False, indent=2))
+    manifest_json = json.dumps(manifest_token_to_json(token), ensure_ascii=False, indent=2)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(manifest_json + "\n", encoding="utf-8")
+        print(output_path)
+    else:
+        print(manifest_json)
     return 0
 
 

@@ -2,12 +2,35 @@ from __future__ import annotations
 
 from html import escape
 from math import ceil
+import re
 
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
 
 
 ALL_GROUPS_LABEL = "全部群组"
+ALL_SEMANTICS_LABEL = "全部类型"
+SEMANTIC_LABELS = [
+    "下注归期边界",
+    "推断期号边界",
+    "机器人回执/汇总",
+    "开奖结果播报",
+    "机器人状态快照",
+    "用户下注",
+    "撤单/改注",
+    "普通聊天",
+]
+SEMANTIC_COLORS = {
+    "下注归期边界": ("#fff3cd", "#7a5200"),
+    "推断期号边界": ("#fde2e1", "#8a1f17"),
+    "机器人回执/汇总": ("#e3f2fd", "#0b4f7a"),
+    "开奖结果播报": ("#e8f5e9", "#1b5e20"),
+    "机器人状态快照": ("#f3e5f5", "#5e2472"),
+    "用户下注": ("#eef7ff", "#1f4e79"),
+    "撤单/改注": ("#ffebee", "#8a1c1c"),
+    "普通聊天": ("#f5f5f5", "#444444"),
+}
+PLAY_TOKENS = ("大单", "小单", "大双", "小双", "大", "小", "单", "双")
 
 
 class RawChatDialog(QDialog):
@@ -25,6 +48,10 @@ class RawChatDialog(QDialog):
         self.group_filter = QComboBox()
         self.group_filter.currentTextChanged.connect(self._on_group_changed)
         filter_row.addWidget(self.group_filter, 1)
+        filter_row.addWidget(QLabel("类型"))
+        self.semantic_filter = QComboBox()
+        self.semantic_filter.currentTextChanged.connect(self._on_semantic_changed)
+        filter_row.addWidget(self.semantic_filter, 1)
         layout.addLayout(filter_row)
 
         self.message_view = QTextEdit()
@@ -58,15 +85,27 @@ class RawChatDialog(QDialog):
         if current_group in [ALL_GROUPS_LABEL, *groups]:
             self.group_filter.setCurrentText(current_group)
         self.group_filter.blockSignals(False)
+        current_semantic = self.semantic_filter.currentText() if self.semantic_filter.count() else ALL_SEMANTICS_LABEL
+        self.semantic_filter.blockSignals(True)
+        self.semantic_filter.clear()
+        self.semantic_filter.addItem(ALL_SEMANTICS_LABEL)
+        self.semantic_filter.addItems(SEMANTIC_LABELS)
+        if current_semantic in [ALL_SEMANTICS_LABEL, *SEMANTIC_LABELS]:
+            self.semantic_filter.setCurrentText(current_semantic)
+        self.semantic_filter.blockSignals(False)
         total_pages = max(1, ceil(len(self._filtered_messages()) / self.page_size))
         self.message_page = min(current_page, total_pages - 1)
         self._refresh_message_view(preserve_scroll_value=current_scroll)
 
     def _filtered_messages(self) -> list[object]:
         selected_group = self.group_filter.currentText()
-        if not selected_group or selected_group == ALL_GROUPS_LABEL:
-            return self.messages
-        return [message for message in self.messages if str(getattr(message, "group", "")).strip() == selected_group]
+        selected_semantic = self.semantic_filter.currentText()
+        filtered = self.messages
+        if selected_group and selected_group != ALL_GROUPS_LABEL:
+            filtered = [message for message in filtered if str(getattr(message, "group", "")).strip() == selected_group]
+        if selected_semantic and selected_semantic != ALL_SEMANTICS_LABEL:
+            filtered = [message for message in filtered if self._semantic_label(message) == selected_semantic]
+        return filtered
 
     def _current_scroll_value(self) -> int:
         scrollbar = self.message_view.verticalScrollBar()
@@ -106,9 +145,56 @@ class RawChatDialog(QDialog):
             ]
         )
         content = str(getattr(message, "content", "")).strip()
-        return f"<b>{escape(header)}</b><br/>{escape(content).replace(chr(10), '<br/>')}"
+        semantic = self._semantic_label(message)
+        bg_color, fg_color = SEMANTIC_COLORS.get(semantic, SEMANTIC_COLORS["普通聊天"])
+        return (
+            f"<div style='background:{bg_color}; color:{fg_color}; padding:6px; border-radius:4px;'>"
+            f"<b>[{escape(semantic)}] {escape(header)}</b><br/>"
+            f"{escape(content).replace(chr(10), '<br/>')}"
+            "</div>"
+        )
+
+    def _semantic_label(self, message: object) -> str:
+        content = str(getattr(message, "content", "") or "").strip()
+        username = str(getattr(message, "username", "") or "").strip()
+        is_robot = "机器" in username
+        if self._looks_like_receipt(content):
+            return "机器人回执/汇总"
+        if self._looks_like_result_broadcast(content):
+            return "开奖结果播报"
+        if self._looks_like_state_snapshot(content):
+            return "机器人状态快照"
+        if is_robot and self._looks_like_boundary(content):
+            return "下注归期边界"
+        if self._looks_like_cancel(content):
+            return "撤单/改注"
+        if self._looks_like_user_bet(content):
+            return "用户下注"
+        return "普通聊天"
+
+    def _looks_like_receipt(self, content: str) -> bool:
+        return "下注期数" in content and "下注内容" in content
+
+    def _looks_like_result_broadcast(self, content: str) -> bool:
+        return "彩种" in content and "期号" in content and ("结果" in content or "历史开奖" in content)
+
+    def _looks_like_state_snapshot(self, content: str) -> bool:
+        return "当前积分" in content and ("本期下注" in content or "本期未下注" in content)
+
+    def _looks_like_boundary(self, content: str) -> bool:
+        return any(token in content for token in ("开始下注", "下注开始", "截止线", "封盘线", "已截止"))
+
+    def _looks_like_cancel(self, content: str) -> bool:
+        return content.strip() == "取消" or "已取消" in content or "撤单" in content
+
+    def _looks_like_user_bet(self, content: str) -> bool:
+        return any(re.search(rf"{re.escape(play)}\s*\d", content) or re.search(rf"\d+\s*{re.escape(play)}", content) for play in PLAY_TOKENS)
 
     def _on_group_changed(self) -> None:
+        self.message_page = 0
+        self._refresh_message_view()
+
+    def _on_semantic_changed(self) -> None:
         self.message_page = 0
         self._refresh_message_view()
 
