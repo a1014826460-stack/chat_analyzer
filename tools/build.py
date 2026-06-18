@@ -7,6 +7,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app import build_config
+
 APP_ENTRY = ROOT / "app" / "main.py"
 ASSETS_DIR = ROOT / "assets"
 ICON_PATH = ASSETS_DIR / "favicon.ico"
@@ -28,7 +33,12 @@ def _runtime_hook(admin: bool) -> Path:
 
 
 def _build_name(admin: bool) -> str:
-    return "StarTrace-Admin" if admin else "StarTrace-v1.96"
+    original_admin = build_config.IS_ADMIN_VERSION
+    try:
+        build_config.IS_ADMIN_VERSION = admin
+        return build_config.artifact_name()
+    finally:
+        build_config.IS_ADMIN_VERSION = original_admin
 
 
 def _build_command(admin: bool, clean: bool) -> list[str]:

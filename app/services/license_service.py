@@ -2,50 +2,76 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
-import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
+from app.build_config import LICENSE_PRIVATE_KEY_PEM, LICENSE_PUBLIC_KEY_PEM
 from app.models import LicenseInfo
+from app.services.signing_service import sign_payload, verify_token
 from app.services.storage_service import JsonStore
 
 
 logger = logging.getLogger(__name__)
 LICENSE_STORE = JsonStore("license.json")
-SECRET = "ouWpzjUPKHXsQEdX8JlhESDNTvSh6oaXtrT9xbZCwfORu8wQ"
 DAY_OPTIONS = [1, 7, 30, 60, 90, 180, 365, 999]
 HOUR_OPTIONS = list(range(1, 25))
 CONSUMED_KEY_FIELD = "consumed_key_hashes"
 LAST_SEEN_FIELD = "_last_seen_ts"
+ACTIVATION_CODE_FIELD = "activation_code"
+LICENSE_SCHEMA = 1
 
 
 class LicenseService:
-    def __init__(self, secret: str = SECRET) -> None:
-        self.secret = secret.encode("utf-8")
+    def __init__(
+        self,
+        private_key_pem: str | None = None,
+        public_key_pem: str | None = None,
+        machine_code_provider: Callable[[], str] | None = None,
+    ) -> None:
+        self.private_key_pem = private_key_pem if private_key_pem is not None else LICENSE_PRIVATE_KEY_PEM
+        self.public_key_pem = public_key_pem if public_key_pem is not None else LICENSE_PUBLIC_KEY_PEM
+        self._machine_code_provider = machine_code_provider
 
     def get_machine_code(self) -> str:
+        if self._machine_code_provider is not None:
+            return str(self._machine_code_provider())
         raw = f"{uuid.getnode()}-{uuid.UUID(int=uuid.getnode())}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def load_license(self) -> LicenseInfo:
         state = self._load_state()
+        activation_code = str(state.get(ACTIVATION_CODE_FIELD, "")).strip()
+        payload: dict[str, Any] = {}
+        if activation_code and self.public_key_pem.strip():
+            try:
+                payload = verify_token(activation_code, self.public_key_pem)
+            except ValueError:
+                payload = {}
         return LicenseInfo(
-            key=str(state.get("key", "")),
+            key=activation_code or str(state.get("key", "")),
             key_hash=str(state.get("key_hash", "")),
-            expires_at=self._parse_dt(state.get("expires_at")),
-            machine_code=str(state.get("machine_code", "")),
+            expires_at=self._parse_dt(str(payload.get("expires_at", "")) or state.get("expires_at")),
+            machine_code=str(payload.get("machine_code", "")) or str(state.get("machine_code", "")),
             activated_at=self._parse_dt(state.get("activated_at")),
         )
 
     def save_license(self, info: LicenseInfo) -> None:
         state = self._load_state()
+        payload: dict[str, Any] = {}
+        if info.key and self.public_key_pem.strip():
+            try:
+                payload = verify_token(info.key, self.public_key_pem)
+            except ValueError:
+                payload = {}
         state.update(
             {
                 "key": info.key,
+                ACTIVATION_CODE_FIELD: info.key,
                 "key_hash": info.key_hash,
+                "license_id": str(payload.get("license_id", state.get("license_id", ""))),
+                "payload": payload,
                 "expires_at": info.expires_at.isoformat() if info.expires_at else "",
                 "machine_code": info.machine_code,
                 "activated_at": info.activated_at.isoformat() if info.activated_at else "",
@@ -99,7 +125,7 @@ class LicenseService:
             key=key,
             key_hash=key_hash,
             expires_at=datetime.fromisoformat(str(payload["expires_at"])),
-            machine_code=self.get_machine_code(),
+            machine_code=str(payload["machine_code"]),
             activated_at=datetime.now(),
         )
         self.save_license(info)
@@ -107,13 +133,11 @@ class LicenseService:
 
     def verify_key(self, key: str) -> tuple[bool, dict[str, Any] | str]:
         try:
-            payload_b64, signature = key.strip().split(".", 1)
-            payload_bytes = base64.urlsafe_b64decode(self._pad_b64(payload_b64))
-            expected = hmac.new(self.secret, payload_bytes, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected, signature):
-                return False, "Invalid activation signature."
-
-            payload = json.loads(payload_bytes.decode("utf-8"))
+            payload = verify_token(key, self.public_key_pem)
+            if payload.get("edition") != "user":
+                return False, "Invalid activation edition."
+            if int(payload.get("schema", 0)) != LICENSE_SCHEMA:
+                return False, "Unsupported activation schema."
             if payload.get("machine_code") != self.get_machine_code():
                 return False, "Activation code does not match this machine."
 
@@ -121,10 +145,17 @@ class LicenseService:
             if expires_at < datetime.now():
                 return False, "Activation code has expired."
             return True, payload
+        except ValueError as exc:
+            message = str(exc)
+            if "signature" in message.lower():
+                return False, "Invalid activation signature."
+            return False, "Invalid activation code format."
         except Exception:
             return False, "Invalid activation code format."
 
     def generate_key(self, value: int, machine_code: str | None = None, *, unit: str) -> str:
+        if not self.private_key_pem.strip():
+            raise ValueError("Private signing key is not configured.")
         if unit == "days":
             if value not in DAY_OPTIONS:
                 raise ValueError("Unsupported license duration")
@@ -139,16 +170,16 @@ class LicenseService:
         machine_code = machine_code or self.get_machine_code()
         payload = {
             "license_id": uuid.uuid4().hex,
+            "edition": "user",
+            "schema": LICENSE_SCHEMA,
             "machine_code": machine_code,
             "duration_value": value,
             "duration_unit": unit,
+            "features": ["standard"],
             "expires_at": expires_at.isoformat(timespec="seconds"),
             "issued_at": datetime.now().isoformat(timespec="seconds"),
         }
-        payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
-        signature = hmac.new(self.secret, payload_bytes, hashlib.sha256).hexdigest()
-        return f"{payload_b64}.{signature}"
+        return sign_payload(payload, self.private_key_pem)
 
     def _load_state(self) -> dict[str, Any]:
         state = LICENSE_STORE.load({})
