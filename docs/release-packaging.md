@@ -39,6 +39,16 @@ Recommended release order for the admin edition:
 2. Code-sign the exe.
 3. Generate the release manifest if admin auto-update is enabled.
 
+The default free protector/compressor for this project is UPX. UPX is free and can be used with commercial applications, but it is a lightweight packer rather than a strong anti-reverse-engineering product. Use it as a first-cost step, not as a replacement for keeping private keys out of user builds.
+
+Apply UPX to the user exe:
+
+```powershell
+.\.venv\Scripts\python.exe tools\protect_with_upx.py dist\StarTrace-1.97.0.exe --backup
+```
+
+If antivirus false positives or launch issues appear on customer machines, release without UPX or move to a commercial protector with compatibility testing.
+
 ## Generate Update Manifest Token
 
 ```powershell
@@ -66,4 +76,12 @@ The script prints a signed token. Store the decoded payload plus signature as th
 2. Activate using an admin-generated code.
 3. Restart offline and verify activation persists.
 4. Publish a higher-version manifest and verify the client accepts it.
-5. Corrupt a downloaded artifact and verify hash validation rejects it.
+5. Download the update and confirm the application prompts to install and restart.
+6. Confirm the updater waits for the old process, replaces the exe, restarts the app, and removes its temporary script.
+7. Corrupt a downloaded artifact and verify hash validation rejects it.
+
+## Update Installer Behavior
+
+When the application is running from a frozen executable, a verified update can be installed automatically. The app writes a temporary `install-update.cmd` script under the system temp directory, starts it, and exits. The script waits until the old process ID disappears, copies the staged exe over the current exe, starts the updated exe, and deletes itself.
+
+In a development run, the application does not replace `python.exe`; it only shows the verified download path.

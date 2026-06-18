@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import logging
+import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QTimer, Signal, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QShowEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QMessageBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QLabel, QPushButton
 
-from app.build_config import IS_ADMIN_VERSION
+from app.build_config import APP_VERSION, IS_ADMIN_VERSION, UPDATE_PUBLIC_KEY_PEM, update_manifest_url
 from app.models import StatsResult
 from app.services.account_resolver import AccountResolver
 from app.services.chat_service import ChatLogService
 from app.services.license_service import LicenseService
 from app.services.settings_service import SettingsService
+from app.services.update_installer import schedule_update_install
+from app.services.update_service import download_and_verify, fetch_manifest, update_available
 from app.ui.license_generator_dialog import LicenseGeneratorDialog
 from app.ui.main_window_actions import MainWindowActionsMixin
 from app.ui.main_window_blocking import MainWindowBlockingMixin
@@ -40,6 +45,8 @@ class MainWindow(
     _load_result_ready = Signal(object)
     _draw_infos_ready = Signal(object)
     _single_draw_info_ready = Signal(object)
+    _update_check_ready = Signal(object)
+    _update_download_ready = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -97,6 +104,8 @@ class MainWindow(
         self._load_result_ready.connect(self._handle_load_result_ready)
         self._draw_infos_ready.connect(self._apply_draw_infos)
         self._single_draw_info_ready.connect(self._apply_single_draw_info)
+        self._update_check_ready.connect(self._handle_update_check_ready)
+        self._update_download_ready.connect(self._handle_update_download_ready)
         self._worker = ThreadPoolExecutor(max_workers=2)
         self._data_worker = ThreadPoolExecutor(max_workers=1)
 
@@ -148,6 +157,7 @@ class MainWindow(
         set_proxy_settings(self.settings)
 
         self._activate_and_launch()
+        QTimer.singleShot(1500, self._check_for_updates_async)
 
     def _activate_and_launch(self) -> None:
         if self.analysis_page is None:
@@ -301,6 +311,76 @@ class MainWindow(
         if IS_ADMIN_VERSION:
             return True
         return True
+
+    def _check_for_updates_async(self) -> None:
+        manifest_url = update_manifest_url()
+        if not manifest_url or not UPDATE_PUBLIC_KEY_PEM:
+            logger.debug("Update check skipped: manifest URL or public key is not configured")
+            return
+        self._data_worker.submit(self._check_for_updates_worker, manifest_url, UPDATE_PUBLIC_KEY_PEM)
+
+    def _check_for_updates_worker(self, manifest_url: str, public_key_pem: str) -> None:
+        try:
+            manifest = fetch_manifest(manifest_url, public_key_pem)
+            if update_available(APP_VERSION, manifest):
+                self._update_check_ready.emit({"ok": True, "manifest": manifest})
+            else:
+                logger.debug("No update available: current=%s remote=%s", APP_VERSION, manifest.get("version"))
+        except Exception as exc:
+            logger.warning("Update check failed: %s", exc)
+
+    def _handle_update_check_ready(self, payload: object) -> None:
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return
+        manifest = payload.get("manifest")
+        if not isinstance(manifest, dict):
+            return
+        version = str(manifest.get("version", ""))
+        notes = str(manifest.get("notes", "")).strip()
+        force = bool(manifest.get("force", False))
+        message = f"检测到新版本 {version}，是否现在下载？"
+        if notes:
+            message += f"\n\n{notes}"
+        buttons = QMessageBox.Ok if force else QMessageBox.Ok | QMessageBox.Cancel
+        if QMessageBox.information(self, "软件更新", message, buttons) != QMessageBox.Ok:
+            return
+        self._data_worker.submit(self._download_update_worker, manifest)
+
+    def _download_update_worker(self, manifest: dict[str, object]) -> None:
+        try:
+            file_name = Path(str(manifest.get("url", "StarTrace-update.exe"))).name or "StarTrace-update.exe"
+            target_path = Path(tempfile.gettempdir()) / "StarTraceUpdates" / file_name
+            ok = download_and_verify(manifest, target_path)
+            self._update_download_ready.emit({"ok": ok, "path": str(target_path), "manifest": manifest})
+        except Exception as exc:
+            logger.warning("Update download failed: %s", exc)
+            self._update_download_ready.emit({"ok": False, "error": str(exc), "manifest": manifest})
+
+    def _handle_update_download_ready(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        if payload.get("ok"):
+            if not getattr(sys, "frozen", False):
+                QMessageBox.information(
+                    self,
+                    "更新已下载",
+                    f"新版本已下载并通过校验。\n文件位置：{payload.get('path')}\n开发环境不会自动替换运行文件。",
+                )
+                return
+            choice = QMessageBox.information(
+                self,
+                "更新已下载",
+                "新版本已下载并通过校验。是否立即安装并重启？",
+                QMessageBox.Ok | QMessageBox.Cancel,
+            )
+            if choice == QMessageBox.Ok:
+                schedule_update_install(
+                    current_exe=Path(sys.executable),
+                    staged_exe=Path(str(payload.get("path", ""))),
+                )
+                QApplication.quit()
+        else:
+            QMessageBox.warning(self, "更新失败", f"更新下载或校验失败：{payload.get('error', 'hash mismatch')}")
 
     def _toggle_advanced_time(self) -> None:
         visible = not self.advanced_time_frame.isVisible()
