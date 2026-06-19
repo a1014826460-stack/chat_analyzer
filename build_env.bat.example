@@ -1,0 +1,5 @@
+@echo off
+rem 复制本文件为 build_env.bat 后再填写实际值
+
+set "STARTRACE_CDN_BASE_URL=https://www.twsaimahui.com"
+set "STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥-----END PUBLIC KEY-----"

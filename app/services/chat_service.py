@@ -111,6 +111,7 @@ class RobotSummarySnapshot:
     group: str
     ts: datetime
     totals: dict[str, float]
+    totals_by_bettor: dict[str, dict[str, float]]
 
 
 @dataclass
@@ -1033,11 +1034,15 @@ class ChatLogService:
         if not period:
             return None
         totals: dict[str, float] = defaultdict(float)
+        totals_by_bettor: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for raw_line in content.splitlines():
+            bettor = self._summary_line_bettor_name(raw_line)
             for body in self._summary_bet_bodies_from_line(raw_line):
                 for play, amount in self._parse_bets(body):
                     if play in PLAY_TYPES:
                         totals[play] += float(amount)
+                        if bettor:
+                            totals_by_bettor[bettor][play] += float(amount)
         if not totals:
             return None
         return RobotSummarySnapshot(
@@ -1045,6 +1050,7 @@ class ChatLogService:
             group=msg.group,
             ts=msg.ts,
             totals=dict(totals),
+            totals_by_bettor={bettor: dict(play_totals) for bettor, play_totals in totals_by_bettor.items()},
         )
 
     def _period_key_from_summary_text(self, content: str) -> str:
@@ -1061,6 +1067,19 @@ class ChatLogService:
         bodies = [match.group("body") for match in re.finditer(r"【(?P<body>.*?)】", line)]
         bodies.extend(match.group("body") for match in SUMMARY_SQUARE_BODY_PATTERN.finditer(line))
         return [body for body in bodies if self._clean_text(body)]
+
+    def _summary_line_bettor_name(self, line: str) -> str:
+        clean_line = self._clean_text(line)
+        if not clean_line:
+            return ""
+        body_match = re.search(r"[【\[]", clean_line)
+        if body_match is None:
+            return ""
+        prefix = clean_line[: body_match.start()].strip()
+        if not prefix:
+            return ""
+        parts = prefix.split()
+        return self._clean_text(parts[0]) if parts else ""
 
     def _is_robot_summary_stats_source(self, content: str) -> bool:
         text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
@@ -1134,8 +1153,34 @@ class ChatLogService:
                 or software_totals_by_group.get("")
                 or {}
             )
-            records.append(self._format_robot_summary_reconciliation(snapshot, group_software_totals))
+            records.append(
+                self._format_robot_summary_reconciliation(
+                    self._filtered_robot_summary_snapshot(snapshot),
+                    group_software_totals,
+                )
+            )
         return records
+
+    def _filtered_robot_summary_snapshot(self, snapshot: RobotSummarySnapshot) -> RobotSummarySnapshot:
+        blocked_names = self._blocked_names_for_group(snapshot.group)
+        if not blocked_names or not snapshot.totals_by_bettor:
+            return snapshot
+        totals: dict[str, float] = defaultdict(float)
+        filtered_totals_by_bettor: dict[str, dict[str, float]] = {}
+        for bettor, play_totals in snapshot.totals_by_bettor.items():
+            if self._normalize_text(bettor) in blocked_names:
+                continue
+            filtered_totals_by_bettor[bettor] = dict(play_totals)
+            for play, amount in play_totals.items():
+                if play in PLAY_TYPES:
+                    totals[play] += float(amount)
+        return RobotSummarySnapshot(
+            period=snapshot.period,
+            group=snapshot.group,
+            ts=snapshot.ts,
+            totals=dict(totals),
+            totals_by_bettor=filtered_totals_by_bettor,
+        )
 
     def _format_robot_summary_reconciliation(
         self,

@@ -1479,6 +1479,7 @@ def test_chat_service_zero_robot_total_is_not_within_tolerance() -> None:
         group="测试群",
         ts=datetime(2026, 6, 20, 0, 0, 0),
         totals={},
+        totals_by_bettor={},
     )
 
     record = service._format_robot_summary_reconciliation(
@@ -1490,6 +1491,52 @@ def test_chat_service_zero_robot_total_is_not_within_tolerance() -> None:
     assert record["by_play"]["大单"]["software_total"] == 88.0
     assert record["by_play"]["大单"]["within_tolerance"] is False
     assert record["by_play"]["大单"]["diff_ratio"] == 1.0
+
+
+def test_chat_service_robot_summary_reconciliation_respects_group_block_rules() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service.set_group_block_rules(
+        {
+            "group a": {
+                "group_id": "group-a",
+                "group_name": "Group A",
+                "names": ["火锅"],
+            }
+        }
+    )
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 2, 4, 12),
+            group="Group A",
+            username="Robot A",
+            sender_id="robot-a",
+            content=(
+                "---[3447058]---\n"
+                "3447058期下注核对：\n"
+                "火锅 4827[单 530 双 630]\n"
+                "玩家A 1200[单 100 双 200]\n"
+            ),
+            group_id="group-a",
+        ),
+    ]
+
+    records = service._build_robot_summary_reconciliations(
+        messages,
+        {"Group A": {"单": 100.0, "双": 200.0}},
+        "3447058",
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["robot_totals"]["单"] == 100.0
+    assert record["robot_totals"]["双"] == 200.0
+    assert record["by_play"]["单"]["within_tolerance"] is True
+    assert record["by_play"]["双"]["within_tolerance"] is True
 
 
 def test_chat_service_does_not_count_robot_summary_rows_into_software_totals() -> None:
@@ -7392,3 +7439,47 @@ def test_main_window_opens_and_reuses_unresolved_receipt_dialog() -> None:
     assert dummy.unresolved_receipt_dialog is first_dialog
     assert "松松" in first_dialog.result_view.toPlainText()
     first_dialog.close()
+
+
+def test_build_bat_loads_build_env_bat_before_running_builder() -> None:
+    from pathlib import Path
+
+    script = Path("build.bat").read_text(encoding="utf-8")
+
+    assert "call build_common_env.bat" in script
+    assert '.venv\\Scripts\\python.exe tools\\build.py' in script
+
+
+def test_build_bat_supports_loading_dot_env_values() -> None:
+    from pathlib import Path
+
+    script = Path("build_common_env.bat").read_text(encoding="utf-8")
+
+    assert 'if exist ".env" (' in script
+    assert 'for /f "usebackq tokens=1,* delims==" %%A in (".env") do (' in script
+    assert 'if /I "%%~A"=="STARTRACE_CDN_BASE_URL" set "STARTRACE_CDN_BASE_URL=%%~B"' in script
+    assert 'if /I "%%~A"=="STARTRACE_UPDATE_PUBLIC_KEY_PEM" set "STARTRACE_UPDATE_PUBLIC_KEY_PEM=%%~B"' in script
+
+
+def test_admin_and_user_build_wrappers_load_shared_env_logic() -> None:
+    from pathlib import Path
+
+    admin_script = Path("build_admin.bat").read_text(encoding="utf-8")
+    user_script = Path("build_user.bat").read_text(encoding="utf-8")
+
+    assert "call build_common_env.bat" in admin_script
+    assert '.venv\\Scripts\\python.exe tools\\build.py --admin' in admin_script
+
+    assert "call build_common_env.bat" in user_script
+    assert '.venv\\Scripts\\python.exe tools\\build.py' in user_script
+
+
+def test_build_common_env_prefers_build_env_bat_and_supports_example_template() -> None:
+    from pathlib import Path
+
+    common_script = Path("build_common_env.bat").read_text(encoding="utf-8")
+    example_script = Path("build_env.bat.example").read_text(encoding="utf-8")
+
+    assert 'if exist "build_env.bat" call "build_env.bat"' in common_script
+    assert "STARTRACE_CDN_BASE_URL" in example_script
+    assert "STARTRACE_UPDATE_PUBLIC_KEY_PEM" in example_script
