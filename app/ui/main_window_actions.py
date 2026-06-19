@@ -7,6 +7,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from app.ui.raw_chat_dialog import RawChatDialog
+from app.ui.summary_check_dialog import SummaryCheckDialog
+from app.ui.unresolved_receipt_dialog import UnresolvedReceiptDialog
 from app.utils.fetch_date import set_proxy_settings
 from app.utils.proxy import proxy_status_text
 
@@ -276,6 +278,131 @@ class MainWindowActionsMixin:
             self.raw_chat_dialog = dialog
         else:
             dialog.set_messages(messages)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _summary_check_history(self) -> list[dict[str, object]]:
+        history = getattr(self, "summary_check_history", None)
+        if not isinstance(history, list):
+            history = []
+            self.summary_check_history = history
+        return history
+
+    def _record_summary_check(self, payload: dict[str, object]) -> None:
+        period = str(payload.get("period", "") or "").strip()
+        by_play = dict(payload.get("by_play", {}) or {})
+        if not period or not by_play:
+            return
+        group = str(payload.get("group", "") or "").strip()
+        history = self._summary_check_history()
+        record = {
+            "group": group,
+            "period": period,
+            "software_totals": dict(payload.get("software_totals", {}) or {}),
+            "robot_totals": dict(payload.get("robot_totals", {}) or {}),
+            "by_play": by_play,
+        }
+        deduped = [
+            item
+            for item in history
+            if not (
+                str(item.get("group", "") or "").strip() == group
+                and str(item.get("period", "") or "").strip() == period
+            )
+        ]
+        deduped.insert(0, record)
+        self.summary_check_history = deduped[:20]
+
+    def _summary_check_payload(self) -> dict[str, object]:
+        stats = getattr(self, "current_stats", None)
+        if stats is None:
+            return {}
+        records = getattr(stats, "summary_check_records", None)
+        if isinstance(records, list) and records:
+            return dict(records[0])
+        return {
+            "group": self._active_group_name_for_summary_check(),
+            "period": getattr(stats, "summary_check_period", "") or "",
+            "software_totals": getattr(stats, "totals", {}) or {},
+            "robot_totals": getattr(stats, "summary_check_totals", {}) or {},
+            "by_play": getattr(stats, "summary_check_by_play", {}) or {},
+        }
+
+    def _summary_check_payloads(self) -> list[dict[str, object]]:
+        stats = getattr(self, "current_stats", None)
+        records = getattr(stats, "summary_check_records", None) if stats is not None else None
+        if isinstance(records, list) and records:
+            for record in reversed(records):
+                if isinstance(record, dict):
+                    self._record_summary_check(record)
+        else:
+            payload = self._summary_check_payload()
+            if payload:
+                self._record_summary_check(payload)
+        return list(self._summary_check_history())
+
+    def _active_group_name_for_summary_check(self) -> str:
+        selected_names_getter = getattr(self, "_selected_group_names", None)
+        if callable(selected_names_getter):
+            selected_names = selected_names_getter()
+            if len(selected_names) == 1:
+                return str(selected_names[0] or "")
+        current_messages = getattr(self, "current_messages", [])
+        groups = {
+            str(getattr(message, "group", "")).strip()
+            for message in current_messages
+            if str(getattr(message, "group", "")).strip()
+        }
+        return next(iter(groups), "") if len(groups) == 1 else ""
+
+    def _open_summary_check_dialog(self) -> None:
+        dialog = getattr(self, "summary_check_dialog", None)
+        payload_getter = getattr(self, "_summary_check_payloads", None)
+        if callable(payload_getter):
+            payload = payload_getter()
+        else:
+            stats = getattr(self, "current_stats", None)
+            payload = []
+            if stats is not None:
+                payload = [
+                    {
+                        "period": getattr(stats, "summary_check_period", "") or "",
+                        "software_totals": getattr(stats, "totals", {}) or {},
+                        "robot_totals": getattr(stats, "summary_check_totals", {}) or {},
+                        "by_play": getattr(stats, "summary_check_by_play", {}) or {},
+                    }
+                ]
+        if dialog is None:
+            parent = self if isinstance(self, QWidget) else None
+            dialog = SummaryCheckDialog(payload, parent)
+            self.summary_check_dialog = dialog
+        else:
+            dialog.set_summary_check(payload)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _unresolved_receipt_payload(self) -> list[dict[str, object]]:
+        stats = getattr(self, "current_stats", None)
+        if stats is None:
+            return []
+        return [dict(row) for row in getattr(stats, "unresolved_receipts", []) or []]
+
+    def _open_unresolved_receipt_dialog(self) -> None:
+        dialog = getattr(self, "unresolved_receipt_dialog", None)
+        payload_getter = getattr(self, "_unresolved_receipt_payload", None)
+        if callable(payload_getter):
+            rows = payload_getter()
+        else:
+            stats = getattr(self, "current_stats", None)
+            rows = [dict(row) for row in getattr(stats, "unresolved_receipts", []) or []] if stats is not None else []
+        if dialog is None:
+            parent = self if isinstance(self, QWidget) else None
+            dialog = UnresolvedReceiptDialog(rows, parent)
+            self.unresolved_receipt_dialog = dialog
+        else:
+            dialog.set_rows(rows)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

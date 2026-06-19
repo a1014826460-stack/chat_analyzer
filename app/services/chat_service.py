@@ -45,11 +45,15 @@ TXT_LINE_PATTERN = re.compile(
 SIMPLE_BET_PATTERN = re.compile(rf"(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)")
 PLAY_TOKENS = tuple(sorted(PLAY_TYPES, key=len, reverse=True))
 NUMBER_TOKEN_AT_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+SUMMARY_SQUARE_BODY_PATTERN = re.compile(r"(?<!-)\[(?P<body>[^\[\]\n\r]+)\]")
 RECEIPT_BETTOR_PATTERN = re.compile(r"@\s*(?P<bettor>.+?)\s*[:：]")
 RECEIPT_BODY_PATTERN = re.compile(r"下注内容\s*[:：]\s*-+\s*(?P<body>.*?)\s*-+\s*余额", re.S)
 RECEIPT_ODDS_PATTERN = re.compile(r"\([^)]*赔率\)")
-RECEIPT_POINT_BET_PATTERN = re.compile(r"^(?P<play>\d{1,2})\.(?P<amount>\d[\d,]*(?:\.\d+)?)$")
-RECEIPT_PLAY_BET_PATTERN = re.compile(r"^(?P<play>.+?)(?P<amount>\d[\d,]*(?:\.\d+)?)$")
+RECEIPT_ALLOWED_PLAY_BET_PATTERN = re.compile(
+    rf"^(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)(?:\D.*)?$"
+)
+RECEIPT_POINT_PLAY_BET_PATTERN = re.compile(r"^(?P<play>\d{1,2})\.(?P<amount>\d[\d,]*)(?:\D.*)?$")
+RECEIPT_GENERIC_PLAY_BET_PATTERN = re.compile(r"^(?P<play>.+?)(?P<amount>\d[\d,]*(?:\.\d+)?)(?:\D.*)?$")
 DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
 RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
 DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
@@ -99,6 +103,14 @@ class BetEvent:
     kind: str
     source: str = ""
     order_id: str = ""
+
+
+@dataclass
+class RobotSummarySnapshot:
+    period: str
+    group: str
+    ts: datetime
+    totals: dict[str, float]
 
 
 @dataclass
@@ -424,6 +436,25 @@ class ChatLogService:
             lock_threshold_sec=lock_threshold_sec,
             group_types_by_id=group_types_by_id,
         )
+        unresolved_receipts: list[dict[str, object]] = []
+        filtered_rows: list[dict[str, object]] = []
+        for row in visual_rows:
+            username = str(row.get("username", "") or "")
+            bettor = str(row.get("bettor", "") or "")
+            if (
+                str(row.get("source_kind", "") or "") == "receipt"
+                and bettor
+                and bettor != username
+                and self._looks_like_robot_identity(
+                    username,
+                    row.get("sender_id", ""),
+                    row.get("group", ""),
+                )
+            ):
+                unresolved_receipts.append(dict(row))
+                continue
+            filtered_rows.append(row)
+        visual_rows = filtered_rows
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for row in visual_rows:
@@ -433,10 +464,21 @@ class ChatLogService:
             group = str(row.get("group", "") or "")
             if group:
                 totals_by_group[group][play] += amount
+        summary_check_records = self._build_robot_summary_reconciliations(
+            filtered,
+            {group: dict(group_totals) for group, group_totals in totals_by_group.items()},
+            period_filter,
+        )
+        summary_check = summary_check_records[0] if summary_check_records else {}
         return visual_rows, StatsResult(
             totals=dict(totals),
             totals_by_group={group: dict(group_totals) for group, group_totals in totals_by_group.items()},
             matched_messages=len(filtered),
+            summary_check_period=str(summary_check.get("period", "") or ""),
+            summary_check_totals=dict(summary_check.get("robot_totals", {}) or {}),
+            summary_check_by_play=dict(summary_check.get("by_play", {}) or {}),
+            summary_check_records=summary_check_records,
+            unresolved_receipts=unresolved_receipts,
         )
 
     def summarize_bets(
@@ -768,8 +810,11 @@ class ChatLogService:
 
         for msg in messages:
             period = self._extract_period(msg.content)
-            _content, events = self._parse_bet_events_from_message(msg)
+            content, events = self._parse_bet_events_from_message(msg)
             if not events:
+                continue
+            is_robot_msg = self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id)
+            if is_robot_msg and not self._parse_receipt_bet_events(content):
                 continue
             for event in events:
                 if event.kind in {"bet", "cancel"}:
@@ -797,6 +842,8 @@ class ChatLogService:
                         order_id=event.order_id,
                     )
                 )
+            if is_robot_msg:
+                continue
             pending = PendingUserMessage(
                 username=msg.username,
                 sender_id=msg.sender_id,
@@ -826,7 +873,27 @@ class ChatLogService:
             if msg_key in seen_messages:
                 continue
             seen_messages.add(msg_key)
+            summary_snapshot = self._extract_robot_summary_snapshot(msg)
+            if summary_snapshot is not None and self._is_robot_summary_stats_source(msg.content):
+                for play, amount in summary_snapshot.totals.items():
+                    resolved.append(
+                        ResolvedBetEvent(
+                            group=msg.group,
+                            username=msg.username,
+                            sender_id=msg.sender_id,
+                            ts=msg.ts,
+                            period=summary_snapshot.period,
+                            bettor=msg.group,
+                            play=play,
+                            amount=float(amount),
+                            kind="bet",
+                            source_kind="summary",
+                        )
+                    )
+                continue
             parsed_content, events = self._parse_bet_events_from_message(msg)
+            if self._looks_like_period_summary_billboard(parsed_content):
+                continue
             if self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
                 continue
             period = self._resolve_direct_group_period(
@@ -871,7 +938,7 @@ class ChatLogService:
         )
 
     def _parse_bet_events_from_message(self, msg: ChatMessage) -> tuple[str, list[BetEvent]]:
-        content = self._clean_text(msg.content)
+        content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
         if self._looks_like_period_summary_billboard(content):
             return content, []
         cancel_event = self._parse_cancel_event(content)
@@ -916,24 +983,149 @@ class ChatLogService:
         return events
 
     def _parse_receipt_bet_line(self, line: str) -> tuple[str, float] | None:
-        text = RECEIPT_ODDS_PATTERN.sub("", self._clean_text(line)).strip()
+        text = self._clean_text(line).strip()
         if not text:
             return None
-        point_match = RECEIPT_POINT_BET_PATTERN.match(text)
-        if point_match:
-            return point_match.group("play"), self._parse_amount_text(point_match.group("amount"))
-        play_match = RECEIPT_PLAY_BET_PATTERN.match(text)
-        if not play_match:
-            return None
-        play = play_match.group("play").strip()
-        amount = self._parse_amount_text(play_match.group("amount"))
-        return (play, amount) if play else None
+        play_match = RECEIPT_ALLOWED_PLAY_BET_PATTERN.match(text)
+        if play_match:
+            play = play_match.group("play").strip()
+            amount = self._parse_amount_text(play_match.group("amount"))
+            return play, amount
+        return None
 
     def _looks_like_period_summary_billboard(self, content: str) -> bool:
-        has_period_header = bool(re.search(r"-+\[\d{4,}\].*?-+", content))
-        if has_period_header and "在线人数" in content and "总分" in content:
+        if "在线人数" in content and "总分" in content:
+            return False
+        if not self._period_key_from_summary_text(content):
+            return False
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        summary_line_count = 0
+        for line in lines[1:]:
+            bodies = self._summary_bet_bodies_from_line(line)
+            if not bodies:
+                continue
+            if any(self._parse_bets(body) for body in bodies):
+                summary_line_count += 1
+        return summary_line_count >= 1
+
+    def _extract_robot_summary_snapshot(self, msg: ChatMessage) -> RobotSummarySnapshot | None:
+        content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
+        if not self._looks_like_period_summary_billboard(content):
+            return None
+        period = self._period_key_from_summary_text(content)
+        if not period:
+            return None
+        totals: dict[str, float] = defaultdict(float)
+        for raw_line in content.splitlines():
+            for body in self._summary_bet_bodies_from_line(raw_line):
+                for play, amount in self._parse_bets(body):
+                    if play in PLAY_TYPES:
+                        totals[play] += float(amount)
+        if not totals:
+            return None
+        return RobotSummarySnapshot(
+            period=period,
+            group=msg.group,
+            ts=msg.ts,
+            totals=dict(totals),
+        )
+
+    def _period_key_from_summary_text(self, content: str) -> str:
+        clean = self._clean_text(content)
+        explicit = re.search(r"(?P<period>\d{4,})\s*期(?:下注核对)?\s*[:：]", clean)
+        if explicit:
+            return explicit.group("period")
+        bracket = re.search(r"-+\[(?:[A-Z])?(?P<period>\d{4,})(?:-\d+)?\][^\n-]{0,8}-+", clean)
+        if bracket:
+            return bracket.group("period")
+        return ""
+
+    def _summary_bet_bodies_from_line(self, line: str) -> list[str]:
+        bodies = [match.group("body") for match in re.finditer(r"【(?P<body>.*?)】", line)]
+        bodies.extend(match.group("body") for match in SUMMARY_SQUARE_BODY_PATTERN.finditer(line))
+        return [body for body in bodies if self._clean_text(body)]
+
+    def _is_robot_summary_stats_source(self, content: str) -> bool:
+        text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
+        if re.search(r"\d{4,}\s*期(?:下注核对)?\s*[:：]", text):
             return True
-        return bool(re.search(r"-+\[\d{4,}\].*?期-+", content) and "【" in content and "】" in content)
+        if "本期下注" in text and re.search(r"-+\[第?\d{4,}期\]-+", text):
+            return True
+        return False
+
+    def _build_robot_summary_reconciliation(
+        self,
+        messages: list[ChatMessage],
+        software_totals: dict[str, float],
+        period_filter: str,
+    ) -> dict[str, object]:
+        records = self._build_robot_summary_reconciliations(messages, {"": software_totals}, period_filter)
+        return records[0] if records else {}
+
+    def _build_robot_summary_reconciliations(
+        self,
+        messages: list[ChatMessage],
+        software_totals_by_group: dict[str, dict[str, float]],
+        period_filter: str,
+    ) -> list[dict[str, object]]:
+        snapshots = [
+            snapshot
+            for msg in messages
+            if (snapshot := self._extract_robot_summary_snapshot(msg)) is not None
+        ]
+        if period_filter:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.period == period_filter]
+        if not snapshots:
+            return []
+        latest_by_group_period: dict[tuple[str, str], RobotSummarySnapshot] = {}
+        for snapshot in snapshots:
+            key = (snapshot.group, snapshot.period)
+            previous = latest_by_group_period.get(key)
+            if previous is None or snapshot.ts > previous.ts:
+                latest_by_group_period[key] = snapshot
+        records: list[dict[str, object]] = []
+        for snapshot in sorted(
+            latest_by_group_period.values(),
+            key=lambda item: (item.ts, item.group, item.period),
+            reverse=True,
+        ):
+            group_software_totals = (
+                software_totals_by_group.get(snapshot.group)
+                or software_totals_by_group.get("")
+                or {}
+            )
+            records.append(self._format_robot_summary_reconciliation(snapshot, group_software_totals))
+        return records
+
+    def _format_robot_summary_reconciliation(
+        self,
+        snapshot: RobotSummarySnapshot,
+        software_totals: dict[str, float],
+    ) -> dict[str, object]:
+        by_play: dict[str, dict[str, float | bool]] = {}
+        for play in PLAY_TYPES:
+            software_total = float(software_totals.get(play, 0.0) or 0.0)
+            robot_total = float(snapshot.totals.get(play, 0.0) or 0.0)
+            diff = abs(software_total - robot_total)
+            ratio = 0.0 if robot_total <= 0 else diff / robot_total
+            by_play[play] = {
+                "software_total": software_total,
+                "robot_total": robot_total,
+                "diff": diff,
+                "diff_ratio": ratio,
+                "within_tolerance": ratio <= 0.2,
+            }
+        return {
+            "group": snapshot.group,
+            "period": snapshot.period,
+            "robot_totals": dict(snapshot.totals),
+            "software_totals": {
+                play: float(software_totals.get(play, 0.0) or 0.0)
+                for play in PLAY_TYPES
+                if float(software_totals.get(play, 0.0) or 0.0) > 0
+            },
+            "by_play": by_play,
+        }
 
     def _clean_text(self, value: object) -> str:
         text = str(value or "")
@@ -995,6 +1187,13 @@ class ChatLogService:
         return identity_keys, sender_keys
 
     def _parse_bets(self, content: str) -> list[tuple[str, float]]:
+        compact_events = [
+            (play, amount)
+            for _bettor, play, amount in self._parse_compact_bets(content, self._extract_bettor_name(content))
+            if amount > 0
+        ]
+        if compact_events:
+            return compact_events
         events: list[tuple[str, float]] = []
         for match in SIMPLE_BET_PATTERN.finditer(content):
             amount = self._parse_amount_text(match.group("amount"))
@@ -1003,9 +1202,6 @@ class ChatLogService:
             events.append((match.group("play"), amount))
         if events:
             return events
-        for _bettor, play, amount in self._parse_compact_bets(content, self._extract_bettor_name(content)):
-            if amount > 0:
-                events.append((play, amount))
         return events
 
     def _parse_compact_bets(self, content: str, bettor: str) -> list[tuple[str, str, float]]:
@@ -1030,11 +1226,11 @@ class ChatLogService:
                         continue
             play = self._match_play_token(text, i)
             if play is not None:
-                amount_match = NUMBER_TOKEN_AT_PATTERN.match(text, i + len(play))
+                amount_match = re.match(r"\d[\d,]*(?:\.\d+)?", text[i + len(play) :])
                 if amount_match:
                     amount_text = amount_match.group(0)
                     matches.append((i, play, self._parse_amount_text(amount_text)))
-                    i = amount_match.end()
+                    i = i + len(play) + amount_match.end()
                     continue
             i += 1
         matches.sort(key=lambda item: item[0])
@@ -1197,6 +1393,9 @@ class ChatLogService:
         unique_users = {(pending.username, pending.sender_id) for pending in fallback_candidates}
         if len(unique_users) == 1:
             return next(iter(unique_users))
+        bettor_name = self._clean_text(getattr(event, "bettor", ""))
+        if bettor_name:
+            return bettor_name, ""
         return msg.username, msg.sender_id
 
     def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
@@ -1285,6 +1484,14 @@ class ChatLogService:
         if not match:
             return ""
         return match.group(1)
+
+    def _looks_like_robot_identity(self, username: object, sender_id: object, group: object) -> bool:
+        clean_username = self._clean_text(username)
+        clean_sender_id = self._clean_text(sender_id)
+        clean_group = self._clean_text(group)
+        if "机器" in clean_username:
+            return True
+        return self._is_group_member_robot(clean_group, clean_sender_id, clean_username)
 
     def _extract_bettor_name(self, content: str) -> str:
         return ""

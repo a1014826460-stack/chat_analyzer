@@ -147,6 +147,7 @@ class ChartWindow(QWidget):
         self._last_period_key: tuple[str, ...] | None = None
         self._next_color_index = 0
         self._all_layers: list[ChartLayer] = []
+        self._group_selection_initialized = False
 
         root = QVBoxLayout(self)
 
@@ -218,6 +219,7 @@ class ChartWindow(QWidget):
     def replace_rows(self, rows: list[dict[str, object]]) -> None:
         self._period_rows = []
         self._period_row_indexes = {}
+        self._group_selection_initialized = False
         self._reset_layers()
         self._last_period_key = None
         self.set_rows(rows)
@@ -262,9 +264,12 @@ class ChartWindow(QWidget):
             item = QListWidgetItem(group)
             item.setData(Qt.UserRole, group)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if not selected or group in selected else Qt.Unchecked)
+            should_check = not self._group_selection_initialized or group in selected
+            item.setCheckState(Qt.Checked if should_check else Qt.Unchecked)
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
+        if groups:
+            self._group_selection_initialized = True
 
     def _refresh_activity(self) -> None:
         totals = self._visible_totals_from_layers()
@@ -289,9 +294,22 @@ class ChartWindow(QWidget):
                         f"{float(row.get('amount', 0) or 0):,.0f}",
                     ]
                 )
+                + self._stats_row_suffix(row)
             )
         self.stats_text_view.setPlainText("\n".join(lines))
         scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
+
+    def _stats_row_suffix(self, row: dict[str, object]) -> str:
+        if str(row.get("source_kind", "") or "").strip() != "receipt":
+            return ""
+        sender_id = str(row.get("sender_id", "") or "").strip()
+        source_kind = str(row.get("source_kind", "") or "").strip()
+        parts: list[str] = []
+        if sender_id:
+            parts.append(f"sender_id={sender_id}")
+        if source_kind:
+            parts.append(f"source={source_kind}")
+        return f" | {' | '.join(parts)}" if parts else ""
 
     def _append_increment_layer(self) -> None:
         period_key = self._period_key()
@@ -336,6 +354,8 @@ class ChartWindow(QWidget):
 
     def _filtered_rows(self) -> list[dict[str, object]]:
         selected = self.selected_groups()
+        if self.group_list.count() > 0 and not selected:
+            return []
         return [row for row in self._period_rows if not selected or str(row.get("group", "")) in selected]
 
     def _filtered_allowed_rows(self) -> list[dict[str, object]]:
@@ -361,6 +381,8 @@ class ChartWindow(QWidget):
 
     def _visible_layers(self) -> list[ChartLayer]:
         selected = self.selected_groups()
+        if self.group_list.count() > 0 and not selected:
+            return []
         if not selected:
             return list(self._all_layers)
         visible: list[ChartLayer] = []
@@ -415,6 +437,7 @@ class ChartWindow(QWidget):
         if incoming_periods and existing_periods and incoming_periods != existing_periods:
             self._period_rows = []
             self._period_row_indexes = {}
+            self._group_selection_initialized = False
             self._last_period_key = None
             self._reset_layers()
         for row in rows:
@@ -477,5 +500,6 @@ class ChartWindow(QWidget):
         self._handle_group_filter_changed()
 
     def _handle_group_filter_changed(self) -> None:
+        self._group_selection_initialized = True
         self._refresh_activity()
         self.groups_changed.emit()

@@ -171,6 +171,27 @@ def test_chat_service_parses_compact_amount_first_and_play_first_tokens() -> Non
     ]
 
 
+def test_chat_service_ignores_numeric_point_bets_in_direct_messages() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._parse_bets("大3000 大单1500 单2000 16.300 17.300") == [
+        ("大", 3000.0),
+        ("大单", 1500.0),
+        ("单", 2000.0),
+    ]
+
+
+def test_chat_service_ignores_numeric_point_bets_in_receipts() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._parse_receipt_bet_line("16.300") is None
+    assert service._parse_receipt_bet_line("17.300(1.98赔率)") is None
+
+
 def test_chat_service_extracts_direct_group_start_and_end_markers() -> None:
     from datetime import datetime
 
@@ -597,6 +618,150 @@ def test_chat_service_receipt_group_keeps_latest_amount_per_bettor_period_play()
     assert stats.totals == {"大": 20.0}
 
 
+def test_chat_service_receipt_group_uses_receipt_bettor_as_authoritative_owner() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 16, 30, 21),
+            group="摩羯座网盘4.28-3.68",
+            username="摩羯座网盘机器人",
+            sender_id="robot-1",
+            content=(
+                "@艳阳 :\n"
+                "下注期数: 3447001\n"
+                "下注内容:\n"
+                "------------\n"
+                "大600(1.98赔率)\n"
+                "------------\n"
+                "余额：1000"
+            ),
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447001",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["username"] == "艳阳"
+    assert rows[0]["bettor"] == "艳阳"
+    assert rows[0]["play"] == "大"
+    assert rows[0]["amount"] == 600.0
+    assert rows[0]["sender_id"] == ""
+    assert stats.totals == {"大": 600.0}
+    assert stats.unresolved_receipts == []
+
+
+def test_chat_service_receipt_group_ignores_robot_non_receipt_bet_like_message() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 18, 54, 33),
+            group="处女座 4.2 4.6高倍",
+            username="处女座机器人",
+            sender_id="DHoQyZEtl",
+            content="小双568 大526 双279",
+            group_id="receipt-zodiac",
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"receipt-zodiac": "receipt"},
+    )
+
+    assert rows == []
+    assert stats.totals == {}
+    assert stats.unresolved_receipts == []
+
+
+def test_chat_service_receipt_group_does_not_reuse_robot_receipt_as_pending_owner() -> None:
+    from datetime import datetime, timedelta
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    base_ts = datetime(2026, 6, 19, 18, 54, 40)
+    messages = [
+        ChatMessage(
+            ts=base_ts,
+            group="处女座 4.2 4.6高倍",
+            username="处女座机器人",
+            sender_id="DHoQyZEtl",
+            content=(
+                "@飞雪 : \n"
+                "下注期数: 3446932\n"
+                "下注内容: \n"
+                "------------\n"
+                "大双2000(4.2赔率)\n"
+                "------------\n"
+                "余额：1000"
+            ),
+            group_id="receipt-zodiac",
+        ),
+        ChatMessage(
+            ts=base_ts + timedelta(seconds=5),
+            group="处女座 4.2 4.6高倍",
+            username="处女座机器人",
+            sender_id="DHoQyZEtl",
+            content=(
+                "@飞雪 : \n"
+                "下注期数: 3446932\n"
+                "下注内容: \n"
+                "------------\n"
+                "大单5000(4.2赔率)\n"
+                "------------\n"
+                "余额：1000"
+            ),
+            group_id="receipt-zodiac",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3446932",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"receipt-zodiac": "receipt"},
+    )
+
+    assert sorted((row["username"], row["bettor"], row["play"], row["amount"]) for row in rows) == [
+        ("飞雪", "飞雪", "大单", 5000.0),
+        ("飞雪", "飞雪", "大双", 2000.0),
+    ]
+    assert stats.totals == {"大双": 2000.0, "大单": 5000.0}
+    assert stats.unresolved_receipts == []
+
+
 def test_chat_service_group_type_memory_overrides_zodiac_name_for_direct_group() -> None:
     from datetime import datetime
 
@@ -732,10 +897,13 @@ def test_chat_service_group_type_memory_routes_non_zodiac_group_as_receipt_group
         group_types_by_id={"group-receipt": "receipt"},
     )
 
-    assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
-        ("雪茜", "3444525", "大", 800.0)
-    ]
+    assert len(rows) == 1
+    assert rows[0]["username"] == "雪茜"
+    assert rows[0]["bettor"] == "雪茜"
+    assert rows[0]["play"] == "大"
+    assert rows[0]["amount"] == 800.0
     assert stats.totals == {"大": 800.0}
+    assert stats.unresolved_receipts == []
 
 
 def test_chat_service_parses_robot_multiline_receipt_bets() -> None:
@@ -793,28 +961,119 @@ def test_chat_service_parses_robot_multiline_receipt_bets() -> None:
     )
 
     assert [(row["bettor"], row["period"], row["play"], row["amount"]) for row in rows] == [
-        ("雪茜", "3444525", "15", 150.0),
         ("雪茜", "3444525", "大", 800.0),
-        ("朝阳", "3444525", "11", 500.0),
         ("朝阳", "3444525", "大双", 2500.0),
         ("朝阳", "3444525", "小单", 2500.0),
     ]
     assert stats.totals == {
-        "15": 150.0,
         "大": 800.0,
         "小单": 2500.0,
         "大双": 2500.0,
-        "11": 500.0,
     }
     assert stats.totals_by_group == {
         "摩羯座网盘4.28-3.68": {
-            "15": 150.0,
             "大": 800.0,
             "小单": 2500.0,
             "大双": 2500.0,
-            "11": 500.0,
         }
     }
+
+
+def test_chat_service_receipt_group_keeps_bettor_name_for_zodiac_robot_receipt() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 17, 23, 30),
+            group="处女座 4.2 4.6高倍",
+            username="处女座机器人",
+            sender_id="DHoQyZEtl",
+            content=(
+                "@燕子 : \n"
+                "下注期数: 3446920\n"
+                "下注内容: \n"
+                "------------\n"
+                "小单2600(5.3赔率)🇨🇦2.2-5.3\n"
+                "小双4000(5.3赔率)🇨🇦2.2-5.3\n"
+                "------------\n"
+                "余额：15472"
+            ),
+            group_id="receipt-zodiac",
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3446920",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"receipt-zodiac": "receipt"},
+    )
+
+    assert [(row["username"], row["bettor"], row["play"], row["amount"]) for row in rows] == [
+        ("燕子", "燕子", "小单", 2600.0),
+        ("燕子", "燕子", "小双", 4000.0),
+    ]
+    assert stats.totals == {"小单": 2600.0, "小双": 4000.0}
+    assert stats.unresolved_receipts == []
+
+
+def test_chat_service_receipt_group_parses_receipt_with_balance_colon_suffix() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 17, 58, 41),
+            group="射手座4.6-4.2",
+            username="机器人",
+            sender_id="ybSzcdwMK",
+            content=(
+                "@干饭 : \n"
+                "下注期数: 3446930\n"
+                "下注内容: \n"
+                "------------\n"
+                "单500(1.99赔率)\n"
+                "大单300(4.2赔率)\n"
+                "15.150(12.0赔率)\n"
+                "------------\n"
+                "余额：2577"
+            ),
+            group_id="receipt-balance-colon",
+        )
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3446930",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"receipt-balance-colon": "receipt"},
+    )
+
+    assert sorted((row["username"], row["bettor"], row["play"], row["amount"]) for row in rows) == sorted(
+        [
+            ("干饭", "干饭", "大单", 300.0),
+            ("干饭", "干饭", "单", 500.0),
+        ]
+    )
+    assert stats.totals == {"大单": 300.0, "单": 500.0}
+    assert stats.unresolved_receipts == []
 
 
 def test_chat_service_receipt_group_ignores_period_summary_billboard() -> None:
@@ -852,6 +1111,294 @@ def test_chat_service_receipt_group_ignores_period_summary_billboard() -> None:
 
     assert rows == []
     assert stats.totals == {}
+
+
+def test_chat_service_extracts_robot_summary_snapshot_for_allowed_plays() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 19, 12, 13, 32),
+        group="威廉古堡3.69-4.29网盘🔥🔥",
+        username="机器人",
+        sender_id="rm7HObZVI",
+        content=(
+            "--------[3446831]期--------\n"
+            "雯君 61861 【小单3000 大双3000 大单3000 】 🇨🇦2.8-6.0\n"
+            "嘉悦 36345 【大双5000 小单5000 13.1000 14.1000 】 🇨🇦2.2-5.3\n"
+            "如意 25282 【小500 小双200 0.28 1.28 5.28 6.100 8.100 11.100 12.100 】 🇨🇦2.8-6.0"
+        ),
+    )
+
+    snapshot = service._extract_robot_summary_snapshot(message)
+
+    assert snapshot is not None
+    assert snapshot.period == "3446831"
+    assert snapshot.group == "威廉古堡3.69-4.29网盘🔥🔥"
+    assert snapshot.totals == {
+        "大单": 3000.0,
+        "小单": 8000.0,
+        "大双": 8000.0,
+        "小双": 200.0,
+        "小": 500.0,
+    }
+
+
+def test_chat_service_analyze_bets_produces_robot_summary_reconciliation() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    play_small_single = chat_service_module.PLAY_TYPES[5]
+    play_big_double = chat_service_module.PLAY_TYPES[4]
+    play_big_single = chat_service_module.PLAY_TYPES[6]
+    play_small_double = chat_service_module.PLAY_TYPES[7]
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 13),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="荣华",
+            sender_id="98c1W2l7c",
+            content=f"{play_small_single}1000{play_big_double}1000{play_big_single}500",
+            group_id="direct-group",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 31),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="用户619937",
+            sender_id="iYRfCxcHy",
+            content=f"{play_small_single}1350{play_big_single}1160{play_small_double}1160",
+            group_id="direct-group",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 16),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="机器人",
+            sender_id="rm7HObZVI",
+            content=(
+                "--------[3446831]期--------\n"
+                f"荣华 98123 【{play_small_single}1000 {play_big_double}1000 {play_big_single}500 】\n"
+                f"用户619937 619937 【{play_small_single}1350 {play_big_single}1160 {play_small_double}1160 17.300】"
+            ),
+            group_id="direct-group",
+        ),
+    ]
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3446831",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 19, 12, 14, 0),
+        period_window_end=datetime(2026, 6, 19, 12, 15, 0),
+        period_interval_sec=60,
+        group_types_by_id={"direct-group": "direct"},
+    )
+
+    assert stats.summary_check_period == "3446831"
+    assert stats.summary_check_totals == {
+        play_big_single: 1660.0,
+        play_small_single: 2350.0,
+        play_big_double: 1000.0,
+        play_small_double: 1160.0,
+    }
+    assert len(stats.summary_check_by_play) == 8
+    assert sum(1 for row in stats.summary_check_by_play.values() if row["within_tolerance"]) >= 4
+
+
+def test_chat_service_ignores_online_scoreboard_as_robot_summary_snapshot() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 19, 19, 21, 5),
+        group="摩羯座网盘4.28-3.68",
+        username="摩羯座网盘机器人",
+        sender_id="TfPISL2u5",
+        content=(
+            "---[1043828]---\n"
+            "在线人数: 336 人－总分 7797929\n"
+            "════════════\n"
+            "摩羯9999999 座杀9999998\n"
+            "堰清0051180 瑞宝0047796\n"
+            "大包0000451 百合0000396"
+        ),
+    )
+
+    assert service._looks_like_period_summary_billboard(message.content) is False
+    assert service._extract_robot_summary_snapshot(message) is None
+
+
+def test_chat_service_extracts_square_bracket_robot_summary_snapshot() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 19, 19, 35, 33),
+        group="华尔街",
+        username="华尔街机器私聊下注号",
+        sender_id="robot-a",
+        content=(
+            "---[H260619336-010]---\n"
+            "260619336期：\n\n"
+            "旭升 1134[400小单 400大单 333小双]\n"
+            "宇治 1000[小单300 小双300 大双300 26.50 10.50]\n"
+            "草粒 114[哈大双114]\n"
+            "敷衍 100[小双50 小单50]\n\n"
+            "以上未列出的，表示未下注"
+        ),
+    )
+
+    snapshot = service._extract_robot_summary_snapshot(message)
+
+    assert snapshot is not None
+    assert snapshot.period == "260619336"
+    assert snapshot.totals == {
+        "小单": 750.0,
+        "大单": 400.0,
+        "小双": 683.0,
+        "大双": 414.0,
+    }
+
+
+def test_chat_service_uses_square_bracket_robot_summary_as_snapshot_stats_source() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 19, 35, 33),
+            group="华尔街",
+            username="华尔街机器私聊下注号",
+            sender_id="robot-a",
+            content=(
+                "---[H260619336-010]---\n"
+                "260619336期：\n\n"
+                "旭升 1134[400小单 400大单 333小双]\n"
+                "宇治 1000[小单300 小双300 大双300 26.50 10.50]\n"
+                "草粒 114[哈大双114]\n"
+                "敷衍 100[小双50 小单50]\n\n"
+                "以上未列出的，表示未下注"
+            ),
+            group_id="group-a",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="260619336",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=0,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    assert stats.totals == {
+        "小单": 750.0,
+        "大单": 400.0,
+        "小双": 683.0,
+        "大双": 414.0,
+    }
+    assert stats.summary_check_records[0]["by_play"]["小双"]["within_tolerance"] is True
+    assert {row["source_kind"] for row in rows} == {"summary"}
+
+
+def test_chat_service_builds_per_group_robot_summary_records_with_twenty_percent_tolerance() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 13),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="下注期数 3446831",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 21),
+            group="A群",
+            username="玩家A",
+            sender_id="user-a",
+            content="大单80 小单100",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 31),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="--------[3446831]期--------\n玩家A 1000【大单100 小单100 】",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 13),
+            group="B群",
+            username="机器人B",
+            sender_id="robot-b",
+            content="下注期数 3446831",
+            group_id="group-b",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 22),
+            group="B群",
+            username="玩家B",
+            sender_id="user-b",
+            content="大单300",
+            group_id="group-b",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 32),
+            group="B群",
+            username="机器人B",
+            sender_id="robot-b",
+            content="--------[3446831]期--------\n玩家B 1000【大单300 】",
+            group_id="group-b",
+        ),
+    ]
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3446831",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 19, 12, 14, 0),
+        period_window_end=datetime(2026, 6, 19, 12, 15, 0),
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct", "group-b": "direct"},
+    )
+
+    records_by_group = {str(record["group"]): record for record in stats.summary_check_records}
+    assert set(records_by_group) == {"A群", "B群"}
+    first_record = records_by_group["A群"]
+    assert first_record["software_totals"]["大单"] == 80.0
+    assert first_record["robot_totals"]["大单"] == 100.0
+    assert first_record["by_play"]["大单"]["diff_ratio"] == 0.2
+    assert first_record["by_play"]["大单"]["within_tolerance"] is True
 
 
 def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
@@ -893,7 +1440,7 @@ def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
     assert stats.totals == {}
 
 
-def test_chat_service_recognizes_online_scoreboard_as_billboard() -> None:
+def test_chat_service_does_not_treat_online_scoreboard_as_bet_billboard() -> None:
     from app.services.chat_service import ChatLogService
 
     content = (
@@ -904,7 +1451,7 @@ def test_chat_service_recognizes_online_scoreboard_as_billboard() -> None:
         "大爷0000888 文燕0000834"
     )
 
-    assert ChatLogService()._looks_like_period_summary_billboard(content) is True
+    assert ChatLogService()._looks_like_period_summary_billboard(content) is False
 
 
 def test_chat_service_analyze_bets_returns_totals_by_group() -> None:
@@ -3055,7 +3602,7 @@ def test_main_window_layout_uses_readable_chinese_labels() -> None:
 
     button_texts = {button.text() for button in dummy.analysis_page.findChildren(QPushButton)}
 
-    assert {"自动定位数据库", "浏览", "使用数据源", "全选", "反选", "原始聊天记录"} <= button_texts
+    assert {"自动定位数据库", "浏览", "使用数据源", "全选", "反选", "原始聊天记录", "机器人汇总校验结果"} <= button_texts
     assert dummy.resolved_path_edit.placeholderText() == "自动解析或手动选择的数据源路径"
     assert dummy.manual_db_edit.placeholderText() == "自动定位失败时选择 msg_0.db / sqlite / txt"
     dummy.analysis_page.close()
@@ -4437,7 +4984,26 @@ def test_chart_window_visible_group_filter_does_not_clear_period_layers() -> Non
     assert chart.bar_chart.current_totals["大"] == 100.0
     assert chart.bar_chart.current_totals["小"] == 0.0
 
+    chart.group_list.item(0).setCheckState(Qt.Unchecked)
+    assert len(chart.bar_chart.layers) == 0
+    assert chart.bar_chart.current_totals == chart._zero_totals()
+    assert "一群" not in chart.stats_text_view.toPlainText()
+    assert chart._all_layers[0].values["大"] == 100.0
+    assert chart._all_layers[0].values["小"] == 60.0
+
+    chart.set_rows(
+        [
+            {"group": "一群", "period": "1040954", "play": "大", "amount": 100.0},
+            {"group": "二群", "period": "1040954", "play": "小", "amount": 60.0},
+        ]
+    )
+    assert chart.group_list.item(0).checkState() == Qt.Unchecked
+    assert chart.group_list.item(1).checkState() == Qt.Unchecked
+    assert len(chart.bar_chart.layers) == 0
+
     chart.group_list.item(1).setCheckState(Qt.Checked)
+    assert len(chart.bar_chart.layers) == 1
+    assert chart.bar_chart.current_totals["大"] == 0.0
     assert chart.bar_chart.current_totals["小"] == 60.0
     chart.close()
 
@@ -4545,6 +5111,42 @@ def test_chart_window_stats_text_shows_newest_first_and_preserves_scroll_positio
 
     assert chart.stats_text_view.verticalScrollBar().value() == 0
     assert chart.stats_text_view.toPlainText().splitlines()[0] == "2026-06-15 10:00:10 - 一群 - 最新用户 - 单 - 30"
+    chart.close()
+
+
+def test_chart_window_stats_text_prefers_bettor_over_robot_username() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+    chart.set_rows(
+        [
+            {
+                "time": datetime(2026, 6, 19, 17, 23, 30),
+                "group": "处女座 4.2 4.6高倍",
+                "username": "处女座机器人",
+                "bettor": "燕子",
+                "period": "3446920",
+                "play": "小单",
+                "amount": 2600.0,
+                "sender_id": "DHoQyZEtl",
+                "source_kind": "receipt",
+            }
+        ]
+    )
+
+    text = chart.stats_text_view.toPlainText()
+    assert "2026-06-19 17:23:30 - 处女座 4.2 4.6高倍 - 燕子 - 小单 - 2,600" in text
+    assert "sender_id=DHoQyZEtl" in text
+    assert "source=receipt" in text
+    assert "处女座机器人 - 小单 - 2,600" not in text
     chart.close()
 
 
@@ -5958,16 +6560,101 @@ def test_raw_chat_dialog_supports_semantic_filtering_and_labels() -> None:
 
     text = dialog.message_view.toPlainText()
     assert "用户下注" in text
-    assert "机器人回执/汇总" in text
+    assert "机器人回执" in text
 
-    dialog.semantic_filter.setCurrentText("机器人回执/汇总")
+    dialog.semantic_filter.setCurrentText("机器人回执")
     app.processEvents()
 
     filtered_text = dialog.message_view.toPlainText()
-    assert "机器人回执/汇总" in filtered_text
+    assert "机器人回执" in filtered_text
     assert "下注期数" in filtered_text
     assert "用户下注" not in filtered_text
     assert "大单100 | alice-id" not in filtered_text
+    dialog.close()
+
+
+def test_raw_chat_dialog_classifies_period_billboard_as_robot_summary() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 19, 11, 13, 58),
+                group="处女座 4.2 4.6高倍",
+                username="处女座机器人",
+                sender_id="DHoQyZEtl",
+                content=(
+                    "--------[3446814]期--------\n"
+                    "雯君 61861 【小单3000 大双3000 大单3000 】 🇨🇦2.8-6.0\n"
+                    "承恩 49011 【小双2333 大双2333 大单2333 】 🇨🇦2.2-5.3\n"
+                    "嘉悦 36345 【大双5000 小单5000 13.1000 14.1000 】 🇨🇦2.2-5.3"
+                ),
+            ),
+            ChatMessage(
+                ts=datetime(2026, 6, 19, 11, 14, 1),
+                group="处女座 4.2 4.6高倍",
+                username="处女座机器人",
+                sender_id="DHoQyZEtl",
+                content="@Alice :\n下注期数: 3446814\n下注内容:\n------------\n大单100(4.28赔率)\n------------\n余额：1000",
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "机器人汇总" in text
+    assert "机器人回执" in text
+    assert "机器人回执/汇总" not in text
+
+    dialog.semantic_filter.setCurrentText("机器人汇总")
+    app.processEvents()
+    filtered_text = dialog.message_view.toPlainText()
+    assert "--------[3446814]期--------" in filtered_text
+    assert "下注期数" not in filtered_text
+    dialog.close()
+
+
+def test_raw_chat_dialog_does_not_classify_robot_odds_announcement_as_user_bet() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 18, 23, 23, 33),
+                group="威廉古堡3.69-4.29网盘🔥🔥",
+                username="机器人",
+                sender_id="rm7HObZVI",
+                content=(
+                    "威廉古堡欢迎您：\n"
+                    "大小单双 1.98倍\n"
+                    "小单大双 3.69倍\n"
+                    "小双大单 4.29倍\n"
+                    "【12/13/14/15】13呗"
+                ),
+            )
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "用户下注" not in text
+    assert "普通聊天" in text
     dialog.close()
 
 
@@ -6053,6 +6740,44 @@ def test_raw_chat_dialog_preserves_scroll_position_when_messages_refresh() -> No
 
     after = dialog.message_view.verticalScrollBar().value()
     assert after >= before
+    dialog.close()
+
+
+def test_raw_chat_dialog_supports_search_and_page_jump() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 16, 17, 55, index),
+            group="PC28-A" if index < 3 else "PC28-B",
+            username=f"User{index}",
+            sender_id=f"user-{index}",
+            content="关键字消息" if index == 3 else f"普通消息{index}",
+        )
+        for index in range(1, 5)
+    ]
+    dialog = RawChatDialog(messages, page_size=1)
+
+    dialog.search_input.setText("关键字")
+    app.processEvents()
+    assert "关键字消息" in dialog.message_view.toPlainText()
+    assert "普通消息1" not in dialog.message_view.toPlainText()
+    assert dialog.page_label.text() == "第 1 / 1 页"
+
+    dialog.search_input.clear()
+    dialog.page_jump_input.setText("3")
+    dialog._jump_to_page()
+    app.processEvents()
+    assert dialog.message_page == 2
+    assert "关键字消息" in dialog.message_view.toPlainText()
     dialog.close()
 
 
@@ -6190,3 +6915,249 @@ def test_main_window_bound_raw_chat_history_accumulates_across_refreshes() -> No
     assert "小单200" in text
     assert len(dummy.raw_chat_messages) == 2
     dummy.raw_chat_dialog.close()
+
+
+def test_summary_check_dialog_formats_reconciliation_result() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.summary_check_dialog import SummaryCheckDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = SummaryCheckDialog(
+        {
+            "period": "3446831",
+            "software_totals": {"大单": 1660.0, "小单": 2350.0},
+            "robot_totals": {"大单": 1660.0, "小单": 2400.0},
+            "by_play": {
+                "大单": {
+                    "software_total": 1660.0,
+                    "robot_total": 1660.0,
+                    "diff": 0.0,
+                    "diff_ratio": 0.0,
+                    "within_tolerance": True,
+                },
+                "小单": {
+                    "software_total": 2350.0,
+                    "robot_total": 2400.0,
+                    "diff": 50.0,
+                    "diff_ratio": 50.0 / 2400.0,
+                    "within_tolerance": True,
+                },
+            },
+        }
+    )
+
+    text = dialog.result_view.toPlainText()
+    assert "期号: 3446831" in text
+    assert "大单 | 软件 1,660 | 机器人 1,660 | 偏差 0 | 通过" in text
+    assert "小单 | 软件 2,350 | 机器人 2,400" in text
+    dialog.close()
+
+
+def test_summary_check_dialog_supports_group_and_period_filters() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.summary_check_dialog import SummaryCheckDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = SummaryCheckDialog(
+        [
+            {
+                "group": "A群",
+                "period": "3446831",
+                "robot_totals": {"大单": 100.0},
+                "by_play": {"大单": {"software_total": 100.0, "robot_total": 100.0, "diff": 0.0, "diff_ratio": 0.0, "within_tolerance": True}},
+            },
+            {
+                "group": "B群",
+                "period": "3446832",
+                "robot_totals": {"小单": 200.0},
+                "by_play": {"小单": {"software_total": 180.0, "robot_total": 200.0, "diff": 20.0, "diff_ratio": 0.1, "within_tolerance": True}},
+            },
+        ]
+    )
+
+    assert "A群" in [dialog.group_filter.itemText(index) for index in range(dialog.group_filter.count())]
+    dialog.group_filter.setCurrentText("B群")
+    app.processEvents()
+    assert dialog.period_filter.currentText() == "3446832"
+    assert "期号: 3446832" in dialog.result_view.toPlainText()
+    dialog.close()
+
+
+def test_unresolved_receipt_dialog_formats_and_filters_rows() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.unresolved_receipt_dialog import UnresolvedReceiptDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = UnresolvedReceiptDialog(
+        [
+            {"group": "A群", "username": "机器人", "bettor": "艳阳", "period": "3447001", "play": "大", "amount": 600.0, "sender_id": "robot-a", "source_kind": "receipt"},
+            {"group": "B群", "username": "机器人", "bettor": "松松", "period": "3447002", "play": "单", "amount": 380.0, "sender_id": "robot-b", "source_kind": "receipt"},
+        ]
+    )
+
+    assert "艳阳" in dialog.result_view.toPlainText()
+    assert "robot-a" in dialog.result_view.toPlainText()
+    assert "receipt" in dialog.result_view.toPlainText()
+    dialog.group_filter.setCurrentText("B群")
+    app.processEvents()
+    text = dialog.result_view.toPlainText()
+    assert "松松" in text
+    assert "robot-b" in text
+    assert "艳阳" not in text
+    dialog.close()
+
+
+def test_main_window_opens_and_reuses_summary_check_dialog() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import StatsResult
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    app = QApplication.instance() or QApplication([])
+    stats = StatsResult(
+        totals={"大单": 10.0},
+        summary_check_period="3446831",
+        summary_check_totals={"大单": 10.0},
+        summary_check_by_play={
+            "大单": {
+                "software_total": 10.0,
+                "robot_total": 10.0,
+                "diff": 0.0,
+                "diff_ratio": 0.0,
+                "within_tolerance": True,
+            }
+        },
+    )
+    dummy = SimpleNamespace(current_stats=stats, summary_check_dialog=None)
+
+    MainWindowActionsMixin._open_summary_check_dialog(dummy)
+    first_dialog = dummy.summary_check_dialog
+    assert first_dialog is not None
+    assert "期号: 3446831" in first_dialog.result_view.toPlainText()
+
+    dummy.current_stats = StatsResult(
+        totals={"小单": 20.0},
+        summary_check_period="3446832",
+        summary_check_totals={"小单": 20.0},
+        summary_check_by_play={
+            "小单": {
+                "software_total": 20.0,
+                "robot_total": 18.0,
+                "diff": 2.0,
+                "diff_ratio": 2.0 / 18.0,
+                "within_tolerance": False,
+            }
+        },
+    )
+    MainWindowActionsMixin._open_summary_check_dialog(dummy)
+    app.processEvents()
+
+    assert dummy.summary_check_dialog is first_dialog
+    assert "期号: 3446832" in first_dialog.result_view.toPlainText()
+    assert "小单 | 软件 20 | 机器人 18" in first_dialog.result_view.toPlainText()
+    first_dialog.close()
+
+
+def test_main_window_summary_check_payloads_prefer_multi_group_records() -> None:
+    from types import SimpleNamespace
+
+    from app.models import StatsResult
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    stats = StatsResult(
+        totals={"大单": 380.0},
+        summary_check_period="3446831",
+        summary_check_totals={"大单": 100.0},
+        summary_check_by_play={
+            "大单": {
+                "software_total": 80.0,
+                "robot_total": 100.0,
+                "diff": 20.0,
+                "diff_ratio": 0.2,
+                "within_tolerance": True,
+            }
+        },
+        summary_check_records=[
+            {
+                "group": "A群",
+                "period": "3446831",
+                "software_totals": {"大单": 80.0},
+                "robot_totals": {"大单": 100.0},
+                "by_play": {"大单": {"software_total": 80.0, "robot_total": 100.0, "diff": 20.0, "diff_ratio": 0.2, "within_tolerance": True}},
+            },
+            {
+                "group": "B群",
+                "period": "3446831",
+                "software_totals": {"大单": 300.0},
+                "robot_totals": {"大单": 300.0},
+                "by_play": {"大单": {"software_total": 300.0, "robot_total": 300.0, "diff": 0.0, "diff_ratio": 0.0, "within_tolerance": True}},
+            },
+        ],
+    )
+    dummy = SimpleNamespace(
+        current_stats=stats,
+        summary_check_history=[],
+        _summary_check_payload=lambda: MainWindowActionsMixin._summary_check_payload(dummy),
+        _record_summary_check=lambda payload: MainWindowActionsMixin._record_summary_check(dummy, payload),
+        _summary_check_history=lambda: MainWindowActionsMixin._summary_check_history(dummy),
+        _active_group_name_for_summary_check=lambda: "",
+    )
+
+    payloads = MainWindowActionsMixin._summary_check_payloads(dummy)
+
+    assert [payload["group"] for payload in payloads] == ["A群", "B群"]
+    assert payloads[0]["software_totals"]["大单"] == 80.0
+    assert payloads[1]["software_totals"]["大单"] == 300.0
+
+
+def test_main_window_opens_and_reuses_unresolved_receipt_dialog() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import StatsResult
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    app = QApplication.instance() or QApplication([])
+    stats = StatsResult(
+        totals={},
+        unresolved_receipts=[
+            {"group": "A群", "username": "机器人", "bettor": "艳阳", "period": "3447001", "play": "大", "amount": 600.0}
+        ],
+    )
+    dummy = SimpleNamespace(current_stats=stats, unresolved_receipt_dialog=None)
+
+    MainWindowActionsMixin._open_unresolved_receipt_dialog(dummy)
+    first_dialog = dummy.unresolved_receipt_dialog
+    assert first_dialog is not None
+    assert "艳阳" in first_dialog.result_view.toPlainText()
+
+    dummy.current_stats = StatsResult(
+        totals={},
+        unresolved_receipts=[
+            {"group": "B群", "username": "机器人", "bettor": "松松", "period": "3447002", "play": "单", "amount": 380.0}
+        ],
+    )
+    MainWindowActionsMixin._open_unresolved_receipt_dialog(dummy)
+    app.processEvents()
+    assert dummy.unresolved_receipt_dialog is first_dialog
+    assert "松松" in first_dialog.result_view.toPlainText()
+    first_dialog.close()
