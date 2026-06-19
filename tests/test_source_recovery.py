@@ -1288,6 +1288,35 @@ def test_chat_service_extracts_square_bracket_robot_summary_snapshot() -> None:
     }
 
 
+def test_chat_service_ignores_private_chat_proxy_rows_in_robot_summary_snapshot() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 20, 2, 32, 28),
+        group="处女座 4.2 4.6高倍",
+        username="处女座机器人",
+        sender_id="robot-a",
+        content=(
+            "--------[3447067]期--------\n"
+            "雯君 45024【大2500 小双2500 17.500 19.500 6.300 10.200 】\n"
+            "** （私聊下注） 1500 【大双55 小双55 大50 】\n"
+            "** （私聊下注） 560 【小60 单35 小95 】"
+        ),
+    )
+
+    snapshot = service._extract_robot_summary_snapshot(message)
+
+    assert snapshot is not None
+    assert snapshot.totals == {
+        "大": 2500.0,
+        "小双": 2500.0,
+    }
+
+
 def test_chat_service_uses_square_bracket_robot_summary_as_snapshot_stats_source() -> None:
     from datetime import datetime
 
@@ -7483,3 +7512,5 @@ def test_build_common_env_prefers_build_env_bat_and_supports_example_template() 
     assert 'if exist "build_env.bat" call "build_env.bat"' in common_script
     assert "STARTRACE_CDN_BASE_URL" in example_script
     assert "STARTRACE_UPDATE_PUBLIC_KEY_PEM" in example_script
+    assert "keys\\update_private.pem" in example_script
+    assert "-----BEGIN PUBLIC KEY-----" in example_script

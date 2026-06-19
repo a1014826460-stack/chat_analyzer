@@ -1,5 +1,4 @@
 @echo off
-rem 复制本文件为 build_env.bat 后使用
 rem StarTrace 本地发布配置
 rem 该文件会被 build.bat / build_user.bat / build_admin.bat 自动读取
 rem 对应更新私钥文件路径：keys\update_private.pem

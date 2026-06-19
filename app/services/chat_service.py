@@ -1037,6 +1037,8 @@ class ChatLogService:
         totals_by_bettor: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for raw_line in content.splitlines():
             bettor = self._summary_line_bettor_name(raw_line)
+            if self._is_private_chat_proxy_bettor(bettor):
+                continue
             for body in self._summary_bet_bodies_from_line(raw_line):
                 for play, amount in self._parse_bets(body):
                     if play in PLAY_TYPES:
@@ -1080,6 +1082,13 @@ class ChatLogService:
             return ""
         parts = prefix.split()
         return self._clean_text(parts[0]) if parts else ""
+
+    def _is_private_chat_proxy_bettor(self, bettor: str) -> bool:
+        text = self._clean_text(bettor)
+        if not text:
+            return False
+        normalized = self._normalize_text(text)
+        return normalized.startswith("**") or "私聊下注" in text
 
     def _is_robot_summary_stats_source(self, content: str) -> bool:
         text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
