@@ -183,6 +183,20 @@ def test_chat_service_ignores_numeric_point_bets_in_direct_messages() -> None:
     ]
 
 
+def test_chat_service_does_not_parse_composite_or_position_plays_as_basic_plays() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+
+    assert service._parse_bets("极大600 极小200 B双548 A小双100 尾双50") == []
+    assert service._parse_bets("大600 小200 双548 小双100") == [
+        ("大", 600.0),
+        ("小", 200.0),
+        ("双", 548.0),
+        ("小双", 100.0),
+    ]
+
+
 def test_chat_service_ignores_numeric_point_bets_in_receipts() -> None:
     from app.services.chat_service import ChatLogService
 
@@ -1401,6 +1415,133 @@ def test_chat_service_builds_per_group_robot_summary_records_with_twenty_percent
     assert first_record["by_play"]["大单"]["within_tolerance"] is True
 
 
+def test_chat_service_prefers_authoritative_robot_summary_over_personal_status_snapshot() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 1),
+            group="鸿业鸿信4.73/4.31贵宾厅",
+            username="鸿业鸿信机器人",
+            sender_id="robot-a",
+            content=(
+                "---[H3447016-012]---\n"
+                "3447016期下注核对：\n"
+                "孙尚128452[ 小单3500 小7500 11T350 09T350]\n"
+                "咏春88705[ 大100 单100 大单100 17T30]\n"
+            ),
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 3),
+            group="鸿业鸿信4.73/4.31贵宾厅",
+            username="鸿业鸿信机器人",
+            sender_id="robot-a",
+            content=(
+                "---[Y3447016-017]---\n"
+                "吉祥 当前积分：3131\n"
+                "当前盈亏：2616\n"
+                "当前流水：2959\n"
+                "冻结积分：498\n"
+                "剩余积分：633\n"
+                "本期下注：[22T30 24T30 25T30 小单100 小双100 大单88 ]"
+            ),
+            group_id="group-a",
+        ),
+    ]
+
+    records = service._build_robot_summary_reconciliations(
+        messages,
+        {"鸿业鸿信4.73/4.31贵宾厅": {"小单": 3500.0, "小": 7500.0, "单": 100.0, "大单": 100.0, "大": 100.0}},
+        "3447016",
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["period"] == "3447016"
+    assert record["robot_totals"]["小单"] == 3500.0
+    assert record["robot_totals"]["大单"] == 100.0
+    assert record["robot_totals"]["大"] == 100.0
+
+
+def test_chat_service_zero_robot_total_is_not_within_tolerance() -> None:
+    from datetime import datetime
+
+    from app.services.chat_service import ChatLogService, RobotSummarySnapshot
+
+    service = ChatLogService()
+    snapshot = RobotSummarySnapshot(
+        period="3447016",
+        group="测试群",
+        ts=datetime(2026, 6, 20, 0, 0, 0),
+        totals={},
+    )
+
+    record = service._format_robot_summary_reconciliation(
+        snapshot,
+        {"大单": 88.0},
+    )
+
+    assert record["by_play"]["大单"]["robot_total"] == 0.0
+    assert record["by_play"]["大单"]["software_total"] == 88.0
+    assert record["by_play"]["大单"]["within_tolerance"] is False
+    assert record["by_play"]["大单"]["diff_ratio"] == 1.0
+
+
+def test_chat_service_does_not_count_robot_summary_rows_into_software_totals() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 0),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="下注期数 3447016",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 12),
+            group="A群",
+            username="玩家A",
+            sender_id="user-a",
+            content="大单80 小单100",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 20),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="--------[3447016]期--------\n玩家A 1000【大单100 小单100 】",
+            group_id="group-a",
+        ),
+    ]
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447016",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 0, 0, 0),
+        period_window_end=datetime(2026, 6, 20, 0, 1, 0),
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    assert stats.totals_by_group["A群"]["大单"] == 80.0
+    assert stats.totals_by_group["A群"]["小单"] == 100.0
+
+
 def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
     from datetime import datetime
 
@@ -1779,6 +1920,56 @@ def test_chat_service_named_cancel_removes_all_current_period_rows() -> None:
 
     assert rows == []
     assert stats.totals == {}
+
+
+def test_chat_service_balance_rejection_only_removes_target_bettor_rows() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 31, 0),
+            group="鸿业鸿信4.73/4.31贵宾厅",
+            username="彦祖",
+            sender_id="yan-id",
+            content="双2000",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 31, 10),
+            group="鸿业鸿信4.73/4.31贵宾厅",
+            username="成才",
+            sender_id="cheng-id",
+            content="双1000 大1000",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 31, 20),
+            group="鸿业鸿信4.73/4.31贵宾厅",
+            username="鸿业鸿信机器人",
+            sender_id="robot-id",
+            content="---[Y3447033-006]---\n彦祖 可用积分不足，本期所有猜猜全部无效，请重新猜猜。",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447033",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 0, 30, 50),
+        period_window_end=datetime(2026, 6, 20, 0, 34, 0),
+        period_interval_sec=210,
+        lock_threshold_sec=0,
+    )
+
+    assert sorted((row["bettor"], row["play"], row["amount"]) for row in rows) == [
+        ("成才", "双", 1000.0),
+        ("成才", "大", 1000.0),
+    ]
+    assert stats.totals == {"大": 1000.0, "双": 1000.0}
 
 
 def test_chat_service_cancel_removes_receipt_group_latest_row_without_residue() -> None:
@@ -6988,6 +7179,46 @@ def test_summary_check_dialog_supports_group_and_period_filters() -> None:
     app.processEvents()
     assert dialog.period_filter.currentText() == "3446832"
     assert "期号: 3446832" in dialog.result_view.toPlainText()
+    dialog.close()
+
+
+def test_summary_check_dialog_switches_periods_within_same_group() -> None:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.summary_check_dialog import SummaryCheckDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = SummaryCheckDialog(
+        [
+            {
+                "group": "A群",
+                "period": "3447015",
+                "robot_totals": {"大单": 100.0},
+                "by_play": {"大单": {"software_total": 80.0, "robot_total": 100.0, "diff": 20.0, "diff_ratio": 0.2, "within_tolerance": True}},
+            },
+            {
+                "group": "A群",
+                "period": "3447016",
+                "robot_totals": {"大单": 88.0},
+                "by_play": {"大单": {"software_total": 120.0, "robot_total": 88.0, "diff": 32.0, "diff_ratio": 32.0 / 88.0, "within_tolerance": False}},
+            },
+        ]
+    )
+
+    assert dialog.period_filter.currentText() == "3447015"
+    assert "期号: 3447015" in dialog.result_view.toPlainText()
+    assert "大单 | 软件 80 | 机器人 100" in dialog.result_view.toPlainText()
+
+    dialog.period_filter.setCurrentText("3447016")
+    app.processEvents()
+
+    text = dialog.result_view.toPlainText()
+    assert dialog.period_filter.currentText() == "3447016"
+    assert "期号: 3447016" in text
+    assert "大单 | 软件 120 | 机器人 88" in text
     dialog.close()
 
 

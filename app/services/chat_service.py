@@ -457,11 +457,27 @@ class ChatLogService:
         visual_rows = filtered_rows
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        non_summary_seen: set[tuple[str, str]] = set()
+        summary_fallback_rows: list[dict[str, object]] = []
         for row in visual_rows:
+            group = str(row.get("group", "") or "")
             play = str(row["play"])
+            source_kind = str(row.get("source_kind", "") or "")
+            if source_kind == "summary":
+                summary_fallback_rows.append(dict(row))
+                continue
             amount = float(row["amount"])
             totals[play] += amount
+            if group:
+                totals_by_group[group][play] += amount
+                non_summary_seen.add((group, play))
+        for row in summary_fallback_rows:
             group = str(row.get("group", "") or "")
+            play = str(row["play"])
+            if group and (group, play) in non_summary_seen:
+                continue
+            amount = float(row["amount"])
+            totals[play] += amount
             if group:
                 totals_by_group[group][play] += amount
         summary_check_records = self._build_robot_summary_reconciliations(
@@ -894,7 +910,8 @@ class ChatLogService:
             parsed_content, events = self._parse_bet_events_from_message(msg)
             if self._looks_like_period_summary_billboard(parsed_content):
                 continue
-            if self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
+            is_robot_msg = self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id)
+            if is_robot_msg and not any(event.kind == "cancel" for event in events):
                 continue
             period = self._resolve_direct_group_period(
                 msg.ts,
@@ -1047,11 +1064,33 @@ class ChatLogService:
 
     def _is_robot_summary_stats_source(self, content: str) -> bool:
         text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
+        if self._looks_like_personal_status_summary(text):
+            return False
+        if self._looks_like_group_period_summary(text):
+            return True
+        return False
+
+    def _looks_like_group_period_summary(self, text: str) -> bool:
         if re.search(r"\d{4,}\s*期(?:下注核对)?\s*[:：]", text):
             return True
         if "本期下注" in text and re.search(r"-+\[第?\d{4,}期\]-+", text):
             return True
+        if "期下注核对" in text:
+            return True
+        if re.search(r"-+\[(?:[A-Z])?\d{4,}(?:-\d+)?\][^\n-]{0,8}-+", text) and not self._looks_like_personal_status_summary(text):
+            return True
         return False
+
+    def _looks_like_personal_status_summary(self, text: str) -> bool:
+        personal_markers = (
+            "当前积分",
+            "当前盈亏",
+            "当前流水",
+            "冻结积分",
+            "剩余积分",
+            "回粮冻结",
+        )
+        return "本期下注" in text and any(marker in text for marker in personal_markers)
 
     def _build_robot_summary_reconciliation(
         self,
@@ -1072,6 +1111,7 @@ class ChatLogService:
             snapshot
             for msg in messages
             if (snapshot := self._extract_robot_summary_snapshot(msg)) is not None
+            and self._is_robot_summary_stats_source(msg.content)
         ]
         if period_filter:
             snapshots = [snapshot for snapshot in snapshots if snapshot.period == period_filter]
@@ -1107,7 +1147,10 @@ class ChatLogService:
             software_total = float(software_totals.get(play, 0.0) or 0.0)
             robot_total = float(snapshot.totals.get(play, 0.0) or 0.0)
             diff = abs(software_total - robot_total)
-            ratio = 0.0 if robot_total <= 0 else diff / robot_total
+            if robot_total <= 0:
+                ratio = 0.0 if software_total <= 0 else 1.0
+            else:
+                ratio = diff / robot_total
             by_play[play] = {
                 "software_total": software_total,
                 "robot_total": robot_total,
@@ -1196,6 +1239,8 @@ class ChatLogService:
             return compact_events
         events: list[tuple[str, float]] = []
         for match in SIMPLE_BET_PATTERN.finditer(content):
+            if not self._play_token_has_safe_boundaries(content, match.start("play"), match.group("play")):
+                continue
             amount = self._parse_amount_text(match.group("amount"))
             if amount <= 0:
                 continue
@@ -1226,9 +1271,9 @@ class ChatLogService:
                         continue
             play = self._match_play_token(text, i)
             if play is not None:
-                amount_match = re.match(r"\d[\d,]*(?:\.\d+)?", text[i + len(play) :])
+                amount_match = re.match(r"\s*(\d[\d,]*(?:\.\d+)?)", text[i + len(play) :])
                 if amount_match:
-                    amount_text = amount_match.group(0)
+                    amount_text = amount_match.group(1)
                     matches.append((i, play, self._parse_amount_text(amount_text)))
                     i = i + len(play) + amount_match.end()
                     continue
@@ -1244,9 +1289,19 @@ class ChatLogService:
 
     def _match_play_token(self, text: str, start: int) -> str | None:
         for token in PLAY_TOKENS:
-            if text.startswith(token, start):
+            if text.startswith(token, start) and self._play_token_has_safe_boundaries(text, start, token):
                 return token
         return None
+
+    def _play_token_has_safe_boundaries(self, text: str, start: int, token: str) -> bool:
+        before = text[start - 1] if start > 0 else ""
+        after_index = start + len(token)
+        after = text[after_index] if after_index < len(text) else ""
+        if before in {"极", "尾", "A", "B", "C", "a", "b", "c", "大", "小", "单", "双"}:
+            return False
+        if after in {"大", "小", "单", "双"}:
+            return False
+        return True
 
     def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
         if not msg.sender_id:
@@ -1423,6 +1478,12 @@ class ChatLogService:
     def _parse_cancel_event(self, content: str) -> BetEvent | None:
         normalized = unicodedata.normalize("NFKC", content).strip()
         normalized_key = self._normalize_text(normalized)
+        rejection_match = re.search(
+            r"(?P<name>[^\s:：@\-]{1,30})\s*可用积分不足.*?(?:全部无效|请重新)",
+            normalized,
+        )
+        if rejection_match:
+            return BetEvent(rejection_match.group("name").strip(), "", 0.0, "cancel", source=content)
         if normalized_key in {self._normalize_text("取消"), self._normalize_text("鍙栨秷")}:
             return BetEvent("", "", 0.0, "cancel", source=content)
 
