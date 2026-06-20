@@ -459,10 +459,12 @@ class ChatLogService:
         visual_rows = filtered_rows
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        totals_by_group_period: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(float))
         non_summary_seen: set[tuple[str, str]] = set()
         summary_fallback_rows: list[dict[str, object]] = []
         for row in visual_rows:
             group = str(row.get("group", "") or "")
+            period = str(row.get("period", "") or "").strip()
             play = str(row["play"])
             source_kind = str(row.get("source_kind", "") or "")
             if source_kind == "summary":
@@ -472,6 +474,8 @@ class ChatLogService:
             totals[play] += amount
             if group:
                 totals_by_group[group][play] += amount
+                if period:
+                    totals_by_group_period[(group, period)][play] += amount
                 non_summary_seen.add((group, play))
         for row in summary_fallback_rows:
             group = str(row.get("group", "") or "")
@@ -484,7 +488,7 @@ class ChatLogService:
                 totals_by_group[group][play] += amount
         summary_check_records = self._build_robot_summary_reconciliations(
             filtered,
-            {group: dict(group_totals) for group, group_totals in totals_by_group.items()},
+            {key: dict(group_period_totals) for key, group_period_totals in totals_by_group_period.items()},
             period_filter,
         )
         summary_check = summary_check_records[0] if summary_check_records else {}
@@ -1257,15 +1261,20 @@ class ChatLogService:
         software_totals: dict[str, float],
         period_filter: str,
     ) -> dict[str, object]:
-        records = self._build_robot_summary_reconciliations(messages, {"": software_totals}, period_filter)
+        software_key = ("", str(period_filter or "").strip())
+        records = self._build_robot_summary_reconciliations(messages, {software_key: software_totals}, period_filter)
         return records[0] if records else {}
 
     def _build_robot_summary_reconciliations(
         self,
         messages: list[ChatMessage],
-        software_totals_by_group: dict[str, dict[str, float]],
+        software_totals_by_group_period: dict[object, dict[str, float]],
         period_filter: str,
     ) -> list[dict[str, object]]:
+        normalized_software_totals = self._normalize_software_totals_by_group_period(
+            software_totals_by_group_period,
+            period_filter,
+        )
         snapshots = [
             snapshot
             for msg in messages
@@ -1294,11 +1303,11 @@ class ChatLogService:
             key=lambda item: (item.ts, item.group, item.period),
             reverse=True,
         ):
-            group_software_totals = (
-                software_totals_by_group.get(snapshot.group)
-                or software_totals_by_group.get("")
-                or {}
-            )
+            group_software_totals = normalized_software_totals.get((snapshot.group, snapshot.period))
+            if group_software_totals is None:
+                group_software_totals = normalized_software_totals.get(("", snapshot.period))
+            if not group_software_totals:
+                continue
             records.append(
                 self._format_robot_summary_reconciliation(
                     self._filtered_robot_summary_snapshot(snapshot),
@@ -1306,6 +1315,26 @@ class ChatLogService:
                 )
             )
         return records
+
+    def _normalize_software_totals_by_group_period(
+        self,
+        software_totals_by_group_period: dict[object, dict[str, float]],
+        period_filter: str,
+    ) -> dict[tuple[str, str], dict[str, float]]:
+        period = str(period_filter or "").strip()
+        normalized: dict[tuple[str, str], dict[str, float]] = {}
+        for key, totals in dict(software_totals_by_group_period or {}).items():
+            group = ""
+            key_period = period
+            if isinstance(key, tuple) and len(key) >= 2:
+                group = str(key[0] or "").strip()
+                key_period = str(key[1] or "").strip()
+            else:
+                group = str(key or "").strip()
+            if not key_period:
+                continue
+            normalized[(group, key_period)] = dict(totals or {})
+        return normalized
 
     def _filtered_robot_summary_snapshot(self, snapshot: RobotSummarySnapshot) -> RobotSummarySnapshot:
         blocked_names = self._blocked_names_for_group(snapshot.group)

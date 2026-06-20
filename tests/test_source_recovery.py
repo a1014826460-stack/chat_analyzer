@@ -1361,7 +1361,7 @@ def test_chat_service_uses_square_bracket_robot_summary_as_snapshot_stats_source
         "小双": 683.0,
         "大双": 414.0,
     }
-    assert stats.summary_check_records[0]["by_play"]["小双"]["within_tolerance"] is True
+    assert stats.summary_check_records == []
     assert {row["source_kind"] for row in rows} == {"summary"}
 
 
@@ -1616,6 +1616,149 @@ def test_chat_service_does_not_count_robot_summary_rows_into_software_totals() -
 
     assert stats.totals_by_group["A群"]["大单"] == 80.0
     assert stats.totals_by_group["A群"]["小单"] == 100.0
+
+
+def test_chat_service_skips_robot_summary_reconciliation_without_same_period_software_totals() -> None:
+    from datetime import datetime
+    from types import MethodType
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService, RobotSummarySnapshot
+
+    service = ChatLogService()
+    play = chat_service_module.PLAY_TYPES[6]
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 0, 0),
+            group="Group A",
+            username="Robot",
+            sender_id="robot-a",
+            content="robot-summary-3447017",
+        )
+    ]
+
+    def fake_visual_rows(self, *args, **kwargs):
+        return [
+            {
+                "group": "Group A",
+                "username": "Alice",
+                "bettor": "Alice",
+                "play": play,
+                "amount": 80.0,
+                "time": datetime(2026, 6, 20, 0, 0, 12),
+                "period": "3447016",
+                "sender_id": "user-a",
+                "source_kind": "direct",
+            }
+        ]
+
+    def fake_snapshot(self, msg):
+        return RobotSummarySnapshot(
+            period="3447017",
+            group=msg.group,
+            ts=msg.ts,
+            totals={play: 100.0},
+            totals_by_bettor={"Alice": {play: 100.0}},
+        )
+
+    service.extract_bet_visual_data = MethodType(fake_visual_rows, service)
+    service._extract_robot_summary_snapshot = MethodType(fake_snapshot, service)
+    service._is_robot_summary_stats_source = MethodType(lambda self, content: True, service)
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=60,
+    )
+
+    assert stats.totals_by_group == {"Group A": {play: 80.0}}
+    assert stats.summary_check_records == []
+    assert stats.summary_check_by_play == {}
+
+
+def test_chat_service_reconciles_robot_summary_against_same_group_and_period_only() -> None:
+    from datetime import datetime
+    from types import MethodType
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService, RobotSummarySnapshot
+
+    service = ChatLogService()
+    play = chat_service_module.PLAY_TYPES[6]
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 1, 0),
+            group="Group A",
+            username="Robot",
+            sender_id="robot-a",
+            content="robot-summary-3447017",
+        )
+    ]
+
+    def fake_visual_rows(self, *args, **kwargs):
+        return [
+            {
+                "group": "Group A",
+                "username": "Alice",
+                "bettor": "Alice",
+                "play": play,
+                "amount": 80.0,
+                "time": datetime(2026, 6, 20, 0, 0, 12),
+                "period": "3447016",
+                "sender_id": "user-a",
+                "source_kind": "direct",
+            },
+            {
+                "group": "Group A",
+                "username": "Bob",
+                "bettor": "Bob",
+                "play": play,
+                "amount": 300.0,
+                "time": datetime(2026, 6, 20, 0, 1, 12),
+                "period": "3447017",
+                "sender_id": "user-b",
+                "source_kind": "direct",
+            },
+        ]
+
+    def fake_snapshot(self, msg):
+        return RobotSummarySnapshot(
+            period="3447017",
+            group=msg.group,
+            ts=msg.ts,
+            totals={play: 300.0},
+            totals_by_bettor={"Bob": {play: 300.0}},
+        )
+
+    service.extract_bet_visual_data = MethodType(fake_visual_rows, service)
+    service._extract_robot_summary_snapshot = MethodType(fake_snapshot, service)
+    service._is_robot_summary_stats_source = MethodType(lambda self, content: True, service)
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=60,
+    )
+
+    assert stats.totals_by_group == {"Group A": {play: 380.0}}
+    assert len(stats.summary_check_records) == 1
+    record = stats.summary_check_records[0]
+    assert record["period"] == "3447017"
+    assert record["software_totals"][play] == 300.0
+    assert record["robot_totals"][play] == 300.0
+    assert record["by_play"][play]["within_tolerance"] is True
 
 
 def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
@@ -7710,6 +7853,35 @@ def test_build_common_env_prefers_build_env_bat_and_supports_example_template() 
     assert "STARTRACE_UPDATE_PUBLIC_KEY_PEM" in example_script
     assert "keys\\update_private.pem" in example_script
     assert "-----BEGIN PUBLIC KEY-----" in example_script
+
+
+def test_release_config_exposes_only_version_and_notes_for_admin_editing() -> None:
+    from pathlib import Path
+
+    script = Path("release_user_config.bat.example").read_text(encoding="utf-8")
+
+    assert 'set "STARTRACE_RELEASE_VERSION=1.98.0"' in script
+    assert 'set "STARTRACE_RELEASE_NOTES=' in script
+    assert "Admin usually only edits the first two values" in script
+
+
+def test_one_click_user_release_script_builds_manifest_and_uploads_to_cdn() -> None:
+    from pathlib import Path
+
+    wrapper = Path("release_user_to_cdn.bat").read_text(encoding="utf-8")
+    script = Path("tools/release_user_to_cdn.ps1").read_text(encoding="utf-8")
+
+    assert "powershell" in wrapper.lower()
+    assert "tools\\release_user_to_cdn.ps1" in wrapper
+    assert '$env:STARTRACE_VERSION = $Version' in script
+    assert '".venv\\Scripts\\python.exe" "tools\\build.py" "--clean"' in script
+    assert '"tools\\release_manifest.py"' in script
+    assert '"dist\\StarTrace-$Version.exe"' in script
+    assert "--notes" in script
+    assert "ssh" in script
+    assert "mkdir -p" in script
+    assert "scp" in script
+    assert 'dist\\latest.json' in script
 
 
 def test_chat_service_extracts_robot_summary_snapshot_from_plain_period_check_header_live_shape() -> None:

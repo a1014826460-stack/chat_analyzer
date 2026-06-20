@@ -307,6 +307,38 @@ mkdir -p /www/wwwroot/www.twsaimahui.com/startrace/admin
 
 ## 10. 你现在最常用的一套命令
 
+### 一键发布用户版到 CDN
+
+推荐管理员使用这一种。
+
+第一次使用时复制配置模板：
+
+```powershell
+Copy-Item release_user_config.ps1.example release_user_config.ps1
+```
+
+然后打开 `release_user_config.ps1`，通常只需要修改这两个值：
+
+```powershell
+$Version = "1.98.0"
+$Notes = "StarTrace 1.98.0 update"
+```
+
+之后直接执行：
+
+```powershell
+.\release_user_to_cdn.bat
+```
+
+脚本会自动完成：
+
+1. 设置本次发布版本号
+2. 打包普通用户版 exe
+3. 生成 `dist\latest.json`
+4. 在服务器上创建 `/www/wwwroot/www.twsaimahui.com/startrace/user`
+5. 上传 `StarTrace-<version>.exe`
+6. 上传 `latest.json`
+
 ### 打包普通用户版
 
 ```powershell
