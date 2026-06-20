@@ -7,6 +7,8 @@ import re
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout
 
+from app.services.chat_service import ChatLogService
+
 
 ALL_GROUPS_LABEL = "全部群组"
 ALL_SEMANTICS_LABEL = "全部类型"
@@ -43,6 +45,7 @@ class RawChatDialog(QDialog):
         self.messages: list[object] = []
         self.page_size = page_size
         self.message_page = 0
+        self._summary_classifier = ChatLogService()
 
         layout = QVBoxLayout(self)
         filter_row = QHBoxLayout()
@@ -59,7 +62,7 @@ class RawChatDialog(QDialog):
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("搜索"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("搜索群组、昵称、发送者 ID 或消息内容")
+        self.search_input.setPlaceholderText("搜索群组、昵称、期号或消息内容")
         self.search_input.textChanged.connect(self._on_search_changed)
         search_row.addWidget(self.search_input, 1)
         layout.addLayout(search_row)
@@ -97,6 +100,7 @@ class RawChatDialog(QDialog):
         current_scroll = self._current_scroll_value()
         self.messages = list(messages)
         groups = sorted({str(getattr(message, "group", "")).strip() for message in self.messages if str(getattr(message, "group", "")).strip()})
+
         self.group_filter.blockSignals(True)
         self.group_filter.clear()
         self.group_filter.addItem(ALL_GROUPS_LABEL)
@@ -104,6 +108,7 @@ class RawChatDialog(QDialog):
         if current_group in [ALL_GROUPS_LABEL, *groups]:
             self.group_filter.setCurrentText(current_group)
         self.group_filter.blockSignals(False)
+
         current_semantic = self.semantic_filter.currentText() if self.semantic_filter.count() else ALL_SEMANTICS_LABEL
         self.semantic_filter.blockSignals(True)
         self.semantic_filter.clear()
@@ -112,6 +117,7 @@ class RawChatDialog(QDialog):
         if current_semantic in [ALL_SEMANTICS_LABEL, *SEMANTIC_LABELS]:
             self.semantic_filter.setCurrentText(current_semantic)
         self.semantic_filter.blockSignals(False)
+
         total_pages = max(1, ceil(len(self._filtered_messages()) / self.page_size))
         self.message_page = min(current_page, total_pages - 1)
         self._refresh_message_view(preserve_scroll_value=current_scroll)
@@ -124,7 +130,7 @@ class RawChatDialog(QDialog):
         if selected_group and selected_group != ALL_GROUPS_LABEL:
             filtered = [message for message in filtered if str(getattr(message, "group", "")).strip() == selected_group]
         if selected_semantic and selected_semantic != ALL_SEMANTICS_LABEL:
-            filtered = [message for message in filtered if self._semantic_label(message) == selected_semantic]
+            filtered = [message for message in filtered if selected_semantic in self._semantic_labels(message)]
         if keyword:
             filtered = [message for message in filtered if keyword in self._searchable_text(message)]
         return filtered
@@ -134,9 +140,9 @@ class RawChatDialog(QDialog):
             [
                 str(getattr(message, "group", "")).strip(),
                 str(getattr(message, "username", "")).strip(),
-                str(getattr(message, "sender_id", "")).strip(),
+                self._period_text(message),
                 str(getattr(message, "content", "")).strip(),
-                self._semantic_label(message),
+                " ".join(self._semantic_labels(message)),
             ]
         ).lower()
 
@@ -156,6 +162,7 @@ class RawChatDialog(QDialog):
         for message in page_rows:
             cursor.insertHtml(self._message_html(message))
             cursor.insertHtml("<br/><br/>")
+
         self.page_label.setText(f"第 {self.message_page + 1} / {total_pages} 页")
         self.prev_btn.setEnabled(self.message_page > 0)
         self.next_btn.setEnabled(self.message_page + 1 < total_pages)
@@ -174,54 +181,110 @@ class RawChatDialog(QDialog):
                 ts_text,
                 str(getattr(message, "group", "")).strip(),
                 str(getattr(message, "username", "")).strip(),
-                str(getattr(message, "sender_id", "")).strip(),
+                self._period_text(message),
             ]
         )
         content = str(getattr(message, "content", "")).strip()
-        semantic = self._semantic_label(message)
-        bg_color, fg_color = SEMANTIC_COLORS.get(semantic, SEMANTIC_COLORS["普通聊天"])
+        semantics = self._semantic_labels(message)
+        primary = semantics[0]
+        bg_color, fg_color = SEMANTIC_COLORS.get(primary, SEMANTIC_COLORS["普通聊天"])
         return (
             f"<div style='background:{bg_color}; color:{fg_color}; padding:6px; border-radius:4px;'>"
-            f"<b>[{escape(semantic)}] {escape(header)}</b><br/>"
+            f"<b>[{escape(' / '.join(semantics))}] {escape(header)}</b><br/>"
             f"{escape(content).replace(chr(10), '<br/>')}"
             "</div>"
         )
 
     def _semantic_label(self, message: object) -> str:
+        return self._semantic_labels(message)[0]
+
+    def _semantic_labels(self, message: object) -> list[str]:
         content = str(getattr(message, "content", "") or "").strip()
         username = str(getattr(message, "username", "") or "").strip()
-        is_robot = "机器" in username
+        is_robot = "机器人" in username
         if self._looks_like_odds_announcement(content):
-            return "普通聊天"
+            return ["普通聊天"]
+
+        labels: list[str] = []
         if self._looks_like_receipt(content):
-            return "机器人回执"
+            labels.append("机器人回执")
         if self._looks_like_period_summary(content):
-            return "机器人汇总"
+            labels.append("机器人汇总")
         if self._looks_like_result_broadcast(content):
-            return "开奖结果播报"
+            labels.append("开奖结果播报")
         if self._looks_like_state_snapshot(content):
-            return "机器人状态快照"
+            labels.append("机器人状态快照")
         if is_robot and self._looks_like_boundary(content):
-            return "下注归期边界"
+            labels.append("下注归期边界")
         if self._looks_like_cancel(content):
-            return "撤单/改注"
+            labels.append("撤单/改注")
         if not is_robot and self._looks_like_user_bet(content):
-            return "用户下注"
-        return "普通聊天"
+            labels.append("用户下注")
+        return labels or ["普通聊天"]
+
+    def _period_text(self, message: object) -> str:
+        period = self._extract_period(str(getattr(message, "content", "") or ""))
+        return period or "-"
+
+    def _extract_period(self, content: str) -> str:
+        match = re.search(r"(\d{4,})", content)
+        return match.group(1) if match else ""
 
     def _looks_like_receipt(self, content: str) -> bool:
         return "下注期数" in content and "下注内容" in content
 
     def _looks_like_period_summary(self, content: str) -> bool:
-        if not re.search(r"-+\[\d{4,}\]期-+", content):
-            return False
-        summary_lines = 0
+        text = str(content or "").strip()
+        return bool(text) and self._looks_like_group_period_summary(text) and self._has_summary_bet_lines(text)
+
+    def _period_key_from_summary_text(self, content: str) -> str:
+        text = str(content or "")
+        explicit = re.search(r"(\d{4,})\s*期(?:下注核对)?\s*[:：]", text)
+        if explicit:
+            return explicit.group(1)
+        explicit_after_label = re.search(r"期号\s*[:：]\s*(\d{4,})", text)
+        if explicit_after_label:
+            return explicit_after_label.group(1)
+        plain_period = re.search(r"(?:第\s*)?(\d{4,})\s*期(?:下注核对)?", text)
+        if plain_period:
+            return plain_period.group(1)
+        bracket = re.search(r"-+\[(?:[A-Z])?(\d{4,})(?:-\d+)?\][^\n-]{0,8}-+", text)
+        if bracket:
+            return bracket.group(1)
+        return ""
+
+    def _summary_bet_bodies_from_line(self, line: str) -> list[str]:
+        bodies = [match.group("body") for match in re.finditer(r"【(?P<body>.*?)】", line)]
+        bodies.extend(match.group("body") for match in re.finditer(r"\[(?P<body>[^\[\]\n\r]+)\]", line))
+        suffix_match = re.search(r"[】\]](?P<body>.+)$", line)
+        if suffix_match:
+            bodies.append(suffix_match.group("body"))
+        return [body for body in bodies if body.strip()]
+
+    def _has_summary_bet_lines(self, content: str) -> bool:
         for line in content.splitlines():
-            if "【" not in line or "】" not in line:
+            if not any(token in line for token in ("【", "】", "[", "]")):
                 continue
-            if any(re.search(rf"{re.escape(play)}\s*\d", line) for play in PLAY_TOKENS):
-                summary_lines += 1
-        return summary_lines >= 1
+            bodies = self._summary_bet_bodies_from_line(line)
+            if bodies and any(self._summary_classifier._parse_bets(body) for body in bodies):
+                return True
+        return False
+
+    def _looks_like_group_period_summary(self, text: str) -> bool:
+        if re.search(r"\d{4,}\s*期(?:下注核对)?\s*[:：]", text):
+            return True
+        if re.search(r"第?\s*\d{4,}\s*期下注核对", text):
+            return True
+        if "本期下注" in text and re.search(r"-+\[第?\d{4,}期\]-+", text):
+            return True
+        if "期下注核对" in text:
+            return True
+        if self._period_key_from_summary_text(text) and self._has_summary_bet_lines(text):
+            if "以下投注全部有效" in text or "已截止本期猜猜" in text or "封盘线" in text:
+                return True
+        if re.search(r"-+\[(?:[A-Z])?\d{4,}(?:-\d+)?\][^\n-]{0,8}-+", text):
+            return True
+        return False
 
     def _looks_like_result_broadcast(self, content: str) -> bool:
         return "彩种" in content and "期号" in content and ("结果" in content or "历史开奖" in content)
@@ -239,7 +302,7 @@ class RawChatDialog(QDialog):
         return any(re.search(rf"{re.escape(play)}\s*\d", content) or re.search(rf"\d+\s*{re.escape(play)}", content) for play in PLAY_TOKENS)
 
     def _looks_like_odds_announcement(self, content: str) -> bool:
-        return "倍" in content and ("赔率" in content or "欢迎" in content or "大小单双" in content or "呗" in content)
+        return "倍" in content and ("赔率" in content or "欢迎" in content or "大小单双" in content or "吗" in content)
 
     def _on_group_changed(self) -> None:
         self.message_page = 0

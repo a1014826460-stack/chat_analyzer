@@ -18,7 +18,18 @@ DEFAULT_SHARED_PREFS = (
     / "tencent_cloud_chat_demo"
     / "shared_preferences.json"
 )
-DEFAULT_CONFIG_ROOT = Path.home() / "Documents" / "TencentCloudChat" / "Config"
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for path in paths:
+        key = str(path).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered
 
 
 def _windows_documents_dir_from_registry() -> Path | None:
@@ -49,6 +60,30 @@ def _windows_documents_dir() -> Path | None:
     except Exception:
         return None
     return None
+
+
+def _documents_dir_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for path in (
+        _windows_documents_dir_from_registry(),
+        _windows_documents_dir(),
+        Path.home() / "Documents",
+        Path.home() / "OneDrive" / "Documents",
+    ):
+        if path:
+            candidates.append(Path(path))
+    return _dedupe_paths(candidates)
+
+
+def _candidate_config_roots_from_documents() -> list[Path]:
+    return [docs_dir / "TencentCloudChat" / "Config" for docs_dir in _documents_dir_candidates()]
+
+
+def _default_config_root() -> Path:
+    candidates = _candidate_config_roots_from_documents()
+    if candidates:
+        return candidates[0]
+    return Path.home() / "Documents" / "TencentCloudChat" / "Config"
 
 
 @dataclass
@@ -101,9 +136,9 @@ class ResolveDiagnostic:
 
 
 class AccountResolver:
-    def __init__(self, shared_prefs_path: Path = DEFAULT_SHARED_PREFS, config_root: Path = DEFAULT_CONFIG_ROOT) -> None:
+    def __init__(self, shared_prefs_path: Path = DEFAULT_SHARED_PREFS, config_root: Path | None = None) -> None:
         self.shared_prefs_path = shared_prefs_path
-        self.config_root = config_root
+        self.config_root = Path(config_root) if config_root is not None else _default_config_root()
         self._last_diagnostic: ResolveDiagnostic | None = None
 
     def list_accounts(self) -> list[str]:
@@ -195,30 +230,14 @@ class AccountResolver:
         return raw_accounts
 
     def _select_config_root(self) -> Path:
-        for candidate in self._candidate_config_roots():
+        candidates = self._candidate_config_roots()
+        for candidate in candidates:
             if candidate.exists():
                 return candidate
-        return self.config_root
+        return candidates[0] if candidates else self.config_root
 
     def _candidate_config_roots(self) -> list[Path]:
-        roots = [self.config_root]
-        for docs_dir in (
-            _windows_documents_dir_from_registry(),
-            _windows_documents_dir(),
-            Path.home() / "Documents",
-            Path.home() / "OneDrive" / "Documents",
-        ):
-            if docs_dir:
-                roots.append(Path(docs_dir) / "TencentCloudChat" / "Config")
-        seen: set[str] = set()
-        ordered: list[Path] = []
-        for root in roots:
-            key = str(root).casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            ordered.append(root)
-        return ordered
+        return _dedupe_paths([Path(self.config_root), *_candidate_config_roots_from_documents()])
 
     def _candidate_dirs(self, config_root: Path, im_appid: str, accid: str) -> list[Path]:
         exact = config_root / f"{im_appid}_{accid.encode('utf-8').hex()}"

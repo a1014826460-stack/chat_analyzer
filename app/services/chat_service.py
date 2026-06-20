@@ -42,18 +42,19 @@ PLAY_PATTERN = "|".join(sorted((re.escape(item) for item in PLAY_TYPES), key=len
 TXT_LINE_PATTERN = re.compile(
     r"^\[(?P<ts>[^\]]+)\]\s*(?P<group>[^\t]+)[\t ]+(?P<user>[^\t]+)[\t ]+(?P<content>.+)$"
 )
-SIMPLE_BET_PATTERN = re.compile(rf"(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)")
+AMOUNT_PATTERN = r"\d(?:\d{0,2}(?:,\d{3})+|\d*)(?:\.\d+)?"
+SIMPLE_BET_PATTERN = re.compile(rf"(?P<play>{PLAY_PATTERN})\s*(?P<amount>{AMOUNT_PATTERN})")
 PLAY_TOKENS = tuple(sorted(PLAY_TYPES, key=len, reverse=True))
-NUMBER_TOKEN_AT_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+NUMBER_TOKEN_AT_PATTERN = re.compile(AMOUNT_PATTERN)
 SUMMARY_SQUARE_BODY_PATTERN = re.compile(r"(?<!-)\[(?P<body>[^\[\]\n\r]+)\]")
 RECEIPT_BETTOR_PATTERN = re.compile(r"@\s*(?P<bettor>.+?)\s*[:：]")
 RECEIPT_BODY_PATTERN = re.compile(r"下注内容\s*[:：]\s*-+\s*(?P<body>.*?)\s*-+\s*余额", re.S)
 RECEIPT_ODDS_PATTERN = re.compile(r"\([^)]*赔率\)")
 RECEIPT_ALLOWED_PLAY_BET_PATTERN = re.compile(
-    rf"^(?P<play>{PLAY_PATTERN})\s*(?P<amount>\d[\d,]*(?:\.\d+)?)(?:\D.*)?$"
+    rf"^(?P<play>{PLAY_PATTERN})\s*(?P<amount>{AMOUNT_PATTERN})(?:\D.*)?$"
 )
-RECEIPT_POINT_PLAY_BET_PATTERN = re.compile(r"^(?P<play>\d{1,2})\.(?P<amount>\d[\d,]*)(?:\D.*)?$")
-RECEIPT_GENERIC_PLAY_BET_PATTERN = re.compile(r"^(?P<play>.+?)(?P<amount>\d[\d,]*(?:\.\d+)?)(?:\D.*)?$")
+RECEIPT_POINT_PLAY_BET_PATTERN = re.compile(rf"^(?P<play>\d{{1,2}})\.(?P<amount>{AMOUNT_PATTERN})(?:\D.*)?$")
+RECEIPT_GENERIC_PLAY_BET_PATTERN = re.compile(rf"^(?P<play>.+?)(?P<amount>{AMOUNT_PATTERN})(?:\D.*)?$")
 DIRECT_CLOSE_HINT_PATTERN = re.compile(r"濡備笅璁㈠崟宸插彇娑?|如下订单已取消")
 RECEIPT_MATCH_WINDOW = timedelta(minutes=5)
 DIRECT_GROUP_PERIOD_WINDOW = timedelta(minutes=10)
@@ -1060,6 +1061,12 @@ class ChatLogService:
         explicit = re.search(r"(?P<period>\d{4,})\s*期(?:下注核对)?\s*[:：]", clean)
         if explicit:
             return explicit.group("period")
+        explicit_after_label = re.search(r"期号\s*[:：]\s*(?P<period>\d{4,})", clean)
+        if explicit_after_label:
+            return explicit_after_label.group("period")
+        plain_period = re.search(r"(?:第\s*)?(?P<period>\d{4,})\s*期(?:下注核对)?", clean)
+        if plain_period:
+            return plain_period.group("period")
         bracket = re.search(r"-+\[(?:[A-Z])?(?P<period>\d{4,})(?:-\d+)?\][^\n-]{0,8}-+", clean)
         if bracket:
             return bracket.group("period")
@@ -1068,6 +1075,9 @@ class ChatLogService:
     def _summary_bet_bodies_from_line(self, line: str) -> list[str]:
         bodies = [match.group("body") for match in re.finditer(r"【(?P<body>.*?)】", line)]
         bodies.extend(match.group("body") for match in SUMMARY_SQUARE_BODY_PATTERN.finditer(line))
+        suffix_match = re.search(r"[】\]](?P<body>.+)$", line)
+        if suffix_match:
+            bodies.append(suffix_match.group("body"))
         return [body for body in bodies if self._clean_text(body)]
 
     def _summary_line_bettor_name(self, line: str) -> str:
@@ -1079,7 +1089,8 @@ class ChatLogService:
             return ""
         prefix = clean_line[: body_match.start()].strip()
         if not prefix:
-            return ""
+            bracket_name = re.search(r"[【\[](?P<name>[^\]】]+)[】\]]", clean_line)
+            return self._clean_text(bracket_name.group("name")) if bracket_name else ""
         parts = prefix.split()
         return self._clean_text(parts[0]) if parts else ""
 
@@ -1096,15 +1107,23 @@ class ChatLogService:
             return False
         if self._looks_like_group_period_summary(text):
             return True
-        return False
+        snapshot_probe = type("_SummaryProbe", (), {"content": text, "group": "", "ts": None})()
+        return self._extract_robot_summary_snapshot(snapshot_probe) is not None
 
     def _looks_like_group_period_summary(self, text: str) -> bool:
         if re.search(r"\d{4,}\s*期(?:下注核对)?\s*[:：]", text):
+            return True
+        if re.search(r"第?\s*\d{4,}\s*期下注核对", text):
             return True
         if "本期下注" in text and re.search(r"-+\[第?\d{4,}期\]-+", text):
             return True
         if "期下注核对" in text:
             return True
+        if "以下投注全部有效" in text and self._period_key_from_summary_text(text):
+            for line in text.splitlines():
+                bodies = self._summary_bet_bodies_from_line(line)
+                if bodies and any(self._parse_bets(body) for body in bodies):
+                    return True
         if re.search(r"-+\[(?:[A-Z])?\d{4,}(?:-\d+)?\][^\n-]{0,8}-+", text) and not self._looks_like_personal_status_summary(text):
             return True
         return False
@@ -1119,6 +1138,118 @@ class ChatLogService:
             "回粮冻结",
         )
         return "本期下注" in text and any(marker in text for marker in personal_markers)
+
+    def _extract_personal_status_bet_snapshot(
+        self,
+        msg: ChatMessage,
+        period: str,
+    ) -> tuple[str, dict[str, float]] | None:
+        if not period:
+            return None
+        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
+            return None
+        content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
+        if not self._looks_like_personal_status_summary(content):
+            return None
+        body_match = re.search(r"本期下注\s*[:：]\s*\[(?P<body>[^\]]*)\]", content, re.S)
+        if not body_match:
+            return None
+        bettor = self._extract_bettor_name(content)
+        if not bettor or self._is_private_chat_proxy_bettor(bettor):
+            return None
+        totals: dict[str, float] = defaultdict(float)
+        for play, amount in self._parse_bets(body_match.group("body")):
+            if play in PLAY_TYPES and amount > 0:
+                totals[play] += float(amount)
+        if not totals:
+            return None
+        return bettor, dict(totals)
+
+    def _robot_period_markers_by_group(
+        self,
+        messages: list[ChatMessage],
+    ) -> dict[str, list[tuple[datetime, str]]]:
+        markers: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
+        for msg in messages:
+            if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
+                continue
+            content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
+            if self._looks_like_personal_status_summary(content):
+                continue
+            period = self._period_key_from_summary_text(content)
+            if not period:
+                boundary_match = re.search(r"(?P<period>\d{4,})\s*期", content)
+                if boundary_match:
+                    period = boundary_match.group("period")
+            if period:
+                markers[msg.group].append((msg.ts, period))
+        for group in markers:
+            markers[group].sort(key=lambda item: item[0])
+        return markers
+
+    def _infer_personal_status_period(
+        self,
+        msg: ChatMessage,
+        period_markers_by_group: dict[str, list[tuple[datetime, str]]],
+        period_filter: str,
+    ) -> str:
+        nearest_period = ""
+        nearest_distance: float | None = None
+        for marker_ts, marker_period in period_markers_by_group.get(msg.group, []):
+            distance = abs((marker_ts - msg.ts).total_seconds())
+            if nearest_distance is None or distance < nearest_distance:
+                nearest_period = marker_period
+                nearest_distance = distance
+        if nearest_period and nearest_distance is not None and nearest_distance <= DIRECT_GROUP_PERIOD_WINDOW.total_seconds():
+            return nearest_period
+        return period_filter
+
+    def _build_fallback_robot_summary_snapshots(
+        self,
+        messages: list[ChatMessage],
+        authoritative_keys: set[tuple[str, str]],
+        period_filter: str,
+    ) -> list[RobotSummarySnapshot]:
+        period_markers_by_group = self._robot_period_markers_by_group(messages)
+        latest_by_group_period_bettor: dict[tuple[str, str], dict[str, tuple[datetime, dict[str, float]]]] = defaultdict(dict)
+        for msg in messages:
+            period = self._infer_personal_status_period(msg, period_markers_by_group, period_filter)
+            if not period:
+                continue
+            key = (msg.group, period)
+            if key in authoritative_keys:
+                continue
+            parsed = self._extract_personal_status_bet_snapshot(msg, period)
+            if parsed is None:
+                continue
+            bettor, bettor_totals = parsed
+            previous = latest_by_group_period_bettor[key].get(bettor)
+            if previous is None or msg.ts >= previous[0]:
+                latest_by_group_period_bettor[key][bettor] = (msg.ts, bettor_totals)
+        fallback_snapshots: list[RobotSummarySnapshot] = []
+        for (group, period), by_bettor in latest_by_group_period_bettor.items():
+            totals: dict[str, float] = defaultdict(float)
+            totals_by_bettor: dict[str, dict[str, float]] = {}
+            latest_ts: datetime | None = None
+            for bettor, (bettor_ts, play_totals) in by_bettor.items():
+                totals_by_bettor[bettor] = dict(play_totals)
+                if latest_ts is None or bettor_ts > latest_ts:
+                    latest_ts = bettor_ts
+                for play, amount in play_totals.items():
+                    if play in PLAY_TYPES:
+                        totals[play] += float(amount)
+            if latest_ts is None or not totals:
+                continue
+            fallback_snapshots.append(
+                RobotSummarySnapshot(
+                    period=period,
+                    group=group,
+                    ts=latest_ts,
+                    totals=dict(totals),
+                    totals_by_bettor=totals_by_bettor,
+                )
+            )
+        return fallback_snapshots
 
     def _build_robot_summary_reconciliation(
         self,
@@ -1143,14 +1274,20 @@ class ChatLogService:
         ]
         if period_filter:
             snapshots = [snapshot for snapshot in snapshots if snapshot.period == period_filter]
-        if not snapshots:
-            return []
         latest_by_group_period: dict[tuple[str, str], RobotSummarySnapshot] = {}
         for snapshot in snapshots:
             key = (snapshot.group, snapshot.period)
             previous = latest_by_group_period.get(key)
             if previous is None or snapshot.ts > previous.ts:
                 latest_by_group_period[key] = snapshot
+        for snapshot in self._build_fallback_robot_summary_snapshots(
+            messages,
+            set(latest_by_group_period),
+            period_filter,
+        ):
+            latest_by_group_period.setdefault((snapshot.group, snapshot.period), snapshot)
+        if not latest_by_group_period:
+            return []
         records: list[dict[str, object]] = []
         for snapshot in sorted(
             latest_by_group_period.values(),
@@ -1325,7 +1462,7 @@ class ChatLogService:
                         continue
             play = self._match_play_token(text, i)
             if play is not None:
-                amount_match = re.match(r"\s*(\d[\d,]*(?:\.\d+)?)", text[i + len(play) :])
+                amount_match = re.match(rf"\s*({AMOUNT_PATTERN})", text[i + len(play) :])
                 if amount_match:
                     amount_text = amount_match.group(1)
                     matches.append((i, play, self._parse_amount_text(amount_text)))
@@ -1356,21 +1493,6 @@ class ChatLogService:
         if after in {"大", "小", "单", "双"}:
             return False
         return True
-
-    def _extract_direct_group_marker(self, msg: ChatMessage) -> tuple[str, str] | None:
-        if not msg.sender_id:
-            return None
-        if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
-            return None
-        content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
-        period = self._extract_period(content)
-        if not period:
-            return None
-        if DIRECT_CLOSE_HINT_PATTERN.search(content) or "如下订单已取消" in content:
-            return ("end", period)
-        if "涓嬫敞鏈熸暟" in content or "鏈湡涓嬫敞" in content:
-            return ("start", period)
-        return None
 
     def _build_direct_group_period_ranges(
         self,
@@ -1513,10 +1635,12 @@ class ChatLogService:
         if not self._is_group_member_robot(msg.group, msg.sender_id, msg.username, msg.group_id):
             return None
         content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
-        period = self._extract_period(content)
-        if not period:
+        if self._looks_like_personal_status_summary(content):
             return None
         if DIRECT_CLOSE_HINT_PATTERN.search(content) or "如下订单已取消" in content:
+            period = self._extract_period(content)
+            if not period:
+                return None
             return ("end", period)
         if (
             "涓嬫敞鏈熸暟" in content
@@ -1524,8 +1648,10 @@ class ChatLogService:
             or "娑撳鏁為張鐔告殶" in content
             or "閺堬剚婀℃稉瀣暈" in content
             or "下注期数" in content
-            or "本期下注" in content
         ):
+            period = self._extract_period(content)
+            if not period:
+                return None
             return ("start", period)
         return None
 
@@ -1609,6 +1735,19 @@ class ChatLogService:
         return self._is_group_member_robot(clean_group, clean_sender_id, clean_username)
 
     def _extract_bettor_name(self, content: str) -> str:
+        text = self._decode_possible_frontend_ciphertext(self._clean_text(content))
+        if not text:
+            return ""
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        first_line = lines[0]
+        bracket_match = re.match(r"[【\[](?P<name>[^\]】]+)[】\]]", first_line)
+        if bracket_match:
+            return self._clean_text(bracket_match.group("name"))
+        score_line_match = re.match(r"(?P<name>\S+)\s+当前积分", first_line)
+        if score_line_match:
+            return self._clean_text(score_line_match.group("name"))
         return ""
 
     def _is_group_member_robot(

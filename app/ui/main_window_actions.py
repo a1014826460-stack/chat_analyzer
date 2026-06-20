@@ -295,7 +295,7 @@ class MainWindowActionsMixin:
         if not period or not by_play:
             return
         group = str(payload.get("group", "") or "").strip()
-        history = self._summary_check_history()
+        history = MainWindowActionsMixin._summary_check_history(self)
         record = {
             "group": group,
             "period": period,
@@ -312,7 +312,16 @@ class MainWindowActionsMixin:
             )
         ]
         deduped.insert(0, record)
-        self.summary_check_history = deduped[:20]
+        kept: list[dict[str, object]] = []
+        per_group_counts: dict[str, int] = {}
+        for item in deduped:
+            item_group = str(item.get("group", "") or "").strip()
+            count = per_group_counts.get(item_group, 0)
+            if count >= 20:
+                continue
+            kept.append(item)
+            per_group_counts[item_group] = count + 1
+        self.summary_check_history = kept
 
     def _summary_check_payload(self) -> dict[str, object]:
         stats = getattr(self, "current_stats", None)

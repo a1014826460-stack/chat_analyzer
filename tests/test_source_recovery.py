@@ -6889,6 +6889,71 @@ def test_raw_chat_dialog_classifies_period_billboard_as_robot_summary() -> None:
     dialog.close()
 
 
+def test_raw_chat_dialog_displays_period_instead_of_sender_id() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 20, 2, 39, 27),
+                group="胜者为王4.6～4.2",
+                username="暗杀者",
+                sender_id="1x4CuORJW",
+                content="已截止本期猜猜\n3447069 期\n-------封盘线--------",
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "2026-06-20 02:39:27 | 胜者为王4.6～4.2 | 暗杀者 | 3447069" in text
+    assert "1x4CuORJW" not in text
+    dialog.close()
+
+
+def test_raw_chat_dialog_boundary_and_robot_summary_can_coexist() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 20, 2, 39, 42),
+                group="🔥炸金花 🔥大杀四方",
+                username="炸金花机器人",
+                sender_id="YlGBq4oua",
+                content=(
+                    "已截止本期猜猜 期号:3447069\n"
+                    "加拿大PC蛋蛋\n"
+                    "【坚果-330028】大4200|小单2700|大双4200|13.288\n"
+                    "【牛肝-58746】大双1500|小单1500"
+                ),
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "机器人汇总" in text
+    assert "下注归期边界" in text
+    dialog.close()
+
+
 def test_raw_chat_dialog_does_not_classify_robot_odds_announcement_as_user_bet() -> None:
     import os
     from datetime import datetime
@@ -7433,6 +7498,62 @@ def test_main_window_summary_check_payloads_prefer_multi_group_records() -> None
     assert payloads[1]["software_totals"]["大单"] == 300.0
 
 
+def test_main_window_summary_check_history_keeps_recent_twenty_periods_per_group() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    dummy = SimpleNamespace(summary_check_history=[])
+
+    for index in range(25):
+        MainWindowActionsMixin._record_summary_check(
+            dummy,
+            {
+                "group": "A群",
+                "period": f"34470{index:02d}",
+                "software_totals": {"大单": float(index)},
+                "robot_totals": {"大单": float(index)},
+                "by_play": {
+                    "大单": {
+                        "software_total": float(index),
+                        "robot_total": float(index),
+                        "diff": 0.0,
+                        "diff_ratio": 0.0,
+                        "within_tolerance": True,
+                    }
+                },
+            },
+        )
+
+    MainWindowActionsMixin._record_summary_check(
+        dummy,
+        {
+            "group": "B群",
+            "period": "3555001",
+            "software_totals": {"小单": 10.0},
+            "robot_totals": {"小单": 10.0},
+            "by_play": {
+                "小单": {
+                    "software_total": 10.0,
+                    "robot_total": 10.0,
+                    "diff": 0.0,
+                    "diff_ratio": 0.0,
+                    "within_tolerance": True,
+                }
+            },
+        },
+    )
+
+    history = MainWindowActionsMixin._summary_check_history(dummy)
+    a_group_periods = [item["period"] for item in history if item["group"] == "A群"]
+    b_group_periods = [item["period"] for item in history if item["group"] == "B群"]
+
+    assert len(a_group_periods) == 20
+    assert a_group_periods[0] == "3447024"
+    assert a_group_periods[-1] == "3447005"
+    assert b_group_periods == ["3555001"]
+
+
 def test_main_window_opens_and_reuses_unresolved_receipt_dialog() -> None:
     import os
     from types import SimpleNamespace
@@ -7514,3 +7635,229 @@ def test_build_common_env_prefers_build_env_bat_and_supports_example_template() 
     assert "STARTRACE_UPDATE_PUBLIC_KEY_PEM" in example_script
     assert "keys\\update_private.pem" in example_script
     assert "-----BEGIN PUBLIC KEY-----" in example_script
+
+
+def test_chat_service_extracts_robot_summary_snapshot_from_plain_period_check_header_live_shape() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 20, 2, 39, 29),
+        group="\u91d1\u8d22\u96c6\u56e2<\u91d1\u8d22\u5e1d\u56fd>",
+        username="\u673a\u5668\u4eba",
+        sender_id="robot-a",
+        content=(
+            "\u7b2c3447069\u671f\u4e0b\u6ce8\u6838\u5bf9\n"
+            "--------------------------\n"
+            "\u5929\u4f51 036192[\u5c0f3100 \u5927\u53cc3188 12T66]\n"
+            "\u7d2b\u8521 031241[\u59272500 \u5927\u53cc788 \u5927\u5355988 20T72]"
+        ),
+    )
+
+    snapshot = service._extract_robot_summary_snapshot(message)
+
+    assert service._is_robot_summary_stats_source(message.content) is True
+    assert snapshot is not None
+    assert snapshot.period == "3447069"
+    assert snapshot.totals["\u5c0f"] == 3100.0
+    assert snapshot.totals["\u5927\u53cc"] == 3976.0
+    assert snapshot.totals["\u5927"] == 2500.0
+    assert snapshot.totals["\u5927\u5355"] == 988.0
+
+
+def test_chat_service_extracts_robot_summary_snapshot_from_boundary_summary_message_live_shape() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    message = ChatMessage(
+        ts=datetime(2026, 6, 20, 2, 39, 27),
+        group="\u80dc\u8005\u4e3a\u738b4.6\uff5e4.2",
+        username="\u6697\u6740\u8005",
+        sender_id="robot-a",
+        content=(
+            "\u5df2\u622a\u6b62\u672c\u671f\u731c\u731c\n"
+            "3447069 \u671f\n"
+            "-------\u5c01\u76d8\u7ebf--------\n"
+            "\u4e0b\u6ce8\u7ed3\u675f\n"
+            "\u4ee5\u4e0b\u6295\u6ce8\u5168\u90e8\u6709\u6548\n\n"
+            "\u52a0\u62ff\u5927PC\u86cb\u86cb\n"
+            "\u3010\u5f97\u95f2-1192520\u3011\u5c0f\u535525000|\u5927\u535525000\n"
+            "\u3010\u80ba\u5b50-983031\u3011\u5c0f\u53cc36666|\u5927\u53cc36666"
+        ),
+    )
+
+    snapshot = service._extract_robot_summary_snapshot(message)
+
+    assert service._is_robot_summary_stats_source(message.content) is True
+    assert snapshot is not None
+    assert snapshot.period == "3447069"
+    assert snapshot.totals["\u5c0f\u5355"] == 25000.0
+    assert snapshot.totals["\u5927\u5355"] == 25000.0
+    assert snapshot.totals["\u5c0f\u53cc"] == 36666.0
+    assert snapshot.totals["\u5927\u53cc"] == 36666.0
+
+
+def test_raw_chat_dialog_classifies_plain_period_check_header_as_robot_summary() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 20, 2, 39, 29),
+                group="\u91d1\u8d22\u96c6\u56e2<\u91d1\u8d22\u5e1d\u56fd>",
+                username="\u673a\u5668\u4eba",
+                sender_id="robot-a",
+                content=(
+                    "\u7b2c3447069\u671f\u4e0b\u6ce8\u6838\u5bf9\n"
+                    "--------------------------\n"
+                    "\u5929\u4f51 036192[\u5c0f3100 \u5927\u53cc3188 12T66]\n"
+                    "\u7d2b\u8521 031241[\u59272500 \u5927\u53cc788 \u5927\u5355988 20T72]"
+                ),
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "\u673a\u5668\u4eba\u6c47\u603b" in text
+    dialog.close()
+
+
+def test_chat_service_treats_boundary_summary_snapshot_as_robot_summary_stats_source() -> None:
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    content = (
+        "\u5df2\u622a\u6b62\u672c\u671f\u731c\u731c ?\u671f\u53f7:3447025\n"
+        "\u52a0\u62ff\u5927PC\u86cb\u86cb\n"
+        "\u3010\u575a\u679c-452449\u3011\u5927\u53554200|\u5c0f\u53cc2700|\u5c0f7900|14.288\n"
+        "\u3010\u7206\u5973-111210\u3011\u5927\u53cc32000|\u592726000|\u5c0f\u535532000\n"
+        "\u3010\u725b\u809d-63625\u3011\u5927\u53cc1200|\u5c0f\u53551200"
+    )
+
+    assert service._extract_robot_summary_snapshot(type('M', (), {'content': content, 'group': 'G', 'ts': None})()) is not None
+    assert service._is_robot_summary_stats_source(content) is True
+
+
+def test_chat_service_does_not_treat_personal_status_snapshot_amount_as_period_marker() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service.set_group_robot_ids({"group-a": "robot-a"})
+    message = ChatMessage(
+        ts=datetime(2026, 6, 20, 0, 6, 59),
+        group="Group A",
+        username="机器人",
+        sender_id="robot-a",
+        group_id="group-a",
+        content=(
+            "【詹懒】\n"
+            "当前积分：29322\n"
+            "当日流水：0\n"
+            "当日盈亏：0\n"
+            "本期下注：[]\n"
+            "冻结积分：2600"
+        ),
+    )
+
+    assert service._extract_direct_group_marker(message) is None
+
+
+def test_chat_service_builds_fallback_robot_summary_from_personal_status_snapshots_when_group_summary_missing() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    service.set_group_robot_ids({"group-a": "robot-a"})
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 3, 40),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            group_id="group-a",
+            content=(
+                "【深秋】\n"
+                "当前积分：33573\n"
+                "当日流水：0\n"
+                "当日盈亏：0\n"
+                "本期下注：[小双2233,大单3232,小单3010]\n"
+                "冻结积分：322854"
+            ),
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 3, 58),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            group_id="group-a",
+            content=(
+                "【坚果】\n"
+                "当前积分：452449\n"
+                "当日流水：0\n"
+                "当日盈亏：0\n"
+                "本期下注：[大单4200,小双2700,小7900,14.288]\n"
+                "冻结积分：529255"
+            ),
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 4, 2),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            group_id="group-a",
+            content=(
+                "【森爷】\n"
+                "当前积分：32070\n"
+                "当日流水：0\n"
+                "当日盈亏：0\n"
+                "本期下注：[小3500,大单2000,小双2500]\n"
+                "冻结积分：245500"
+            ),
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 0, 5, 42),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            group_id="group-a",
+            content=(
+                "已截止本期猜猜 期号:3447025\n"
+                "加拿大PC蛋蛋\n"
+                "无人投注"
+            ),
+        ),
+    ]
+
+    records = service._build_robot_summary_reconciliations(
+        messages,
+        {"Group A": {"小": 11400.0, "大单": 9432.0, "小双": 7433.0}},
+        "3447025",
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["group"] == "Group A"
+    assert record["period"] == "3447025"
+    assert record["robot_totals"]["小"] == 11400.0
+    assert record["robot_totals"]["大单"] == 9432.0
+    assert record["robot_totals"]["小双"] == 7433.0
