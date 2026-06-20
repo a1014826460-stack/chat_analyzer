@@ -6954,6 +6954,81 @@ def test_raw_chat_dialog_boundary_and_robot_summary_can_coexist() -> None:
     dialog.close()
 
 
+def test_raw_chat_dialog_classifies_periodless_robot_bet_list_as_robot_summary() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 20, 9, 53, 26),
+                group="🔥财神66-大财神🔥禁水",
+                username="大财神机器",
+                sender_id="50405",
+                content=(
+                    "-----本期下注列表-----\n\n"
+                    "加拿大PC蛋蛋\n"
+                    "【谢佳-50405】小单1600|大双1600|11.60|12.60|13.60\n"
+                    "【量仔-42064】小单2005|小双2005|12.100|18.100\n"
+                    "【很久-37084】大双1500|小单500|大1500"
+                ),
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "机器人汇总" in text
+    assert "用户下注" not in text
+    dialog.close()
+
+
+def test_raw_chat_dialog_does_not_classify_personal_status_snapshot_as_robot_summary() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.models import ChatMessage
+    from app.ui.raw_chat_dialog import RawChatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = RawChatDialog(
+        [
+            ChatMessage(
+                ts=datetime(2026, 6, 20, 9, 52, 47),
+                group="金财集团<金财帝国>",
+                username="机器人",
+                sender_id="robot-a",
+                content=(
+                    "---[第3447193期]---\n"
+                    "紫蔡 当前积分：10893\n"
+                    "当前盈亏：48532\n"
+                    "当前流水：1301590\n"
+                    "下注冻结：10832\n"
+                    "回粮冻结：0\n"
+                    "剩余积分：61\n"
+                    "本期下注：[小2400 大单3500 双1866 小双3066]"
+                ),
+            ),
+        ],
+        page_size=50,
+    )
+
+    text = dialog.message_view.toPlainText()
+    assert "机器人状态快照" in text
+    assert "机器人汇总" not in text
+    dialog.close()
+
+
 def test_raw_chat_dialog_does_not_classify_robot_odds_announcement_as_user_bet() -> None:
     import os
     from datetime import datetime

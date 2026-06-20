@@ -201,7 +201,7 @@ class RawChatDialog(QDialog):
     def _semantic_labels(self, message: object) -> list[str]:
         content = str(getattr(message, "content", "") or "").strip()
         username = str(getattr(message, "username", "") or "").strip()
-        is_robot = "机器人" in username
+        is_robot = "机器人" in username or "机器" in username
         if self._looks_like_odds_announcement(content):
             return ["普通聊天"]
 
@@ -235,6 +235,10 @@ class RawChatDialog(QDialog):
 
     def _looks_like_period_summary(self, content: str) -> bool:
         text = str(content or "").strip()
+        if self._looks_like_state_snapshot(text):
+            return False
+        if "本期下注列表" in text and self._has_summary_bet_lines(text):
+            return True
         return bool(text) and self._looks_like_group_period_summary(text) and self._has_summary_bet_lines(text)
 
     def _period_key_from_summary_text(self, content: str) -> str:
@@ -282,6 +286,8 @@ class RawChatDialog(QDialog):
         if self._period_key_from_summary_text(text) and self._has_summary_bet_lines(text):
             if "以下投注全部有效" in text or "已截止本期猜猜" in text or "封盘线" in text:
                 return True
+        if "本期下注列表" in text and self._has_summary_bet_lines(text):
+            return True
         if re.search(r"-+\[(?:[A-Z])?\d{4,}(?:-\d+)?\][^\n-]{0,8}-+", text):
             return True
         return False
