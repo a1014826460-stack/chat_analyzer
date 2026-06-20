@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 
-from app.models import ParseOptions
+from app.models import ParseOptions, StatsResult
 from app.services.account_resolver import ResolvedDatabase
+from app.services.chat_service import PLAY_TYPES, RobotSummarySnapshot
 from app.utils.fetch_date import _SITE_INTERVAL_SEC
 
 
@@ -328,8 +331,118 @@ class MainWindowDataMixin:
         self.status_label.setText(f"已加载 {len(self.current_messages):,} 条消息。")
         self._refresh_message_view()
         self._update_chart_data(replace=bool(result.get("replace_chart", False)))
+        self._sync_stats_from_accumulated_visual_rows()
         self._sync_chart_status()
         logger.info("Load messages applied count=%d", len(self.current_messages))
+
+    def _sync_stats_from_accumulated_visual_rows(self) -> None:
+        stats = getattr(self, "current_stats", None)
+        if stats is None:
+            return
+        rows = MainWindowDataMixin._accumulated_visual_rows(self)
+        if not rows:
+            return
+
+        totals: dict[str, float] = defaultdict(float)
+        totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        software_rows_by_group_period: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+        non_summary_seen: set[tuple[str, str]] = set()
+        summary_fallback_rows: list[dict[str, object]] = []
+
+        for row in rows:
+            group = str(row.get("group", "") or "")
+            period = str(row.get("period", "") or "").strip()
+            play = str(row.get("play", "") or "")
+            if not play:
+                continue
+            source_kind = str(row.get("source_kind", "") or "")
+            if source_kind == "summary":
+                summary_fallback_rows.append(dict(row))
+                continue
+            amount = float(row.get("amount", 0.0) or 0.0)
+            totals[play] += amount
+            if group:
+                totals_by_group[group][play] += amount
+                if period:
+                    software_rows_by_group_period[(group, period)].append(
+                        {"play": play, "amount": amount, "time": row.get("time")}
+                    )
+                non_summary_seen.add((group, play))
+
+        for row in summary_fallback_rows:
+            group = str(row.get("group", "") or "")
+            play = str(row.get("play", "") or "")
+            if not play:
+                continue
+            if group and (group, play) in non_summary_seen:
+                continue
+            amount = float(row.get("amount", 0.0) or 0.0)
+            totals[play] += amount
+            if group:
+                totals_by_group[group][play] += amount
+
+        records = MainWindowDataMixin._rebuild_summary_check_records(
+            self,
+            getattr(stats, "summary_check_records", []) or [],
+            {key: list(value) for key, value in software_rows_by_group_period.items()},
+        )
+        summary_check = records[0] if records else {}
+        self.current_visual_rows = rows
+        self.current_stats = StatsResult(
+            totals=dict(totals),
+            matched_messages=int(getattr(stats, "matched_messages", 0) or 0),
+            exported_records=int(getattr(stats, "exported_records", 0) or 0),
+            totals_by_group={group: dict(group_totals) for group, group_totals in totals_by_group.items()},
+            summary_check_period=str(summary_check.get("period", "") or ""),
+            summary_check_totals=dict(summary_check.get("robot_totals", {}) or {}),
+            summary_check_by_play=dict(summary_check.get("by_play", {}) or {}),
+            summary_check_records=records,
+            unresolved_receipts=[dict(row) for row in getattr(stats, "unresolved_receipts", []) or []],
+        )
+
+    def _accumulated_visual_rows(self) -> list[dict[str, object]]:
+        chart_window = getattr(self, "chart_window", None)
+        period_rows = getattr(chart_window, "_period_rows", None)
+        if isinstance(period_rows, list) and period_rows:
+            return [dict(row) for row in period_rows if isinstance(row, dict)]
+        return [dict(row) for row in getattr(self, "current_visual_rows", []) or [] if isinstance(row, dict)]
+
+    def _rebuild_summary_check_records(
+        self,
+        records: list[dict[str, object]],
+        software_rows_by_group_period: dict[tuple[str, str], list[dict[str, object]]],
+    ) -> list[dict[str, object]]:
+        chat_service = getattr(self, "chat_service", None)
+        if chat_service is None or not records:
+            return []
+        rebuilt: list[dict[str, object]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            group = str(record.get("group", "") or "")
+            period = str(record.get("period", "") or "").strip()
+            if not period:
+                continue
+            software_rows = software_rows_by_group_period.get((group, period)) or software_rows_by_group_period.get(("", period))
+            summary_time = record.get("summary_time")
+            if not isinstance(summary_time, datetime):
+                summary_time = datetime.now()
+            software_totals = chat_service._software_totals_until_snapshot(software_rows or [], summary_time)
+            if not software_totals:
+                continue
+            snapshot = RobotSummarySnapshot(
+                period=period,
+                group=group,
+                ts=summary_time,
+                totals={
+                    play: float(amount or 0.0)
+                    for play, amount in dict(record.get("robot_totals", {}) or {}).items()
+                    if play in PLAY_TYPES
+                },
+                totals_by_bettor={},
+            )
+            rebuilt.append(chat_service._format_robot_summary_reconciliation(snapshot, software_totals))
+        return rebuilt
 
     def _load_filtered_messages(self) -> None:
         if getattr(self, "_message_load_in_progress", False):

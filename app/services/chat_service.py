@@ -459,7 +459,7 @@ class ChatLogService:
         visual_rows = filtered_rows
         totals: dict[str, float] = defaultdict(float)
         totals_by_group: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        totals_by_group_period: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        software_rows_by_group_period: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
         non_summary_seen: set[tuple[str, str]] = set()
         summary_fallback_rows: list[dict[str, object]] = []
         for row in visual_rows:
@@ -475,7 +475,9 @@ class ChatLogService:
             if group:
                 totals_by_group[group][play] += amount
                 if period:
-                    totals_by_group_period[(group, period)][play] += amount
+                    software_rows_by_group_period[(group, period)].append(
+                        {"play": play, "amount": amount, "time": row.get("time")}
+                    )
                 non_summary_seen.add((group, play))
         for row in summary_fallback_rows:
             group = str(row.get("group", "") or "")
@@ -488,7 +490,7 @@ class ChatLogService:
                 totals_by_group[group][play] += amount
         summary_check_records = self._build_robot_summary_reconciliations(
             filtered,
-            {key: dict(group_period_totals) for key, group_period_totals in totals_by_group_period.items()},
+            {key: list(group_period_rows) for key, group_period_rows in software_rows_by_group_period.items()},
             period_filter,
         )
         summary_check = summary_check_records[0] if summary_check_records else {}
@@ -1268,10 +1270,10 @@ class ChatLogService:
     def _build_robot_summary_reconciliations(
         self,
         messages: list[ChatMessage],
-        software_totals_by_group_period: dict[object, dict[str, float]],
+        software_totals_by_group_period: dict[object, object],
         period_filter: str,
     ) -> list[dict[str, object]]:
-        normalized_software_totals = self._normalize_software_totals_by_group_period(
+        normalized_software_rows = self._normalize_software_rows_by_group_period(
             software_totals_by_group_period,
             period_filter,
         )
@@ -1303,9 +1305,10 @@ class ChatLogService:
             key=lambda item: (item.ts, item.group, item.period),
             reverse=True,
         ):
-            group_software_totals = normalized_software_totals.get((snapshot.group, snapshot.period))
-            if group_software_totals is None:
-                group_software_totals = normalized_software_totals.get(("", snapshot.period))
+            group_software_rows = normalized_software_rows.get((snapshot.group, snapshot.period))
+            if group_software_rows is None:
+                group_software_rows = normalized_software_rows.get(("", snapshot.period))
+            group_software_totals = self._software_totals_until_snapshot(group_software_rows or [], snapshot.ts)
             if not group_software_totals:
                 continue
             records.append(
@@ -1316,14 +1319,14 @@ class ChatLogService:
             )
         return records
 
-    def _normalize_software_totals_by_group_period(
+    def _normalize_software_rows_by_group_period(
         self,
-        software_totals_by_group_period: dict[object, dict[str, float]],
+        software_totals_by_group_period: dict[object, object],
         period_filter: str,
-    ) -> dict[tuple[str, str], dict[str, float]]:
+    ) -> dict[tuple[str, str], list[dict[str, object]]]:
         period = str(period_filter or "").strip()
-        normalized: dict[tuple[str, str], dict[str, float]] = {}
-        for key, totals in dict(software_totals_by_group_period or {}).items():
+        normalized: dict[tuple[str, str], list[dict[str, object]]] = {}
+        for key, value in dict(software_totals_by_group_period or {}).items():
             group = ""
             key_period = period
             if isinstance(key, tuple) and len(key) >= 2:
@@ -1333,8 +1336,30 @@ class ChatLogService:
                 group = str(key or "").strip()
             if not key_period:
                 continue
-            normalized[(group, key_period)] = dict(totals or {})
+            if isinstance(value, list):
+                normalized[(group, key_period)] = [dict(row) for row in value if isinstance(row, dict)]
+            else:
+                normalized[(group, key_period)] = [
+                    {"play": play, "amount": float(amount or 0.0), "time": None}
+                    for play, amount in dict(value or {}).items()
+                ]
         return normalized
+
+    def _software_totals_until_snapshot(
+        self,
+        software_rows: list[dict[str, object]],
+        snapshot_ts: datetime,
+    ) -> dict[str, float]:
+        totals: dict[str, float] = defaultdict(float)
+        for row in software_rows:
+            row_time = row.get("time")
+            if isinstance(row_time, datetime) and row_time > snapshot_ts:
+                continue
+            play = str(row.get("play", "") or "")
+            if not play:
+                continue
+            totals[play] += float(row.get("amount", 0.0) or 0.0)
+        return dict(totals)
 
     def _filtered_robot_summary_snapshot(self, snapshot: RobotSummarySnapshot) -> RobotSummarySnapshot:
         blocked_names = self._blocked_names_for_group(snapshot.group)
@@ -1381,6 +1406,7 @@ class ChatLogService:
         return {
             "group": snapshot.group,
             "period": snapshot.period,
+            "summary_time": snapshot.ts,
             "robot_totals": dict(snapshot.totals),
             "software_totals": {
                 play: float(software_totals.get(play, 0.0) or 0.0)
@@ -1535,10 +1561,12 @@ class ChatLogService:
             return []
         if direct_period_context is not None:
             marker_start = self._find_direct_period_start_marker(messages, direct_period_context)
+            marker_end = self._find_direct_period_end_marker(messages, direct_period_context)
             accept_start = max(direct_period_context.accept_start, marker_start) if marker_start else direct_period_context.accept_start
-            if accept_start >= direct_period_context.accept_end:
+            accept_end = min(direct_period_context.accept_end, marker_end) if marker_end else direct_period_context.accept_end
+            if accept_start >= accept_end:
                 return []
-            return [(accept_start, direct_period_context.accept_end, direct_period_context.period)]
+            return [(accept_start, accept_end, direct_period_context.period)]
 
         window_start = latest_ts - DIRECT_GROUP_PERIOD_WINDOW
         markers: list[tuple[datetime, str, str]] = []
@@ -1583,6 +1611,25 @@ class ChatLogService:
                 continue
             content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
             if period_key in self._period_keys_from_text(content):
+                return msg.ts
+        return None
+
+    def _find_direct_period_end_marker(
+        self,
+        messages: list[ChatMessage],
+        direct_period_context: DirectPeriodContext,
+    ) -> datetime | None:
+        period_key = self._normalize_period_text(direct_period_context.period)
+        if not period_key:
+            return None
+        for msg in sorted(messages, key=lambda item: (item.ts, int(item.raw_client_time or 0), int(item.raw_rand or 0))):
+            if msg.ts < direct_period_context.start or msg.ts >= direct_period_context.end:
+                continue
+            marker = self._extract_direct_group_marker(msg)
+            if marker is None:
+                continue
+            marker_kind, marker_period = marker
+            if marker_kind == "end" and self._normalize_period_text(marker_period) == period_key:
                 return msg.ts
         return None
 
@@ -1666,8 +1713,16 @@ class ChatLogService:
         content = self._decode_possible_frontend_ciphertext(self._clean_text(msg.content))
         if self._looks_like_personal_status_summary(content):
             return None
-        if DIRECT_CLOSE_HINT_PATTERN.search(content) or "如下订单已取消" in content:
-            period = self._extract_period(content)
+        period_from_text = self._extract_period(content) or self._period_key_from_summary_text(content)
+        if (
+            DIRECT_CLOSE_HINT_PATTERN.search(content)
+            or "如下订单已取消" in content
+            or "已封盘" in content
+            or "已截止本期" in content
+            or "以下投注。全部无效" in content
+            or "以下投注.全部无效" in content
+        ):
+            period = period_from_text
             if not period:
                 return None
             return ("end", period)
@@ -1677,8 +1732,10 @@ class ChatLogService:
             or "娑撳鏁為張鐔告殶" in content
             or "閺堬剚婀℃稉瀣暈" in content
             or "下注期数" in content
+            or "欢迎猜猜" in content
+            or ("当前" in content and "猜猜" in content)
         ):
-            period = self._extract_period(content)
+            period = period_from_text
             if not period:
                 return None
             return ("start", period)

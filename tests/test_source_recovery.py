@@ -1175,6 +1175,14 @@ def test_chat_service_analyze_bets_produces_robot_summary_reconciliation() -> No
     play_small_double = chat_service_module.PLAY_TYPES[7]
     messages = [
         ChatMessage(
+            ts=datetime(2026, 6, 19, 12, 14, 0),
+            group="威廉古堡3.69-4.29网盘🔥🔥",
+            username="机器人",
+            sender_id="rm7HObZVI",
+            content="下注期数 3446831",
+            group_id="direct-group",
+        ),
+        ChatMessage(
             ts=datetime(2026, 6, 19, 12, 14, 13),
             group="威廉古堡3.69-4.29网盘🔥🔥",
             username="荣华",
@@ -1191,7 +1199,7 @@ def test_chat_service_analyze_bets_produces_robot_summary_reconciliation() -> No
             group_id="direct-group",
         ),
         ChatMessage(
-            ts=datetime(2026, 6, 19, 12, 14, 16),
+            ts=datetime(2026, 6, 19, 12, 14, 40),
             group="威廉古堡3.69-4.29网盘🔥🔥",
             username="机器人",
             sender_id="rm7HObZVI",
@@ -1694,7 +1702,7 @@ def test_chat_service_reconciles_robot_summary_against_same_group_and_period_onl
     play = chat_service_module.PLAY_TYPES[6]
     messages = [
         ChatMessage(
-            ts=datetime(2026, 6, 20, 0, 1, 0),
+            ts=datetime(2026, 6, 20, 0, 1, 20),
             group="Group A",
             username="Robot",
             sender_id="robot-a",
@@ -1759,6 +1767,135 @@ def test_chat_service_reconciles_robot_summary_against_same_group_and_period_onl
     assert record["software_totals"][play] == 300.0
     assert record["robot_totals"][play] == 300.0
     assert record["by_play"][play]["within_tolerance"] is True
+
+
+def test_chat_service_reconciliation_ignores_software_rows_after_robot_summary_time() -> None:
+    from datetime import datetime
+    from types import MethodType
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService, RobotSummarySnapshot
+
+    service = ChatLogService()
+    play = chat_service_module.PLAY_TYPES[6]
+    summary_time = datetime(2026, 6, 20, 11, 10, 34)
+    messages = [
+        ChatMessage(
+            ts=summary_time,
+            group="Group A",
+            username="Robot",
+            sender_id="robot-a",
+            content="robot-summary-3447215",
+        )
+    ]
+
+    def fake_visual_rows(self, *args, **kwargs):
+        return [
+            {
+                "group": "Group A",
+                "username": "Alice",
+                "bettor": "Alice",
+                "play": play,
+                "amount": 100.0,
+                "time": datetime(2026, 6, 20, 11, 10, 33),
+                "period": "3447215",
+                "sender_id": "user-a",
+                "source_kind": "direct",
+            },
+            {
+                "group": "Group A",
+                "username": "Bob",
+                "bettor": "Bob",
+                "play": play,
+                "amount": 88.0,
+                "time": datetime(2026, 6, 20, 11, 10, 35),
+                "period": "3447215",
+                "sender_id": "user-b",
+                "source_kind": "direct",
+            },
+        ]
+
+    def fake_snapshot(self, msg):
+        return RobotSummarySnapshot(
+            period="3447215",
+            group=msg.group,
+            ts=msg.ts,
+            totals={play: 100.0},
+            totals_by_bettor={"Alice": {play: 100.0}},
+        )
+
+    service.extract_bet_visual_data = MethodType(fake_visual_rows, service)
+    service._extract_robot_summary_snapshot = MethodType(fake_snapshot, service)
+    service._is_robot_summary_stats_source = MethodType(lambda self, content: True, service)
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447215",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=60,
+    )
+
+    assert stats.totals_by_group == {"Group A": {play: 188.0}}
+    record = stats.summary_check_records[0]
+    assert record["software_totals"][play] == 100.0
+    assert record["by_play"][play]["within_tolerance"] is True
+
+
+def test_chat_service_direct_group_excludes_user_rows_at_close_marker_time() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    play = chat_service_module.PLAY_TYPES[1]
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 11, 7, 47),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            content="---[S3447215-001]---\n当前3447215，欢迎猜猜",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 11, 10, 32),
+            group="Group A",
+            username="Late",
+            sender_id="user-late",
+            content=f"{play}188",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 11, 10, 32),
+            group="Group A",
+            username="机器人",
+            sender_id="robot-a",
+            content="---[F3447215-013]---\n当前本期已封盘\n以下投注。全部无效！",
+            group_id="group-a",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447215",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 11, 7, 47),
+        period_window_end=datetime(2026, 6, 20, 11, 11, 12),
+        period_interval_sec=210,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    assert rows == []
+    assert stats.totals == {}
 
 
 def test_chat_service_receipt_group_ignores_online_scoreboard() -> None:
@@ -3014,6 +3151,129 @@ def test_main_window_run_load_pipeline_syncs_group_block_rules() -> None:
     MainWindowDataMixin._run_load_pipeline(dummy, Path("sample.db"), options, ("sig",), 1, "pc28", None)
 
     assert calls[0] == ("rules", options.blocked_names_by_group)
+
+
+def test_main_window_apply_load_result_rebuilds_summary_check_from_period_rows_on_incremental_refresh() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import StatsResult
+    from app.services.chat_service import ChatLogService
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    group = "Group A"
+    period = "3447215"
+    summary_time = datetime(2026, 6, 20, 11, 10, 34)
+    robot_record = {
+        "group": group,
+        "period": period,
+        "summary_time": summary_time,
+        "robot_totals": {"大单": 100.0, "大双": 188.0},
+        "software_totals": {"大单": 100.0},
+        "by_play": {
+            "大单": {
+                "software_total": 100.0,
+                "robot_total": 100.0,
+                "diff": 0.0,
+                "diff_ratio": 0.0,
+                "within_tolerance": True,
+            },
+            "大双": {
+                "software_total": 0.0,
+                "robot_total": 188.0,
+                "diff": 188.0,
+                "diff_ratio": 1.0,
+                "within_tolerance": False,
+            },
+        },
+    }
+
+    class DummyStatus:
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    class DummyChart:
+        def __init__(self) -> None:
+            self._period_rows = []
+
+        def replace_rows(self, rows):
+            self._period_rows = [dict(row) for row in rows]
+
+        def set_rows(self, rows):
+            self._period_rows.extend(dict(row) for row in rows)
+
+        def update_activity(self, rows):
+            pass
+
+    dummy = SimpleNamespace(
+        status_label=DummyStatus(),
+        chart_window=DummyChart(),
+        _active_site="pc28",
+        _last_message_cursor={},
+        chat_service=ChatLogService(),
+        _record_raw_chat_messages=lambda messages: None,
+        _refresh_message_view=lambda: None,
+        _sync_chart_status=lambda: None,
+    )
+    dummy._update_chart_data = lambda replace=False: MainWindowDataMixin._update_chart_data(dummy, replace)
+    dummy._sync_stats_from_accumulated_visual_rows = (
+        lambda: MainWindowDataMixin._sync_stats_from_accumulated_visual_rows(dummy)
+    )
+
+    first_rows = [
+        {
+            "row_id": "a",
+            "time": datetime(2026, 6, 20, 11, 8, 0),
+            "group": group,
+            "username": "Alice",
+            "bettor": "Alice",
+            "period": period,
+            "play": "大单",
+            "amount": 100.0,
+            "source_kind": "direct",
+        }
+    ]
+    second_rows = [
+        {
+            "row_id": "b",
+            "time": datetime(2026, 6, 20, 11, 10, 33),
+            "group": group,
+            "username": "Bob",
+            "bettor": "Bob",
+            "period": period,
+            "play": "大双",
+            "amount": 88.0,
+            "source_kind": "direct",
+        }
+    ]
+
+    MainWindowDataMixin._apply_load_result(
+        dummy,
+        {
+            "current_messages": [],
+            "current_visual_rows": first_rows,
+            "current_stats": StatsResult(totals={"大单": 100.0}, summary_check_records=[robot_record]),
+            "replace_chart": True,
+            "current_sig": ("sig",),
+            "new_cursor": (1, 1),
+        },
+    )
+    MainWindowDataMixin._apply_load_result(
+        dummy,
+        {
+            "current_messages": [],
+            "current_visual_rows": second_rows,
+            "current_stats": StatsResult(totals={"大双": 88.0}, summary_check_records=[robot_record]),
+            "replace_chart": False,
+            "current_sig": ("sig",),
+            "new_cursor": (2, 2),
+        },
+    )
+
+    record = dummy.current_stats.summary_check_records[0]
+    assert record["software_totals"] == {"大单": 100.0, "大双": 88.0}
+    assert record["by_play"]["大单"]["within_tolerance"] is True
+    assert record["by_play"]["大双"]["diff"] == 100.0
 
 
 def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -> None:
