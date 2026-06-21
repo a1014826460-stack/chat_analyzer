@@ -5,6 +5,7 @@ __pycache__/
 *.spec
 *.pyc
 .chat_analyzer/
+summary_check/
 
 *.exe
 .codex_recovery/
@@ -19,6 +20,9 @@ htmlcov/
 *.log
 chat_log.txt
 logs/
+
+# Auto-generated embedded keys (written by tools/build.py)
+app/_embedded_keys.py
 
 # Local env / secrets
 .env

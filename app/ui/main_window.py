@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import sys
 import tempfile
@@ -18,6 +19,7 @@ from app.services.account_resolver import AccountResolver
 from app.services.chat_service import ChatLogService
 from app.services.license_service import LicenseService
 from app.services.settings_service import SettingsService
+from app.services.summary_check_report_service import SummaryCheckReportService
 from app.services.update_installer import schedule_update_install
 from app.services.update_service import download_and_verify, fetch_manifest, update_available
 from app.ui.license_generator_dialog import LicenseGeneratorDialog
@@ -51,7 +53,6 @@ class MainWindow(
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("StarTrace Analyzer" + (" (Admin)" if IS_ADMIN_VERSION else ""))
-        self.resize(1400, 900)
         self.setMinimumSize(1180, 720)
 
         self.chat_service = ChatLogService()
@@ -59,6 +60,8 @@ class MainWindow(
         self.settings_service = SettingsService()
         self.account_resolver = AccountResolver()
         self.settings = self.settings_service.load()
+        summary_export_dir = str(self.settings.get("export_dir", "") or "").strip()
+        self.summary_check_report_service = SummaryCheckReportService(Path(summary_export_dir).expanduser() if summary_export_dir else Path.cwd())
 
         self.current_messages = []
         self.raw_chat_messages = []
@@ -127,6 +130,7 @@ class MainWindow(
         self._data_worker = ThreadPoolExecutor(max_workers=1)
 
         self._apply_icon()
+        self._restore_window_state()
         group_rules_raw = self.settings.get("blocked_names_by_group", {})
         if "global_block_names" in self.settings:
             global_block_source = self.settings.get("global_block_names", [])
@@ -177,6 +181,9 @@ class MainWindow(
         QTimer.singleShot(1500, self._check_for_updates_async)
 
     def _activate_and_launch(self) -> None:
+        if not self._assert_activated():
+            self._show_activation_required()
+            return
         if self.analysis_page is None:
             self.analysis_page = QWidget()
             self._build_analysis_page()
@@ -186,7 +193,7 @@ class MainWindow(
         self.tabs.setCurrentWidget(self.analysis_page)
 
     def _show_activation_required(self) -> None:
-        self.license_status_label.setText("软件未激活。")
+        self.license_status_label.setText("软件未激活 — 请输入有效的激活码以继续使用")
         self.tabs.setCurrentWidget(self.license_page)
 
     def _show_admin_license_panel(self) -> None:
@@ -237,6 +244,7 @@ class MainWindow(
         self._message_refresh_timer.start()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._persist_window_state()
         self._refresh_timer.stop()
         self._countdown_timer.stop()
         self._message_refresh_timer.stop()
@@ -244,16 +252,57 @@ class MainWindow(
         self._data_worker.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
 
+    def _restore_window_state(self) -> None:
+        settings = getattr(self, "settings", {}) or {}
+        restored_geometry = False
+        geometry_b64 = str(settings.get("window_geometry_b64", "") or "").strip()
+        if geometry_b64:
+            try:
+                restored_geometry = bool(self.restoreGeometry(base64.b64decode(geometry_b64.encode("ascii"))))
+            except Exception:
+                logger.warning("Failed to restore window geometry", exc_info=True)
+        state_b64 = str(settings.get("window_state_b64", "") or "").strip()
+        if state_b64:
+            try:
+                self.restoreState(base64.b64decode(state_b64.encode("ascii")))
+            except Exception:
+                logger.warning("Failed to restore window state", exc_info=True)
+        if restored_geometry:
+            return
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1400, 900)
+            return
+        available = screen.availableGeometry()
+        target_width = max(self.minimumWidth(), int(available.width() * 0.9))
+        target_height = max(self.minimumHeight(), int(available.height() * 0.88))
+        self.resize(target_width, target_height)
+
+    def _persist_window_state(self) -> None:
+        settings = getattr(self, "settings", {}) or {}
+        settings["window_geometry_b64"] = base64.b64encode(bytes(self.saveGeometry())).decode("ascii")
+        settings["window_state_b64"] = base64.b64encode(bytes(self.saveState())).decode("ascii")
+        splitter = getattr(self, "main_splitter", None)
+        if splitter is not None and hasattr(splitter, "sizes"):
+            settings["main_splitter_sizes"] = [int(value) for value in splitter.sizes()]
+        self.settings = settings
+        if hasattr(self, "_save_settings"):
+            self._save_settings()
+
     def _build_license_page(self) -> None:
         layout = QVBoxLayout(self.license_page)
+        heading = QLabel("StarTrace 激活")
         self.license_status_label = QLabel("")
-        self.license_status_label.setObjectName("headingLabel")
         self.machine_code_label = QLabel(f"机器码: {self.license_service.get_machine_code()}")
+        self.machine_code_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.machine_code_copy_btn = QPushButton("复制机器码")
         self.machine_code_copy_btn.clicked.connect(self._copy_user_machine_code)
         self.license_input = QTextEdit()
+        self.license_input.setPlaceholderText("在此粘贴从管理员处获取的激活码...")
+        self.license_input.setFixedHeight(80)
         activate_btn = QPushButton("激活")
         activate_btn.clicked.connect(self._activate_license)
+        layout.addWidget(heading)
         layout.addWidget(self.license_status_label)
         layout.addWidget(self.machine_code_label)
         layout.addWidget(self.machine_code_copy_btn, alignment=Qt.AlignLeft)
@@ -327,7 +376,7 @@ class MainWindow(
     def _assert_activated(self) -> bool:
         if IS_ADMIN_VERSION:
             return True
-        return True
+        return self.license_service.is_activated()
 
     def _check_for_updates_async(self) -> None:
         manifest_url = update_manifest_url()

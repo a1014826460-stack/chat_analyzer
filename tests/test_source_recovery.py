@@ -1690,6 +1690,507 @@ def test_chat_service_skips_robot_summary_reconciliation_without_same_period_sof
     assert stats.summary_check_by_play == {}
 
 
+def test_chat_service_exposes_robot_summary_diagnostics_for_group_period() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 10, 0, 10),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="下注期数 3448001",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 10, 0, 12),
+            group="A群",
+            username="玩家A",
+            sender_id="user-a",
+            content="大单80 小单100",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 10, 0, 18),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="--------[3448001]期-------\n玩家A 1000【大单100 小单100 】",
+            group_id="group-a",
+        ),
+    ]
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3448001",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 10, 0, 0),
+        period_window_end=datetime(2026, 6, 20, 10, 1, 0),
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    diagnostics = getattr(stats, "summary_check_diagnostics", [])
+    assert len(diagnostics) == 1
+    record = diagnostics[0]
+    assert record["group"] == "A群"
+    assert record["period"] == "3448001"
+    assert record["robot_summary_detected"] is True
+    assert record["misclassified_as_user_bet"] is False
+    assert record["software_rows_found"] is True
+    assert record["summary_check_record_generated"] is True
+
+
+def test_chat_service_reports_missing_same_period_software_rows_in_diagnostics() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 10, 0, 8),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="--------[3448002]期-------\n玩家A 1000【大单100 小单100 】",
+            group_id="group-a",
+        ),
+    ]
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3448002",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 10, 0, 0),
+        period_window_end=datetime(2026, 6, 20, 10, 1, 0),
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    assert stats.summary_check_records == []
+    diagnostics = getattr(stats, "summary_check_diagnostics", [])
+    assert len(diagnostics) == 1
+    record = diagnostics[0]
+    assert record["robot_summary_detected"] is True
+    assert record["software_rows_found"] is False
+    assert record["summary_check_record_generated"] is False
+    assert record["failure_reason"] == "识别到了机器人汇总，但没有同群同期软件侧 rows"
+
+
+def test_main_window_sync_stats_rebuilds_summary_check_diagnostics_from_accumulated_rows() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import StatsResult
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyService:
+        def _software_totals_until_snapshot(self, rows, snapshot_time):
+            totals = {}
+            for row in rows:
+                totals[row["play"]] = totals.get(row["play"], 0.0) + float(row["amount"])
+            return totals
+
+        def _format_robot_summary_reconciliation(self, snapshot, software_totals):
+            return {
+                "group": snapshot.group,
+                "period": snapshot.period,
+                "summary_time": snapshot.ts,
+                "robot_totals": dict(snapshot.totals),
+                "software_totals": dict(software_totals),
+                "by_play": {},
+            }
+
+        def build_summary_check_diagnostics(self, messages, software_rows_by_group_period, period_filter, summary_check_records, **kwargs):
+            return [
+                {
+                    "group": "A群",
+                    "period": "3448003",
+                    "robot_summary_detected": True,
+                    "misclassified_as_user_bet": False,
+                    "software_rows_found": True,
+                    "summary_check_record_generated": True,
+                    "failure_reason": "",
+                }
+            ]
+
+    dummy = SimpleNamespace(
+        current_stats=StatsResult(
+            totals={"大单": 100.0},
+            summary_check_records=[
+                {
+                    "group": "A群",
+                    "period": "3448003",
+                    "summary_time": datetime(2026, 6, 20, 10, 0, 8),
+                    "robot_totals": {"大单": 100.0},
+                    "software_totals": {"大单": 100.0},
+                    "by_play": {},
+                }
+            ],
+        ),
+        current_visual_rows=[
+            {
+                "group": "A群",
+                "period": "3448003",
+                "play": "大单",
+                "amount": 100.0,
+                "time": datetime(2026, 6, 20, 10, 0, 0),
+                "source_kind": "direct",
+            }
+        ],
+        chart_window=None,
+        chat_service=DummyService(),
+    )
+
+    MainWindowDataMixin._sync_stats_from_accumulated_visual_rows(dummy)
+
+    assert getattr(dummy.current_stats, "summary_check_diagnostics", []) == [
+        {
+            "group": "A群",
+            "period": "3448003",
+            "robot_summary_detected": True,
+            "misclassified_as_user_bet": False,
+            "software_rows_found": True,
+            "summary_check_record_generated": True,
+            "failure_reason": "",
+        }
+    ]
+
+
+def test_main_window_sync_stats_persists_summary_check_records(tmp_path: Path) -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import StatsResult
+    from app.services.summary_check_report_service import SummaryCheckReportService
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummyService:
+        def _build_robot_summary_reconciliations(self, messages, software_rows_by_group_period, period_filter):
+            return [
+                {
+                    "group": "A群",
+                    "period": "3448005",
+                    "summary_time": datetime(2026, 6, 20, 10, 1, 0),
+                    "robot_totals": {"小双": 3780.0},
+                    "software_totals": {"小双": 2280.0},
+                    "by_play": {
+                        "小双": {
+                            "software_total": 2280.0,
+                            "robot_total": 3780.0,
+                            "diff": 1500.0,
+                            "diff_ratio": 1500.0 / 3780.0,
+                            "within_tolerance": False,
+                        }
+                    },
+                }
+            ]
+
+        def build_summary_check_diagnostics(self, messages, software_rows_by_group_period, period_filter, summary_check_records, **kwargs):
+            return [
+                {
+                    "group": "A群",
+                    "period": "3448005",
+                    "robot_summary_detected": True,
+                    "misclassified_as_user_bet": False,
+                    "software_rows_found": True,
+                    "software_row_count": 1,
+                    "summary_check_record_generated": True,
+                    "failure_reason": "",
+                }
+            ]
+
+    dummy = SimpleNamespace(
+        current_stats=StatsResult(totals={"小双": 2280.0}),
+        current_visual_rows=[
+            {
+                "group": "A群",
+                "period": "3448005",
+                "play": "小双",
+                "amount": 2280.0,
+                "time": datetime(2026, 6, 20, 10, 0, 30),
+                "source_kind": "direct",
+            }
+        ],
+        current_messages=[],
+        raw_chat_messages=[],
+        chart_window=None,
+        chat_service=DummyService(),
+        settings={"export_dir": str(tmp_path)},
+        summary_check_report_service=SummaryCheckReportService(tmp_path),
+        group_types_by_id={},
+    )
+
+    MainWindowDataMixin._sync_stats_from_accumulated_visual_rows(dummy)
+
+    report_dir = tmp_path / "summary_check" / "2026-06-20"
+    assert (report_dir / "3448005_A群_record.json").exists()
+    assert (report_dir / "3448005_A群_exception.md").exists()
+
+
+def test_main_window_sync_stats_rebuilds_summary_check_records_from_accumulated_messages_when_incremental_record_is_stale() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import ChatMessage, StatsResult
+    from app.services.chat_service import ChatLogService
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    group = "🔥华尔街🔥4.2-4.6🔪"
+    period = "3447289"
+    summary_time = datetime(2026, 6, 20, 15, 29, 34)
+    stale_record = {
+        "group": group,
+        "period": period,
+        "summary_time": datetime(2026, 6, 20, 15, 29, 33),
+        "robot_totals": {"小单": 1701.0, "小双": 2320.0, "大单": 810.0, "大双": 400.0},
+        "software_totals": {"小单": 35499.0, "小双": 36442.0, "大单": 32240.0, "大双": 38911.0},
+        "by_play": {},
+    }
+    authoritative_summary = ChatMessage(
+        ts=summary_time,
+        group=group,
+        username="华尔街机器私聊下注号",
+        sender_id="robot-a",
+        group_id="group-a",
+        content=(
+            "---[H3447289-011]---\n"
+            "3447289期：\n"
+            "暴君 04081[小单41 小双270 大单270]\n"
+            "玩家甲 036192[小3100 大双3188]\n"
+            "玩家乙 031241[大2500 大双788 大单988]"
+        ),
+    )
+    rows = [
+        {
+            "group": group,
+            "period": period,
+            "play": "小单",
+            "amount": 41.0,
+            "time": datetime(2026, 6, 20, 15, 28, 0),
+            "source_kind": "direct",
+        },
+        {
+            "group": group,
+            "period": period,
+            "play": "小双",
+            "amount": 270.0,
+            "time": datetime(2026, 6, 20, 15, 28, 0),
+            "source_kind": "direct",
+        },
+        {
+            "group": group,
+            "period": period,
+            "play": "大单",
+            "amount": 1258.0,
+            "time": datetime(2026, 6, 20, 15, 28, 10),
+            "source_kind": "direct",
+        },
+        {
+            "group": group,
+            "period": period,
+            "play": "小",
+            "amount": 3100.0,
+            "time": datetime(2026, 6, 20, 15, 28, 20),
+            "source_kind": "direct",
+        },
+        {
+            "group": group,
+            "period": period,
+            "play": "大",
+            "amount": 2500.0,
+            "time": datetime(2026, 6, 20, 15, 28, 25),
+            "source_kind": "direct",
+        },
+        {
+            "group": group,
+            "period": period,
+            "play": "大双",
+            "amount": 3976.0,
+            "time": datetime(2026, 6, 20, 15, 28, 30),
+            "source_kind": "direct",
+        },
+    ]
+
+    dummy = SimpleNamespace(
+        current_stats=StatsResult(
+            totals={"大单": 1258.0, "小双": 270.0, "小单": 41.0, "小": 3100.0, "大": 2500.0, "大双": 3976.0},
+            summary_check_records=[stale_record],
+        ),
+        current_visual_rows=list(rows),
+        current_messages=[],
+        raw_chat_messages=[authoritative_summary],
+        chart_window=SimpleNamespace(_period_rows=list(rows)),
+        chat_service=ChatLogService(),
+        group_types_by_id={},
+    )
+
+    MainWindowDataMixin._sync_stats_from_accumulated_visual_rows(dummy)
+
+    assert len(dummy.current_stats.summary_check_records) == 1
+    record = dummy.current_stats.summary_check_records[0]
+    assert record["group"] == group
+    assert record["period"] == period
+    assert record["summary_time"] == summary_time
+    assert record["robot_totals"] == {
+        "小单": 41.0,
+        "小双": 270.0,
+        "大单": 1258.0,
+        "小": 3100.0,
+        "大": 2500.0,
+        "大双": 3976.0,
+    }
+    assert record["software_totals"] == record["robot_totals"]
+
+
+def test_chat_service_can_build_offline_robot_summary_diagnostics_for_real_messages() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 12, 0, 0),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="下注期数 3448004",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 12, 0, 12),
+            group="A群",
+            username="玩家A",
+            sender_id="user-a",
+            content="大单80",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 12, 0, 18),
+            group="A群",
+            username="机器人A",
+            sender_id="robot-a",
+            content="--------[3448004]期-------\n玩家A 1000【大单100 】",
+            group_id="group-a",
+        ),
+    ]
+
+    report = service.build_offline_robot_summary_diagnostics(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3448004",
+        site="pc28",
+        period_window_start=datetime(2026, 6, 20, 12, 0, 0),
+        period_window_end=datetime(2026, 6, 20, 12, 1, 0),
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    assert len(report) == 1
+    assert report[0]["group"] == "A群"
+    assert report[0]["summary_check_record_generated"] is True
+
+
+def test_diagnose_robot_summary_serializes_nested_datetimes() -> None:
+    from datetime import datetime
+
+    from tools.diagnose_robot_summary import _serialize_diagnostics
+
+    rows = [
+        {
+            "group": "A群",
+            "period": "3448004",
+            "summary_time": datetime(2026, 6, 20, 12, 0, 18),
+            "robot_summary_messages": [
+                {
+                    "ts": datetime(2026, 6, 20, 12, 0, 18),
+                    "content": "--------[3448004]期-------",
+                }
+            ],
+        }
+    ]
+
+    assert _serialize_diagnostics(rows) == [
+        {
+            "group": "A群",
+            "period": "3448004",
+            "summary_time": "2026-06-20 12:00:18",
+            "robot_summary_messages": [
+                {
+                    "ts": "2026-06-20 12:00:18",
+                    "content": "--------[3448004]期-------",
+                }
+            ],
+        }
+    ]
+
+
+def test_chat_service_assigns_direct_group_period_from_robot_summary_context_when_start_marker_missing() -> None:
+    from datetime import datetime
+
+    from app.models import ChatMessage
+    from app.services.chat_service import ChatLogService
+
+    service = ChatLogService()
+    messages = [
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 14, 50, 20),
+            group="灰色轨迹 大杀四方",
+            username="机器人",
+            sender_id="robot-a",
+            content="@囧囧 当前积分:5360\r当前盈亏:4205\r当前流水:53712\r本期下注:[大单760 小单800 小双800]\r冻结积分:2360\r剩余积分:3000",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 14, 50, 21),
+            group="灰色轨迹 大杀四方",
+            username="天天夜宵",
+            sender_id="user-a",
+            content="小单800小双800大单760",
+            group_id="group-a",
+        ),
+        ChatMessage(
+            ts=datetime(2026, 6, 20, 14, 50, 59),
+            group="灰色轨迹 大杀四方",
+            username="机器人",
+            sender_id="robot-a",
+            content="--------[3447278]期-------\n囧囧 1000【大单760 小单800 小双800 】",
+            group_id="group-a",
+        ),
+    ]
+
+    rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=60,
+        group_types_by_id={"group-a": "direct"},
+    )
+
+    direct_rows = [row for row in rows if row.get("source_kind") == "direct"]
+    assert direct_rows
+    assert {row["period"] for row in direct_rows} == {"3447278"}
+    assert len(stats.summary_check_records) == 1
+    assert stats.summary_check_records[0]["period"] == "3447278"
+
+
 def test_chat_service_reconciles_robot_summary_against_same_group_and_period_only() -> None:
     from datetime import datetime
     from types import MethodType
@@ -1843,6 +2344,83 @@ def test_chat_service_reconciliation_ignores_software_rows_after_robot_summary_t
     assert stats.totals_by_group == {"Group A": {play: 188.0}}
     record = stats.summary_check_records[0]
     assert record["software_totals"][play] == 100.0
+    assert record["by_play"][play]["within_tolerance"] is True
+
+
+def test_chat_service_reconciliation_falls_back_to_same_period_rows_when_snapshot_time_precedes_all_rows() -> None:
+    from datetime import datetime
+    from types import MethodType
+
+    from app.models import ChatMessage
+    from app.services import chat_service as chat_service_module
+    from app.services.chat_service import ChatLogService, RobotSummarySnapshot
+
+    service = ChatLogService()
+    play = chat_service_module.PLAY_TYPES[6]
+    summary_time = datetime(2026, 6, 20, 10, 17, 59)
+    messages = [
+        ChatMessage(
+            ts=summary_time,
+            group="灰色轨迹 大杀四方",
+            username="Robot",
+            sender_id="robot-a",
+            content="robot-summary-3447200",
+        )
+    ]
+
+    def fake_visual_rows(self, *args, **kwargs):
+        return [
+            {
+                "group": "灰色轨迹 大杀四方",
+                "username": "Alice",
+                "bettor": "Alice",
+                "play": play,
+                "amount": 2500.0,
+                "time": datetime(2026, 6, 20, 10, 18, 44),
+                "period": "3447200",
+                "sender_id": "user-a",
+                "source_kind": "direct",
+            },
+            {
+                "group": "灰色轨迹 大杀四方",
+                "username": "Bob",
+                "bettor": "Bob",
+                "play": play,
+                "amount": 1500.0,
+                "time": datetime(2026, 6, 20, 10, 19, 2),
+                "period": "3447200",
+                "sender_id": "user-b",
+                "source_kind": "direct",
+            },
+        ]
+
+    def fake_snapshot(self, msg):
+        return RobotSummarySnapshot(
+            period="3447200",
+            group=msg.group,
+            ts=msg.ts,
+            totals={play: 4000.0},
+            totals_by_bettor={"Alice": {play: 2500.0}, "Bob": {play: 1500.0}},
+        )
+
+    service.extract_bet_visual_data = MethodType(fake_visual_rows, service)
+    service._extract_robot_summary_snapshot = MethodType(fake_snapshot, service)
+    service._is_robot_summary_stats_source = MethodType(lambda self, content: True, service)
+
+    _rows, stats = service.analyze_bets(
+        messages,
+        blocked_names=[],
+        blocked_ids=[],
+        period_filter="3447200",
+        site="pc28",
+        period_window_start=None,
+        period_window_end=None,
+        period_interval_sec=60,
+    )
+
+    assert len(stats.summary_check_records) == 1
+    record = stats.summary_check_records[0]
+    assert record["software_totals"][play] == 4000.0
     assert record["by_play"][play]["within_tolerance"] is True
 
 
@@ -2382,6 +2960,138 @@ def test_storage_service_load_returns_default_on_invalid_json(tmp_path: Path) ->
     store.path.write_text("{not-json", encoding="utf-8")
 
     assert store.load({"ok": True}) == {"ok": True}
+
+
+def test_summary_check_report_service_saves_record_and_exception_report(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from app.services.summary_check_report_service import SummaryCheckReportService
+
+    record = {
+        "group": "鸿业鸿信4.73/4.31贵宾厅",
+        "period": "3447321",
+        "summary_time": datetime(2026, 6, 20, 17, 5, 30),
+        "software_totals": {"小双": 2280.0, "双": 2316.0},
+        "robot_totals": {"小双": 3780.0, "双": 2982.0},
+        "by_play": {
+            "小双": {
+                "software_total": 2280.0,
+                "robot_total": 3780.0,
+                "diff": 1500.0,
+                "diff_ratio": 1500.0 / 3780.0,
+                "within_tolerance": False,
+            },
+            "双": {
+                "software_total": 2316.0,
+                "robot_total": 2982.0,
+                "diff": 666.0,
+                "diff_ratio": 666.0 / 2982.0,
+                "within_tolerance": False,
+            },
+        },
+    }
+    diagnostics = [
+        {
+            "group": "鸿业鸿信4.73/4.31贵宾厅",
+            "period": "3447321",
+            "robot_summary_detected": True,
+            "misclassified_as_user_bet": False,
+            "software_rows_found": True,
+            "software_row_count": 2,
+            "robot_summary_messages": ["3447321期下注核对：\n玩家甲[小双3780 双2982]"],
+        }
+    ]
+
+    saved = SummaryCheckReportService(tmp_path).save_records([record], diagnostics)
+
+    assert len(saved["records"]) == 1
+    assert len(saved["exceptions"]) == 1
+    record_payload = saved["records"][0].read_text(encoding="utf-8")
+    exception_text = saved["exceptions"][0].read_text(encoding="utf-8")
+    assert '"group": "鸿业鸿信4.73/4.31贵宾厅"' in record_payload
+    assert '"period": "3447321"' in record_payload
+    assert "## 异常玩法" in exception_text
+    assert "小双 | 软件 2,280 | 机器人 3,780 | 偏差 1,500 | 异常" in exception_text
+    assert "双 | 软件 2,316 | 机器人 2,982 | 偏差 666 | 异常" in exception_text
+    assert "机器人侧金额高于软件侧" in exception_text
+    assert "可能有机器人汇总中的下注未进入软件侧 rows" in exception_text
+
+
+def test_summary_check_report_service_skips_unchanged_records(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from app.services.summary_check_report_service import SummaryCheckReportService
+
+    record = {
+        "group": "A群",
+        "period": "3448006",
+        "summary_time": datetime(2026, 6, 20, 18, 0, 0),
+        "software_totals": {"大单": 100.0},
+        "robot_totals": {"大单": 100.0},
+        "by_play": {
+            "大单": {
+                "software_total": 100.0,
+                "robot_total": 100.0,
+                "diff": 0.0,
+                "diff_ratio": 0.0,
+                "within_tolerance": True,
+            }
+        },
+    }
+    service = SummaryCheckReportService(tmp_path)
+
+    first = service.save_records([record], [])
+    second = service.save_records([record], [])
+
+    assert len(first["records"]) == 1
+    assert second == {"records": [], "exceptions": []}
+
+
+def test_summary_check_report_service_recreates_missing_exception_for_unchanged_record(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from app.services.summary_check_report_service import SummaryCheckReportService
+
+    record = {
+        "group": "A群",
+        "period": "3448007",
+        "summary_time": datetime(2026, 6, 20, 18, 10, 0),
+        "software_totals": {"小双": 100.0},
+        "robot_totals": {"小双": 200.0},
+        "by_play": {
+            "小双": {
+                "software_total": 100.0,
+                "robot_total": 200.0,
+                "diff": 100.0,
+                "diff_ratio": 0.5,
+                "within_tolerance": False,
+            }
+        },
+    }
+    service = SummaryCheckReportService(tmp_path)
+
+    first = service.save_records([record], [])
+    first["exceptions"][0].unlink()
+    second = service.save_records([record], [])
+
+    assert second["records"] == []
+    assert len(second["exceptions"]) == 1
+    assert second["exceptions"][0].exists()
+    assert "小双 | 软件 100 | 机器人 200 | 偏差 100 | 异常" in second["exceptions"][0].read_text(encoding="utf-8")
+
+
+def test_settings_service_load_includes_window_state_defaults(tmp_path: Path) -> None:
+    from app.services.settings_service import SettingsService
+
+    service = SettingsService()
+    service.store.path = tmp_path / "settings.json"
+
+    data = service.load()
+
+    assert data["window_geometry_b64"] == ""
+    assert data["window_state_b64"] == ""
+    assert data["main_splitter_sizes"] == []
+    assert data["group_check_memory_by_id"] == {}
 
 
 def test_chat_service_loads_original_message_table_and_extracts_json_text(tmp_path: Path) -> None:
@@ -3274,6 +3984,125 @@ def test_main_window_apply_load_result_rebuilds_summary_check_from_period_rows_o
     assert record["software_totals"] == {"大单": 100.0, "大双": 88.0}
     assert record["by_play"]["大单"]["within_tolerance"] is True
     assert record["by_play"]["大双"]["diff"] == 100.0
+
+
+def test_main_window_apply_load_result_skips_ui_refresh_when_payload_is_unchanged() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import StatsResult
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = {"message": 0, "chart": 0, "stats": 0}
+    rows = [
+        {
+            "row_id": "a",
+            "time": datetime(2026, 6, 21, 10, 0, 0),
+            "group": "A群",
+            "period": "3449001",
+            "play": "大单",
+            "amount": 100.0,
+            "source_kind": "direct",
+        }
+    ]
+    stats = StatsResult(totals={"大单": 100.0})
+    dummy = SimpleNamespace(
+        current_messages=[],
+        current_visual_rows=list(rows),
+        current_stats=stats,
+        status_label=SimpleNamespace(setText=lambda text: None),
+        _active_site="pc28",
+        _last_message_cursor={},
+        _last_result_signature=None,
+        group_robot_ids={},
+        _record_raw_chat_messages=lambda messages: None,
+        _refresh_message_view=lambda: calls.__setitem__("message", calls["message"] + 1),
+        _update_chart_data=lambda replace=False: calls.__setitem__("chart", calls["chart"] + 1),
+        _sync_stats_from_accumulated_visual_rows=lambda: calls.__setitem__("stats", calls["stats"] + 1),
+        _sync_chart_status=lambda: None,
+    )
+
+    result = {
+        "current_messages": [],
+        "current_visual_rows": list(rows),
+        "current_stats": stats,
+        "group_robot_ids": {},
+        "current_sig": ("sig",),
+        "new_cursor": (1, 1),
+        "replace_chart": False,
+    }
+
+    MainWindowDataMixin._apply_load_result(dummy, result)
+    MainWindowDataMixin._apply_load_result(dummy, result)
+
+    assert calls["message"] == 1
+    assert calls["chart"] == 1
+    assert calls["stats"] == 1
+
+
+def test_main_window_update_chart_data_syncs_chart_group_filters_from_left_list() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem
+
+    from app.ui.chart_window import ChartWindow
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    left_group_list = QListWidget()
+    for group_id, group_name, checked in (
+        ("g1", "Group A", True),
+        ("g2", "Group B", False),
+        ("g3", "Group C", True),
+    ):
+        item = QListWidgetItem(group_name)
+        item.setData(Qt.UserRole, group_id)
+        item.setData(Qt.UserRole + 1, group_name)
+        item.setData(32, group_id)
+        item.setData(33, group_name)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        left_group_list.addItem(item)
+
+    dummy = SimpleNamespace(
+        group_list=left_group_list,
+        chart_window=chart,
+        current_visual_rows=[{"group": "Group A", "period": "1001", "play": "大", "amount": 100.0}],
+    )
+
+    MainWindowDataMixin._update_chart_data(dummy)
+
+    assert [chart.group_list.item(index).data(Qt.UserRole + 1) for index in range(chart.group_list.count())] == [
+        "Group A",
+        "Group B",
+        "Group C",
+    ]
+    assert [chart.group_list.item(index).checkState() for index in range(chart.group_list.count())] == [
+        Qt.Checked,
+        Qt.Unchecked,
+        Qt.Checked,
+    ]
+
+    dummy.current_visual_rows = [{"group": "Group B", "period": "1002", "play": "小", "amount": 60.0}]
+    MainWindowDataMixin._update_chart_data(dummy, replace=True)
+
+    assert [chart.group_list.item(index).data(Qt.UserRole + 1) for index in range(chart.group_list.count())] == [
+        "Group A",
+        "Group B",
+        "Group C",
+    ]
+    assert [chart.group_list.item(index).checkState() for index in range(chart.group_list.count())] == [
+        Qt.Checked,
+        Qt.Unchecked,
+        Qt.Checked,
+    ]
+    chart.close()
 
 
 def test_main_window_data_load_groups_uses_qt_check_state_enum(tmp_path: Path) -> None:
@@ -4179,11 +5008,60 @@ def test_main_window_initial_splitter_uses_compact_left_panel() -> None:
         def setSizes(self, sizes: list[int]) -> None:
             self.sizes = sizes
 
-    dummy = SimpleNamespace(main_splitter=DummySplitter())
+    dummy = SimpleNamespace(main_splitter=DummySplitter(), settings={}, width=lambda: 1400)
 
     MainWindowDataMixin._apply_initial_splitter_sizes(dummy)
 
-    assert dummy.main_splitter.sizes == [240, 1160]
+    assert sum(dummy.main_splitter.sizes) == 1400
+    assert 300 <= dummy.main_splitter.sizes[0] <= 360
+
+
+def test_main_window_initial_splitter_restores_saved_sizes() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummySplitter:
+        def __init__(self) -> None:
+            self.sizes: list[int] = []
+
+        def setSizes(self, sizes: list[int]) -> None:
+            self.sizes = list(sizes)
+
+    dummy = SimpleNamespace(
+        main_splitter=DummySplitter(),
+        settings={"main_splitter_sizes": [320, 980]},
+        width=lambda: 1400,
+    )
+
+    MainWindowDataMixin._apply_initial_splitter_sizes(dummy)
+
+    assert dummy.main_splitter.sizes == [320, 980]
+
+
+def test_main_window_initial_splitter_uses_window_ratio_without_saved_sizes() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class DummySplitter:
+        def __init__(self) -> None:
+            self.sizes: list[int] = []
+
+        def setSizes(self, sizes: list[int]) -> None:
+            self.sizes = list(sizes)
+
+    dummy = SimpleNamespace(
+        main_splitter=DummySplitter(),
+        settings={},
+        width=lambda: 1500,
+    )
+
+    MainWindowDataMixin._apply_initial_splitter_sizes(dummy)
+
+    assert sum(dummy.main_splitter.sizes) == 1500
+    assert 300 <= dummy.main_splitter.sizes[0] <= 390
+    assert dummy.main_splitter.sizes[1] == 1500 - dummy.main_splitter.sizes[0]
 
 
 def test_main_window_theme_adds_groupbox_title_padding() -> None:
@@ -5372,17 +6250,17 @@ def test_main_window_message_refresh_tick_loads_messages_and_skips_when_busy() -
 
     from app.ui.main_window_data import MainWindowDataMixin
 
-    calls: list[str] = []
+    calls: list[bool] = []
     dummy = SimpleNamespace(
         _message_load_in_progress=False,
-        _load_filtered_messages=lambda: calls.append("load"),
+        _load_filtered_messages=lambda notify_missing_source=True: calls.append(bool(notify_missing_source)),
     )
 
     MainWindowDataMixin._on_message_refresh_tick(dummy)
     dummy._message_load_in_progress = True
     MainWindowDataMixin._on_message_refresh_tick(dummy)
 
-    assert calls == ["load"]
+    assert calls == [False]
 
 
 def test_main_window_message_refresh_tick_skips_when_active_site_is_locked() -> None:
@@ -5675,6 +6553,61 @@ def test_chart_window_visible_group_filter_does_not_clear_period_layers() -> Non
     assert len(chart.bar_chart.layers) == 1
     assert chart.bar_chart.current_totals["大"] == 0.0
     assert chart.bar_chart.current_totals["小"] == 60.0
+    chart.close()
+
+
+def test_main_window_actions_syncs_left_group_filters_from_chart_window() -> None:
+    import os
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem
+
+    from app.ui.chart_window import ChartWindow
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+
+    left_group_list = QListWidget()
+    for group_id, group_name, checked in (
+        ("g1", "Group A", True),
+        ("g2", "Group B", True),
+    ):
+        item = QListWidgetItem(group_name)
+        item.setData(Qt.UserRole, group_id)
+        item.setData(Qt.UserRole + 1, group_name)
+        item.setData(32, group_id)
+        item.setData(33, group_name)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        left_group_list.addItem(item)
+
+    chart.sync_visible_groups(
+        [
+            {"group_id": "g1", "group_name": "Group A", "checked": True},
+            {"group_id": "g2", "group_name": "Group B", "checked": False},
+        ]
+    )
+
+    events: list[str] = []
+    dummy = SimpleNamespace(
+        group_list=left_group_list,
+        chart_window=chart,
+        _group_filter_sync_in_progress=False,
+        _refresh_block_rule_group_selector=lambda: events.append("block"),
+        _refresh_message_view=lambda: events.append("message"),
+        _save_settings=lambda: events.append("save"),
+    )
+    dummy._sync_check_item_text = lambda item: MainWindowActionsMixin._sync_check_item_text(dummy, item)
+
+    MainWindowActionsMixin._sync_group_filters_from_chart_window(dummy)
+
+    assert left_group_list.item(0).checkState() == Qt.Checked
+    assert left_group_list.item(1).checkState() == Qt.Unchecked
+    assert events == ["block", "message", "save"]
     chart.close()
 
 
@@ -6049,6 +6982,51 @@ def test_load_manual_data_source_missing_file_reports_readable_feedback(monkeypa
     assert messages == [("文件不存在", "选择的数据源不存在。")]
 
 
+def test_load_filtered_messages_without_data_source_reports_readable_feedback(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.ui.main_window_data.QMessageBox.information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    dummy = SimpleNamespace(
+        _message_load_in_progress=False,
+        _build_load_options=lambda incremental: (_ for _ in ()).throw(FileNotFoundError("No data source selected")),
+    )
+
+    MainWindowDataMixin._load_filtered_messages(dummy)
+
+    assert messages == [("没有数据源", "请先自动定位或手动选择数据源。")]
+
+
+def test_load_filtered_messages_without_data_source_skips_dialog_for_auto_refresh(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    messages: list[tuple[str, str]] = []
+    statuses: list[str] = []
+    monkeypatch.setattr(
+        "app.ui.main_window_data.QMessageBox.information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    dummy = SimpleNamespace(
+        _message_load_in_progress=False,
+        _build_load_options=lambda incremental: (_ for _ in ()).throw(FileNotFoundError("No data source selected")),
+        _set_status=lambda text, level="info": statuses.append(str(text)),
+    )
+
+    MainWindowDataMixin._load_filtered_messages(dummy, notify_missing_source=False)
+
+    assert messages == []
+    assert statuses == ["没有数据源，请先选择数据源。"]
+
+
 def test_block_rule_save_and_clear_use_readable_feedback() -> None:
     from types import SimpleNamespace
 
@@ -6292,6 +7270,108 @@ def test_main_window_actions_save_settings_persists_group_type_memory() -> None:
         }
     }
     assert payload["group_robot_ids"] == {"group-1": "robot-1"}
+
+
+def test_main_window_actions_save_settings_persists_group_check_memory_by_id() -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem
+
+    from app.ui.main_window_actions import MainWindowActionsMixin
+
+    saved_payloads: list[dict[str, object]] = []
+
+    class DummyService:
+        def save(self, payload):
+            saved_payloads.append(payload)
+
+    class DummyCombo:
+        def currentText(self):
+            return "tester"
+
+        def count(self):
+            return 1
+
+        def itemText(self, index: int):
+            return "tester" if index == 0 else ""
+
+    class DummyText:
+        def text(self):
+            return ""
+
+    class DummyWindow(MainWindowActionsMixin):
+        def _current_source_path(self):
+            return None
+
+        def _selected_group_ids(self):
+            return MainWindowActionsMixin._selected_group_ids(self)
+
+        def _selected_group_mode(self):
+            return MainWindowActionsMixin._selected_group_mode(self)
+
+        def _selected_block_group_key(self):
+            return ""
+
+        def _global_block_names(self):
+            return []
+
+    app = QApplication.instance() or QApplication([])
+    group_list = QListWidget()
+    for group_id, checked in [("g1", True), ("g2", False)]:
+        item = QListWidgetItem(group_id)
+        item.setData(Qt.UserRole, group_id)
+        item.setData(Qt.UserRole + 1, group_id)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        group_list.addItem(item)
+
+    dummy = DummyWindow()
+    dummy.settings_service = DummyService()
+    dummy.username_combo = DummyCombo()
+    dummy.resolved_path_edit = DummyText()
+    dummy.manual_db_edit = DummyText()
+    dummy.group_list = group_list
+    dummy.settings = {"export_dir": "", "proxy_enabled": False, "proxy_http": "", "proxy_https": ""}
+    dummy.group_block_rules = {}
+    dummy.group_types_by_id = {}
+    dummy.group_type_switches_by_id = {}
+    dummy.group_robot_ids = {}
+    dummy._lock_threshold_sec = 20
+    dummy._is_first_launch = False
+    dummy._query_period_overrides_by_site = {}
+    dummy._query_period_override = ""
+    dummy._manual_period_override = False
+
+    dummy._save_settings()
+
+    payload = saved_payloads[-1]
+    assert payload["group_check_memory_by_id"] == {"g1": True, "g2": False}
+
+
+def test_main_window_persist_window_state_saves_geometry_and_splitter() -> None:
+    from types import SimpleNamespace
+
+    from app.ui.main_window import MainWindow
+
+    saved = []
+
+    class DummySplitter:
+        def sizes(self):
+            return [350, 1050]
+
+    dummy = SimpleNamespace(
+        settings={},
+        main_splitter=DummySplitter(),
+        saveGeometry=lambda: b"geom",
+        saveState=lambda: b"state",
+        _save_settings=lambda: saved.append("saved"),
+    )
+
+    MainWindow._persist_window_state(dummy)
+
+    assert dummy.settings["main_splitter_sizes"] == [350, 1050]
+    assert dummy.settings["window_geometry_b64"]
+    assert dummy.settings["window_state_b64"]
+    assert saved == ["saved"]
 
 
 def test_main_window_does_not_promote_legacy_blocked_names_when_group_rules_exist(monkeypatch) -> None:
@@ -6807,6 +7887,47 @@ def test_load_groups_restores_explicit_all_selection_even_when_group_ids_changed
 
     assert dummy.group_list.item(0).checkState() == Qt.Checked
     assert dummy.group_list.item(1).checkState() == Qt.Checked
+
+
+def test_load_groups_prefers_group_check_memory_by_id(tmp_path: Path) -> None:
+    import sqlite3
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    msg_db = tmp_path / "msg_0.db"
+    con = sqlite3.connect(msg_db)
+    con.execute("create table message (sid text)")
+    con.executemany("insert into message values (?)", [("g1",), ("g2",)])
+    con.commit()
+    con.close()
+
+    class DummyService:
+        def list_groups_from_db(self, _source_path):
+            from app.models import ChatGroup
+
+            return [ChatGroup("g1", "一群"), ChatGroup("g2", "二群")]
+
+    app = QApplication.instance() or QApplication([])
+    dummy = SimpleNamespace(
+        settings={
+            "selected_group_mode": "all",
+            "selected_group_ids": ["g1", "g2"],
+            "group_check_memory_by_id": {"g1": True, "g2": False},
+        },
+        group_list=QListWidget(),
+        chat_service=DummyService(),
+        _current_source_path=lambda: msg_db,
+        _refresh_block_rule_group_selector=lambda: None,
+    )
+
+    MainWindowDataMixin._load_groups_from_current_source(dummy)
+
+    assert dummy.group_list.item(0).checkState() == Qt.Checked
+    assert dummy.group_list.item(1).checkState() == Qt.Unchecked
 
 
 def test_main_window_global_block_ui_uses_chinese_text(monkeypatch) -> None:

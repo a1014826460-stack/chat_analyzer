@@ -300,6 +300,7 @@ class MainWindowLayoutMixin:
 
         self.chart_window = ChartWindow(parent=self)
         self.chart_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.chart_window.groups_changed.connect(getattr(self, "_sync_group_filters_from_chart_window", lambda: None))
         info_layout.addWidget(self.chart_window, 1)
         right.addWidget(info_frame, 1)
 

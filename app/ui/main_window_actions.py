@@ -17,6 +17,89 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindowActionsMixin:
+    def _group_filter_items(self) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        if not hasattr(self, "group_list"):
+            return items
+        for index in range(self.group_list.count()):
+            item = self.group_list.item(index)
+            group_id = str(item.data(Qt.UserRole) or item.data(32) or "").strip()
+            group_name = str(item.data(Qt.UserRole + 1) or item.data(33) or item.text()).strip()
+            if not group_name:
+                continue
+            items.append(
+                {
+                    "group_id": group_id or group_name,
+                    "group_name": group_name,
+                    "checked": item.checkState() == Qt.Checked,
+                }
+            )
+        return items
+
+    def _sync_chart_group_filters(self) -> None:
+        chart_window = getattr(self, "chart_window", None)
+        if chart_window is None or not hasattr(chart_window, "sync_visible_groups"):
+            return
+        chart_window.sync_visible_groups(self._group_filter_items())
+
+    def _sync_group_filters_from_chart_window(self) -> None:
+        chart_window = getattr(self, "chart_window", None)
+        if (
+            chart_window is None
+            or not hasattr(chart_window, "visible_group_items")
+            or not hasattr(self, "group_list")
+            or getattr(self, "_group_filter_sync_in_progress", False)
+        ):
+            return
+        state_by_id: dict[str, bool] = {}
+        state_by_name: dict[str, bool] = {}
+        for group in chart_window.visible_group_items():
+            group_id = str(group.get("group_id", "") or "").strip()
+            group_name = str(group.get("group_name", "") or "").strip()
+            checked = bool(group.get("checked", False))
+            if group_id:
+                state_by_id[group_id] = checked
+            if group_name:
+                state_by_name[group_name] = checked
+        self._group_filter_sync_in_progress = True
+        try:
+            self.group_list.blockSignals(True)
+            for index in range(self.group_list.count()):
+                item = self.group_list.item(index)
+                group_id = str(item.data(Qt.UserRole) or item.data(32) or "").strip()
+                group_name = str(item.data(Qt.UserRole + 1) or item.data(33) or item.text()).strip()
+                if group_id in state_by_id:
+                    checked = state_by_id[group_id]
+                elif group_name in state_by_name:
+                    checked = state_by_name[group_name]
+                else:
+                    continue
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                self._sync_check_item_text(item)
+        finally:
+            self.group_list.blockSignals(False)
+            self._group_filter_sync_in_progress = False
+        self._refresh_block_rule_group_selector()
+        self._refresh_message_view()
+        self._save_settings()
+
+    def _group_check_memory_payload(self) -> dict[str, bool]:
+        remembered = dict(getattr(self, "settings", {}).get("group_check_memory_by_id", {}) or {})
+        payload: dict[str, bool] = {}
+        for key, value in remembered.items():
+            group_id = str(key).strip()
+            if group_id:
+                payload[group_id] = bool(value)
+        if not hasattr(self, "group_list"):
+            return payload
+        for index in range(self.group_list.count()):
+            item = self.group_list.item(index)
+            group_id = str(item.data(Qt.UserRole) or "").strip()
+            if not group_id:
+                continue
+            payload[group_id] = item.checkState() == Qt.Checked
+        return payload
+
     def _selected_group_names(self) -> list[str]:
         names: list[str] = []
         for index in range(self.group_list.count()):
@@ -49,14 +132,17 @@ class MainWindowActionsMixin:
 
     def _set_checked_state(self, widget, checked: bool) -> None:
         widget.blockSignals(True)
-        for index in range(widget.count()):
-            item = widget.item(index)
-            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-            self._sync_check_item_text(item)
-        widget.blockSignals(False)
+        try:
+            for index in range(widget.count()):
+                item = widget.item(index)
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                self._sync_check_item_text(item)
+        finally:
+            widget.blockSignals(False)
         if widget is self.group_list:
             self._refresh_block_rule_group_selector()
             self._refresh_message_view()
+            self._sync_chart_group_filters()
             state_text = "全选" if checked else "清空"
             if hasattr(self, "_set_status"):
                 self._set_status(f"群组筛选已{state_text}。", "info")
@@ -64,14 +150,17 @@ class MainWindowActionsMixin:
 
     def _invert_checked_state(self, widget) -> None:
         widget.blockSignals(True)
-        for index in range(widget.count()):
-            item = widget.item(index)
-            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
-            self._sync_check_item_text(item)
-        widget.blockSignals(False)
+        try:
+            for index in range(widget.count()):
+                item = widget.item(index)
+                item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+                self._sync_check_item_text(item)
+        finally:
+            widget.blockSignals(False)
         if widget is self.group_list:
             self._refresh_block_rule_group_selector()
             self._refresh_message_view()
+            self._sync_chart_group_filters()
             if hasattr(self, "_set_status"):
                 self._set_status("群组筛选已反选。", "info")
         self._save_settings()
@@ -80,11 +169,13 @@ class MainWindowActionsMixin:
         self._sync_check_item_text(item)
         self._refresh_block_rule_group_selector()
         self._refresh_message_view()
+        if not getattr(self, "_group_filter_sync_in_progress", False):
+            self._sync_chart_group_filters()
         self._save_settings()
 
     def _sync_check_item_text(self, item) -> None:
         text = str(item.data(Qt.UserRole + 1) or item.text())
-        prefix = "✓ " if item.checkState() == Qt.Checked else ""
+        prefix = "✓" if item.checkState() == Qt.Checked else ""
         item.setText(f"{prefix}{text}")
 
     def _remember_username(self, username: str) -> None:
@@ -157,6 +248,7 @@ class MainWindowActionsMixin:
                 "group_robot_ids": dict(getattr(self, "group_robot_ids", {}) or {}),
                 "selected_group_ids": self._selected_group_ids(),
                 "selected_group_mode": self._selected_group_mode(),
+                "group_check_memory_by_id": self._group_check_memory_payload(),
                 "selected_block_group_key": self._selected_block_group_key(),
                 "fallback_db_path": self.manual_db_edit.text().strip(),
                 "lock_threshold_sec": self._lock_threshold_sec,

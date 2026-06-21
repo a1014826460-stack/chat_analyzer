@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -57,10 +58,13 @@ class LicenseGeneratorDialog(QDialog):
         btn_row = QHBoxLayout()
         generate_btn = QPushButton("生成")
         generate_btn.clicked.connect(self._generate_one)
-        copy_btn = QPushButton("复制机器码")
-        copy_btn.clicked.connect(self._copy_machine_code)
+        copy_machine_btn = QPushButton("复制机器码")
+        copy_machine_btn.clicked.connect(self._copy_machine_code)
+        self.copy_key_btn = QPushButton("复制激活码")
+        self.copy_key_btn.clicked.connect(self._copy_activation_code)
         btn_row.addWidget(generate_btn)
-        btn_row.addWidget(copy_btn)
+        btn_row.addWidget(copy_machine_btn)
+        btn_row.addWidget(self.copy_key_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
@@ -84,3 +88,14 @@ class LicenseGeneratorDialog(QDialog):
         QApplication.clipboard().setText(self.machine_code_edit.text().strip())
         self.status_label.setText("机器码已复制到剪贴板。")
         logger.info("Copied machine code from license generator")
+
+    def _copy_activation_code(self) -> None:
+        code = self.output_edit.toPlainText().strip()
+        if not code:
+            self.status_label.setText("请先生成激活码。")
+            return
+        QApplication.clipboard().setText(code)
+        self.status_label.setText("激活码已复制到剪贴板。")
+        self.copy_key_btn.setText("已复制")
+        QTimer.singleShot(1500, lambda: self.copy_key_btn.setText("复制激活码"))
+        logger.info("Copied activation code from license generator")

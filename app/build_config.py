@@ -11,8 +11,15 @@ IS_ADMIN_VERSION = False
 IS_PRODUCTION = True
 
 CDN_BASE_URL = os.getenv("STARTRACE_CDN_BASE_URL", "").rstrip("/")
-LICENSE_PUBLIC_KEY_PEM = os.getenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", "").strip()
-LICENSE_PRIVATE_KEY_PEM = os.getenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", "").strip()
+
+# __BUILD_INJECT_LICENSE_PUBLIC_KEY__ — replaced by tools/build.py during packaging
+_BUILD_PUBLIC_KEY = ""
+_BUILD_PRIVATE_KEY = ""
+
+_epl = os.getenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", "").strip()
+LICENSE_PUBLIC_KEY_PEM = _epl if _epl else _BUILD_PUBLIC_KEY.strip()
+_epp = os.getenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", "").strip()
+LICENSE_PRIVATE_KEY_PEM = _epp if _epp else _BUILD_PRIVATE_KEY.strip()
 UPDATE_PUBLIC_KEY_PEM = os.getenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", "").strip()
 UPDATE_PRIVATE_KEY_PEM = os.getenv("STARTRACE_UPDATE_PRIVATE_KEY_PEM", "").strip()
 

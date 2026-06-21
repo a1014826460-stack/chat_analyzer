@@ -4,7 +4,7 @@ rem 该文件会被 build.bat / build_user.bat / build_admin.bat 自动读取
 rem 对应更新私钥文件路径：keys\update_private.pem
 
 rem 发布版本号
-set "STARTRACE_VERSION=1.98.0"
+set "STARTRACE_VERSION=1.99.1"
 
 rem 构建编号，可按日期或批次递增
 set "STARTRACE_BUILD_ID=startrace_202606200001"

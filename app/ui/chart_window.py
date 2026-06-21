@@ -148,6 +148,7 @@ class ChartWindow(QWidget):
         self._next_color_index = 0
         self._all_layers: list[ChartLayer] = []
         self._group_selection_initialized = False
+        self._synced_group_items: list[dict[str, object]] = []
 
         root = QVBoxLayout(self)
 
@@ -255,20 +256,71 @@ class ChartWindow(QWidget):
                 groups.add(str(item.data(Qt.UserRole) or item.text()))
         return groups
 
+    def visible_group_items(self) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        for index in range(self.group_list.count()):
+            item = self.group_list.item(index)
+            items.append(
+                {
+                    "group_id": str(item.data(Qt.UserRole + 2) or "").strip(),
+                    "group_name": str(item.data(Qt.UserRole + 1) or item.text()).strip(),
+                    "checked": item.checkState() == Qt.Checked,
+                }
+            )
+        return items
+
+    def sync_visible_groups(self, groups: list[dict[str, object]]) -> None:
+        normalized: list[dict[str, object]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("group_id", "") or "").strip()
+            group_name = str(group.get("group_name", "") or "").strip()
+            if not group_name:
+                continue
+            normalized.append(
+                {
+                    "group_id": group_id or group_name,
+                    "group_name": group_name,
+                    "checked": bool(group.get("checked", False)),
+                }
+            )
+        self._synced_group_items = normalized
+        self._sync_group_list(self._period_rows)
+        self._refresh_activity()
+
     def _sync_group_list(self, rows: list[dict[str, object]]) -> None:
         selected = self.selected_groups()
-        groups = sorted({str(row.get("group", "")).strip() for row in rows if str(row.get("group", "")).strip()})
+        synced_items = list(self._synced_group_items)
+        row_groups = sorted({str(row.get("group", "")).strip() for row in rows if str(row.get("group", "")).strip()})
         self.group_list.blockSignals(True)
         self.group_list.clear()
-        for group in groups:
-            item = QListWidgetItem(group)
-            item.setData(Qt.UserRole, group)
+        if synced_items:
+            group_items = synced_items
+        else:
+            group_items = [
+                {
+                    "group_id": group,
+                    "group_name": group,
+                    "checked": (not self._group_selection_initialized or group in selected),
+                }
+                for group in row_groups
+            ]
+        for group in group_items:
+            group_name = str(group.get("group_name", "") or "").strip()
+            group_id = str(group.get("group_id", "") or group_name).strip() or group_name
+            item = QListWidgetItem(group_name)
+            item.setData(Qt.UserRole, group_name)
+            item.setData(Qt.UserRole + 1, group_name)
+            item.setData(Qt.UserRole + 2, group_id)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            should_check = not self._group_selection_initialized or group in selected
+            should_check = bool(group.get("checked", False))
+            if not synced_items:
+                should_check = not self._group_selection_initialized or group_name in selected
             item.setCheckState(Qt.Checked if should_check else Qt.Unchecked)
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
-        if groups:
+        if group_items:
             self._group_selection_initialized = True
 
     def _refresh_activity(self) -> None:
@@ -501,5 +553,10 @@ class ChartWindow(QWidget):
 
     def _handle_group_filter_changed(self) -> None:
         self._group_selection_initialized = True
+        if self._synced_group_items:
+            checked_names = self.selected_groups()
+            for group in self._synced_group_items:
+                group_name = str(group.get("group_name", "") or "").strip()
+                group["checked"] = group_name in checked_names
         self._refresh_activity()
         self.groups_changed.emit()

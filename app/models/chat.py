@@ -66,6 +66,7 @@ class StatsResult:
     summary_check_totals: dict[str, float] = field(default_factory=dict)
     summary_check_by_play: dict[str, dict[str, float | bool]] = field(default_factory=dict)
     summary_check_records: list[dict[str, object]] = field(default_factory=list)
+    summary_check_diagnostics: list[dict[str, object]] = field(default_factory=list)
     unresolved_receipts: list[dict[str, object]] = field(default_factory=list)
 
 

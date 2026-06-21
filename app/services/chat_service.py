@@ -493,6 +493,13 @@ class ChatLogService:
             {key: list(group_period_rows) for key, group_period_rows in software_rows_by_group_period.items()},
             period_filter,
         )
+        summary_check_diagnostics = self.build_summary_check_diagnostics(
+            filtered,
+            {key: list(group_period_rows) for key, group_period_rows in software_rows_by_group_period.items()},
+            period_filter,
+            summary_check_records,
+            group_types_by_id=group_types_by_id,
+        )
         summary_check = summary_check_records[0] if summary_check_records else {}
         return visual_rows, StatsResult(
             totals=dict(totals),
@@ -502,6 +509,7 @@ class ChatLogService:
             summary_check_totals=dict(summary_check.get("robot_totals", {}) or {}),
             summary_check_by_play=dict(summary_check.get("by_play", {}) or {}),
             summary_check_records=summary_check_records,
+            summary_check_diagnostics=summary_check_diagnostics,
             unresolved_receipts=unresolved_receipts,
         )
 
@@ -517,7 +525,7 @@ class ChatLogService:
         period_interval_sec: int,
         lock_threshold_sec: int = 0,
         group_types_by_id: dict[str, str] | None = None,
-    ) -> StatsResult:
+        ) -> StatsResult:
         return self.analyze_bets(
             messages,
             blocked_names,
@@ -530,6 +538,37 @@ class ChatLogService:
             lock_threshold_sec,
             group_types_by_id,
         )[1]
+
+    def build_offline_robot_summary_diagnostics(
+        self,
+        messages: list[ChatMessage],
+        blocked_names: list[str],
+        blocked_ids: list[str] | None,
+        period_filter: str,
+        site: str,
+        period_window_start: datetime | None,
+        period_window_end: datetime | None,
+        period_interval_sec: int,
+        lock_threshold_sec: int = 0,
+        group_types_by_id: dict[str, str] | None = None,
+    ) -> list[dict[str, object]]:
+        _rows, stats = self.analyze_bets(
+            messages,
+            blocked_names,
+            blocked_ids,
+            period_filter,
+            site,
+            period_window_start,
+            period_window_end,
+            period_interval_sec,
+            lock_threshold_sec,
+            group_types_by_id,
+        )
+        return [
+            dict(item)
+            for item in getattr(stats, "summary_check_diagnostics", []) or []
+            if isinstance(item, dict)
+        ]
 
     def filter_blocked_messages(
         self,
@@ -889,6 +928,7 @@ class ChatLogService:
         periods = self._build_direct_group_period_ranges(messages, direct_period_context)
         if not periods and messages:
             periods = self._build_direct_group_period_ranges(messages)
+        fallback_period_markers = self._robot_period_markers_by_group(messages)
         resolved: list[ResolvedBetEvent] = []
         seen_messages: set[tuple[object, ...]] = set()
 
@@ -926,6 +966,8 @@ class ChatLogService:
                 periods,
                 fixed_window=direct_period_context is not None,
             )
+            if not period:
+                period = self._infer_personal_status_period(msg, fallback_period_markers, "")
             for event in events:
                 resolved.append(
                     ResolvedBetEvent(
@@ -1309,6 +1351,8 @@ class ChatLogService:
             if group_software_rows is None:
                 group_software_rows = normalized_software_rows.get(("", snapshot.period))
             group_software_totals = self._software_totals_until_snapshot(group_software_rows or [], snapshot.ts)
+            if not group_software_totals and group_software_rows:
+                group_software_totals = self._software_totals_for_rows(group_software_rows)
             if not group_software_totals:
                 continue
             records.append(
@@ -1318,6 +1362,72 @@ class ChatLogService:
                 )
             )
         return records
+
+    def build_summary_check_diagnostics(
+        self,
+        messages: list[ChatMessage],
+        software_rows_by_group_period: dict[object, object],
+        period_filter: str,
+        summary_check_records: list[dict[str, object]] | None = None,
+        group_types_by_id: dict[str, str] | None = None,
+    ) -> list[dict[str, object]]:
+        normalized_software_rows = self._normalize_software_rows_by_group_period(
+            software_rows_by_group_period,
+            period_filter,
+        )
+        records_by_key: dict[tuple[str, str], dict[str, object]] = {}
+        for record in summary_check_records or []:
+            if not isinstance(record, dict):
+                continue
+            group = str(record.get("group", "") or "")
+            period = str(record.get("period", "") or "").strip()
+            if group or period:
+                records_by_key[(group, period)] = record
+
+        latest_messages_by_group_period: dict[tuple[str, str], ChatMessage] = {}
+        for msg in messages:
+            snapshot = self._extract_robot_summary_snapshot(msg)
+            if snapshot is None or not self._is_robot_summary_stats_source(msg.content):
+                continue
+            key = (snapshot.group, snapshot.period)
+            previous = latest_messages_by_group_period.get(key)
+            if previous is None or msg.ts >= previous.ts:
+                latest_messages_by_group_period[key] = msg
+
+        diagnostics: list[dict[str, object]] = []
+        for (group, period), msg in sorted(
+            latest_messages_by_group_period.items(),
+            key=lambda item: (item[1].ts, item[0][0], item[0][1]),
+            reverse=True,
+        ):
+            if period_filter and period != str(period_filter or "").strip():
+                continue
+            software_rows = normalized_software_rows.get((group, period))
+            if software_rows is None:
+                software_rows = normalized_software_rows.get(("", period), [])
+            record = records_by_key.get((group, period), {})
+            group_type = self._group_type_for_messages([msg], group_types_by_id)
+            diagnostics.append(
+                {
+                    "group": group,
+                    "group_id": str(getattr(msg, "group_id", "") or ""),
+                    "group_name": group,
+                    "period": period,
+                    "group_type": group_type,
+                    "robot_sender_id": str(getattr(msg, "sender_id", "") or ""),
+                    "robot_summary_detected": True,
+                    "robot_summary_message_count": 1,
+                    "robot_summary_messages": [str(getattr(msg, "content", "") or "")],
+                    "misclassified_as_user_bet": False,
+                    "software_rows_found": bool(software_rows),
+                    "software_row_count": len(software_rows),
+                    "software_rows": [dict(row) for row in software_rows if isinstance(row, dict)],
+                    "summary_check_record_generated": bool(record),
+                    "summary_check_record": dict(record) if isinstance(record, dict) else {},
+                    "failure_reason": "" if record else "识别到了机器人汇总，但没有同群同期软件侧 rows",
+                }
+            )
+        return diagnostics
 
     def _normalize_software_rows_by_group_period(
         self,
@@ -1355,6 +1465,18 @@ class ChatLogService:
             row_time = row.get("time")
             if isinstance(row_time, datetime) and row_time > snapshot_ts:
                 continue
+            play = str(row.get("play", "") or "")
+            if not play:
+                continue
+            totals[play] += float(row.get("amount", 0.0) or 0.0)
+        return dict(totals)
+
+    def _software_totals_for_rows(
+        self,
+        software_rows: list[dict[str, object]],
+    ) -> dict[str, float]:
+        totals: dict[str, float] = defaultdict(float)
+        for row in software_rows:
             play = str(row.get("play", "") or "")
             if not play:
                 continue

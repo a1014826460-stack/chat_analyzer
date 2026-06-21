@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 from app.models import ParseOptions, StatsResult
 from app.services.account_resolver import ResolvedDatabase
 from app.services.chat_service import PLAY_TYPES, RobotSummarySnapshot
+from app.services.summary_check_report_service import SummaryCheckReportService
 from app.utils.fetch_date import _SITE_INTERVAL_SEC
 
 
@@ -19,6 +20,34 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindowDataMixin:
+    def _chart_group_filter_items(self) -> list[dict[str, object]]:
+        if hasattr(self, "_group_filter_items"):
+            return list(self._group_filter_items())
+        items: list[dict[str, object]] = []
+        group_list = getattr(self, "group_list", None)
+        if group_list is None:
+            return items
+        for index in range(group_list.count()):
+            item = group_list.item(index)
+            group_id = str(item.data(Qt.UserRole) or item.data(32) or "").strip()
+            group_name = str(item.data(Qt.UserRole + 1) or item.data(33) or item.text()).strip()
+            if not group_name:
+                continue
+            items.append(
+                {
+                    "group_id": group_id or group_name,
+                    "group_name": group_name,
+                    "checked": item.checkState() == Qt.Checked,
+                }
+            )
+        return items
+
+    def _push_chart_group_filters(self) -> None:
+        chart_window = getattr(self, "chart_window", None)
+        if chart_window is None or not hasattr(chart_window, "sync_visible_groups"):
+            return
+        chart_window.sync_visible_groups(MainWindowDataMixin._chart_group_filter_items(self))
+
     def _load_initial_state(self) -> None:
         if getattr(self, "analysis_page", None) is None:
             return
@@ -72,8 +101,27 @@ class MainWindowDataMixin:
             self._sync_chart_status()
 
     def _apply_initial_splitter_sizes(self) -> None:
-        if hasattr(self, "main_splitter"):
-            self.main_splitter.setSizes([240, 1160])
+        if not hasattr(self, "main_splitter"):
+            return
+        settings = getattr(self, "settings", {}) or {}
+        saved_sizes = settings.get("main_splitter_sizes", [])
+        if (
+            isinstance(saved_sizes, list)
+            and len(saved_sizes) == 2
+            and all(isinstance(value, int) and value > 0 for value in saved_sizes)
+        ):
+            self.main_splitter.setSizes([int(saved_sizes[0]), int(saved_sizes[1])])
+            return
+        total_width = 0
+        if hasattr(self, "width"):
+            try:
+                total_width = int(self.width() or 0)
+            except Exception:
+                total_width = 0
+        total_width = max(total_width, 1400)
+        left_width = max(240, int(total_width * 0.24))
+        left_width = min(left_width, total_width - 1)
+        self.main_splitter.setSizes([left_width, total_width - left_width])
 
     def _settings_datetime(self, key: str) -> QDateTime | None:
         raw = str(self.settings.get(key, "")).strip()
@@ -131,6 +179,11 @@ class MainWindowDataMixin:
             return
         groups = self.chat_service.list_groups_from_db(source_path)
         settings = getattr(self, "settings", {})
+        group_check_memory_by_id = {
+            str(key).strip(): bool(value)
+            for key, value in dict(settings.get("group_check_memory_by_id", {}) or {}).items()
+            if str(key).strip()
+        }
         selected_group_ids = {
             str(item).strip()
             for item in settings.get("selected_group_ids", [])
@@ -147,7 +200,9 @@ class MainWindowDataMixin:
             item.setData(32, group.group_id)
             item.setData(33, group.group_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            if selected_group_mode == "none":
+            if group.group_id in group_check_memory_by_id:
+                check_state = Qt.Checked if group_check_memory_by_id[group.group_id] else Qt.Unchecked
+            elif selected_group_mode == "none":
                 check_state = Qt.Unchecked
             elif selected_group_mode == "all" or not restore_selection or group.group_id in selected_group_ids:
                 check_state = Qt.Checked
@@ -157,6 +212,7 @@ class MainWindowDataMixin:
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
         self._refresh_block_rule_group_selector()
+        MainWindowDataMixin._push_chart_group_filters(self)
         logger.info("Loaded %d groups from %s", len(groups), source_path)
 
     def _pick_manual_data_source(self) -> None:
@@ -316,11 +372,39 @@ class MainWindowDataMixin:
         )
 
     def _apply_load_result(self, result: dict[str, object]) -> None:
-        self.current_messages = list(result.get("current_messages", []))
+        next_messages = list(result.get("current_messages", []))
+        next_visual_rows = list(result.get("current_visual_rows", []))
+        next_stats = result.get("current_stats")
+        next_signature = (
+            tuple(
+                (
+                    getattr(message, "ts", None),
+                    getattr(message, "group", ""),
+                    getattr(message, "username", ""),
+                    getattr(message, "sender_id", ""),
+                    getattr(message, "content", ""),
+                    getattr(message, "raw_client_time", 0),
+                    getattr(message, "raw_rand", 0),
+                )
+                for message in next_messages
+            ),
+            tuple(
+                sorted(
+                    tuple(sorted(dict(row).items()))
+                    for row in next_visual_rows
+                    if isinstance(row, dict)
+                )
+            ),
+            tuple(sorted(dict(getattr(next_stats, "totals", {}) or {}).items())) if next_stats is not None else (),
+        )
+        should_refresh_ui = next_signature != getattr(self, "_last_result_signature", None)
+        self._last_result_signature = next_signature
+
+        self.current_messages = next_messages
         if hasattr(self, "_record_raw_chat_messages"):
             self._record_raw_chat_messages(self.current_messages)
-        self.current_visual_rows = list(result.get("current_visual_rows", []))
-        self.current_stats = result.get("current_stats")
+        self.current_visual_rows = next_visual_rows
+        self.current_stats = next_stats
         group_robot_ids = result.get("group_robot_ids")
         if isinstance(group_robot_ids, dict):
             self.group_robot_ids = {str(key): str(value) for key, value in group_robot_ids.items()}
@@ -329,9 +413,10 @@ class MainWindowDataMixin:
         if self._active_site and new_cursor:
             self._last_message_cursor[self._active_site] = new_cursor
         self.status_label.setText(f"已加载 {len(self.current_messages):,} 条消息。")
-        self._refresh_message_view()
-        self._update_chart_data(replace=bool(result.get("replace_chart", False)))
-        self._sync_stats_from_accumulated_visual_rows()
+        if should_refresh_ui:
+            self._refresh_message_view()
+            self._update_chart_data(replace=bool(result.get("replace_chart", False)))
+            self._sync_stats_from_accumulated_visual_rows()
         self._sync_chart_status()
         logger.info("Load messages applied count=%d", len(self.current_messages))
 
@@ -381,12 +466,61 @@ class MainWindowDataMixin:
             if group:
                 totals_by_group[group][play] += amount
 
-        records = MainWindowDataMixin._rebuild_summary_check_records(
-            self,
-            getattr(stats, "summary_check_records", []) or [],
-            {key: list(value) for key, value in software_rows_by_group_period.items()},
-        )
+        summary_messages = list(getattr(self, "current_messages", []) or [])
+        raw_history = list(getattr(self, "raw_chat_messages", []) or [])
+        if raw_history:
+            seen_keys = {
+                (
+                    getattr(message, "ts", None),
+                    getattr(message, "group", ""),
+                    getattr(message, "username", ""),
+                    getattr(message, "sender_id", ""),
+                    getattr(message, "content", ""),
+                    getattr(message, "raw_client_time", 0),
+                    getattr(message, "raw_rand", 0),
+                )
+                for message in summary_messages
+            }
+            for message in raw_history:
+                key = (
+                    getattr(message, "ts", None),
+                    getattr(message, "group", ""),
+                    getattr(message, "username", ""),
+                    getattr(message, "sender_id", ""),
+                    getattr(message, "content", ""),
+                    getattr(message, "raw_client_time", 0),
+                    getattr(message, "raw_rand", 0),
+                )
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                summary_messages.append(message)
+
+        records = []
+        reconciliation_builder = getattr(self.chat_service, "_build_robot_summary_reconciliations", None)
+        if callable(reconciliation_builder):
+            records = reconciliation_builder(
+                summary_messages,
+                {key: list(value) for key, value in software_rows_by_group_period.items()},
+                "",
+            )
+        if not records:
+            records = MainWindowDataMixin._rebuild_summary_check_records(
+                self,
+                getattr(stats, "summary_check_records", []) or [],
+                {key: list(value) for key, value in software_rows_by_group_period.items()},
+            )
         summary_check = records[0] if records else {}
+        diagnostics: list[dict[str, object]] = []
+        diagnostic_builder = getattr(self.chat_service, "build_summary_check_diagnostics", None)
+        if callable(diagnostic_builder):
+            diagnostics = diagnostic_builder(
+                summary_messages,
+                {key: list(value) for key, value in software_rows_by_group_period.items()},
+                str(summary_check.get("period", "") or ""),
+                records,
+                group_types_by_id=dict(getattr(self, "group_types_by_id", {}) or {}),
+            )
         self.current_visual_rows = rows
         self.current_stats = StatsResult(
             totals=dict(totals),
@@ -397,8 +531,28 @@ class MainWindowDataMixin:
             summary_check_totals=dict(summary_check.get("robot_totals", {}) or {}),
             summary_check_by_play=dict(summary_check.get("by_play", {}) or {}),
             summary_check_records=records,
+            summary_check_diagnostics=[dict(item) for item in diagnostics if isinstance(item, dict)],
             unresolved_receipts=[dict(row) for row in getattr(stats, "unresolved_receipts", []) or []],
         )
+        MainWindowDataMixin._persist_summary_check_records(self, records, diagnostics)
+
+    def _persist_summary_check_records(
+        self,
+        records: list[dict[str, object]],
+        diagnostics: list[dict[str, object]],
+    ) -> None:
+        if not records:
+            return
+        report_service = getattr(self, "summary_check_report_service", None)
+        if report_service is None:
+            settings = getattr(self, "settings", {}) or {}
+            export_dir = str(dict(settings).get("export_dir", "") or "").strip()
+            report_service = SummaryCheckReportService(Path(export_dir).expanduser() if export_dir else Path.cwd())
+            self.summary_check_report_service = report_service
+        try:
+            report_service.save_records([dict(record) for record in records], [dict(item) for item in diagnostics])
+        except Exception:
+            logger.warning("Failed to persist summary check records", exc_info=True)
 
     def _accumulated_visual_rows(self) -> list[dict[str, object]]:
         chart_window = getattr(self, "chart_window", None)
@@ -444,14 +598,15 @@ class MainWindowDataMixin:
             rebuilt.append(chat_service._format_robot_summary_reconciliation(snapshot, software_totals))
         return rebuilt
 
-    def _load_filtered_messages(self) -> None:
+    def _load_filtered_messages(self, notify_missing_source: bool = True) -> None:
         if getattr(self, "_message_load_in_progress", False):
             logger.debug("Skip message load; previous load is still running")
             return
         try:
             source_path, options, current_sig, _incremental = self._build_load_options(True)
         except FileNotFoundError:
-            QMessageBox.information(self, "没有数据源", "请先自动定位或手动选择数据源。")
+            if notify_missing_source:
+                QMessageBox.information(self, "没有数据源", "请先自动定位或手动选择数据源。")
             if hasattr(self, "_set_status"):
                 self._set_status("没有数据源，请先选择数据源。", "info")
             return
@@ -508,7 +663,7 @@ class MainWindowDataMixin:
             if hasattr(self, "_sync_chart_status"):
                 self._sync_chart_status()
             return
-        self._load_filtered_messages()
+        self._load_filtered_messages(notify_missing_source=False)
 
     def _active_site_countdown(self) -> int | None:
         active_site = getattr(self, "_active_site", "") or ""
@@ -532,6 +687,7 @@ class MainWindowDataMixin:
 
     def _update_chart_data(self, replace: bool = False) -> None:
         if hasattr(self, "chart_window"):
+            MainWindowDataMixin._push_chart_group_filters(self)
             if replace and hasattr(self.chart_window, "replace_rows"):
                 self.chart_window.replace_rows(self.current_visual_rows)
             else:
