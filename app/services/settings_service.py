@@ -46,6 +46,7 @@ class SettingsService:
                 "proxy_enabled": False,
                 "proxy_http": "",
                 "proxy_https": "",
+                "auto_bet": {},
             }
         )
 
