@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import random
+import sqlite3
+import time
+from pathlib import Path
+
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad
+except ImportError:
+    AES = None
+    pad = None
+
+logger = logging.getLogger(__name__)
+
+FRONTEND_AAS_KEY = "666888"
+
+
+class MessageInjector:
+    """Construct and insert betting messages into the Tencent Cloud IM local SQLite database."""
+
+    def __init__(self, msg_db: Path, sender_id: str) -> None:
+        self._msg_db = Path(msg_db)
+        self._sender_id = sender_id
+        self._time_unit = 1  # detected on first inject
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool:
+        """Insert a single betting message. Returns True on success."""
+        content = f"{play_type} {self._fmt_amount(amount)}"
+        return self._insert_message(group_id, content)
+
+    def inject_text(self, group_id: str, text: str) -> bool:
+        """Insert an arbitrary text message. Returns True on success."""
+        return self._insert_message(group_id, text)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _insert_message(self, group_id: str, text: str) -> bool:
+        if not self._msg_db.exists():
+            logger.error("msg_db not found: %s", self._msg_db)
+            return False
+
+        client_time = self._now_in_db_units()
+        rand_val = random.randint(0, 0x7FFFFFFF)
+        element_descriptions = self._build_element_descriptions(text)
+
+        try:
+            con = sqlite3.connect(f"file:{self._msg_db.as_posix()}?mode=rw", uri=True)
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute(
+                """INSERT INTO message (client_time, rand, sid, sender, element_descriptions, content)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (client_time, rand_val, group_id, self._sender_id, element_descriptions, text),
+            )
+            con.commit()
+            con.close()
+            logger.info("Injected message: group=%s content=%s time=%s rand=%s", group_id, text, client_time, rand_val)
+            return True
+        except sqlite3.DatabaseError as exc:
+            logger.exception("Failed to inject message into %s: %s", self._msg_db, exc)
+            return False
+
+    def _detect_time_unit(self) -> int:
+        """Detect whether client_time is in seconds, milliseconds, or microseconds."""
+        try:
+            con = sqlite3.connect(f"file:{self._msg_db.as_posix()}?mode=ro", uri=True)
+            row = con.execute("SELECT MAX(client_time) FROM message").fetchone()
+            con.close()
+            value = int((row[0] if row else 0) or 0)
+            if value > 100_000_000_000_000:
+                return 1_000_000
+            if value > 10_000_000_000:
+                return 1000
+            return 1
+        except sqlite3.DatabaseError:
+            return 1
+
+    def _now_in_db_units(self) -> int:
+        if self._time_unit == 1:
+            self._time_unit = self._detect_time_unit()
+        return int(time.time() * max(1, self._time_unit))
+
+    def _build_element_descriptions(self, text: str) -> str:
+        """Build the JSON element_descriptions field matching the SDK's format."""
+        return json.dumps(
+            [
+                {
+                    "elem_type": 0,
+                    "text_elem_content": text,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _fmt_amount(value: float) -> str:
+        if value == int(value):
+            return str(int(value))
+        return f"{value:.2f}"
+
+    @staticmethod
+    def encrypt_content(plain: str) -> str:
+        """AES-ECB encrypt + Base64 encode. Returns empty string if pycryptodome unavailable."""
+        if AES is None or pad is None:
+            logger.warning("pycryptodome not available — storing plaintext")
+            return plain
+        try:
+            key = FRONTEND_AAS_KEY.encode("utf-8")
+            if len(key) < 16:
+                key = key + (b"\x00" * (16 - len(key)))
+            cipher = AES.new(key[:16], AES.MODE_ECB)
+            padded = pad(plain.encode("utf-8"), AES.block_size)
+            return base64.b64encode(cipher.encrypt(padded)).decode("ascii")
+        except Exception:
+            logger.exception("Encryption failed, falling back to plaintext")
+            return plain
