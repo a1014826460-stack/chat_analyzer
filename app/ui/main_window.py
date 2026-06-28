@@ -15,6 +15,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QMessageBox, 
 
 from app.build_config import APP_VERSION, IS_ADMIN_VERSION, UPDATE_PUBLIC_KEY_PEM, update_manifest_url
 from app.models import StatsResult
+from app.services.auto_bet_service import AutoBetService
+from app.ui.auto_bet_panel import AutoBetPanel
 from app.services.account_resolver import AccountResolver
 from app.services.chat_service import ChatLogService
 from app.services.license_service import LicenseService
@@ -62,6 +64,7 @@ class MainWindow(
         self.settings = self.settings_service.load()
         summary_export_dir = str(self.settings.get("export_dir", "") or "").strip()
         self.summary_check_report_service = SummaryCheckReportService(Path(summary_export_dir).expanduser() if summary_export_dir else Path.cwd())
+        self.auto_bet_service = AutoBetService()
 
         self.current_messages = []
         self.raw_chat_messages = []
@@ -126,6 +129,9 @@ class MainWindow(
         self._single_draw_info_ready.connect(self._apply_single_draw_info)
         self._update_check_ready.connect(self._handle_update_check_ready)
         self._update_download_ready.connect(self._handle_update_download_ready)
+        self._auto_bet_timer = QTimer(self)
+        self._auto_bet_timer.setInterval(2000)
+        self._auto_bet_timer.timeout.connect(self._on_auto_bet_tick)
         self._worker = ThreadPoolExecutor(max_workers=2)
         self._data_worker = ThreadPoolExecutor(max_workers=1)
 
@@ -176,6 +182,9 @@ class MainWindow(
         self._apply_theme()
         self._refresh_license_banner()
         set_proxy_settings(self.settings)
+
+        # Wire auto bet panel signals (panel created during layout build)
+        self._connect_auto_bet_panel()
 
         self._activate_and_launch()
         QTimer.singleShot(1500, self._check_for_updates_async)

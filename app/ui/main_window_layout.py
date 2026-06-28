@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui.chart_window import ChartWindow
+from app.ui.auto_bet_panel import AutoBetPanel
 from app.ui.main_window_theme import THEME
 
 
@@ -245,6 +246,12 @@ class MainWindowLayoutMixin:
         block_layout.addWidget(self.block_rule_summary_view)
         left.addWidget(block_box)
         self._configure_left_section(block_box)
+
+        # --- Auto Bet Panel ---
+        self.auto_bet_panel = AutoBetPanel()
+        self.auto_bet_panel.setVisible(False)  # hidden until DB is resolved
+        left.addWidget(self.auto_bet_panel)
+        self._configure_left_section(self.auto_bet_panel)
 
         action_box = QGroupBox("状态")
         action_layout = QVBoxLayout(action_box)

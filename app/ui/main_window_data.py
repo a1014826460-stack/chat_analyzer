@@ -163,6 +163,7 @@ class MainWindowDataMixin:
             logger.warning("Resolve database failed username=%s", username)
             return
         self.resolved_db = resolved
+        self._connect_auto_bet_panel()
         self.resolved_path_edit.setText(str(resolved.msg_db))
         self.db_status_label.setText(f"已定位 {resolved.account_name} -> {resolved.msg_db}")
         self.status_label.setText("数据库已定位，可以加载消息。")
@@ -735,3 +736,92 @@ class MainWindowDataMixin:
             period_interval_sec=period_interval_sec,
             lock_threshold_sec=int(getattr(self, "_lock_threshold_sec", 0) or 0),
         )
+
+    # ------------------------------------------------------------------
+    # Auto Bet Integration
+    # ------------------------------------------------------------------
+
+    def _on_auto_bet_tick(self) -> None:
+        """Called by auto_bet timer to evaluate betting strategy."""
+        service = getattr(self, "auto_bet_service", None)
+        if service is None or not service.is_running:
+            return
+        active_site = getattr(self, "_active_site", "")
+        draw_infos = getattr(self, "_draw_infos", {})
+        info = draw_infos.get(active_site) if isinstance(draw_infos, dict) else None
+        if info is None:
+            return
+        current_period = info.current_period or ""
+        countdown = info.next_countdown or 0
+        service.tick(active_site, countdown, current_period)
+
+    def _on_auto_bet_config_changed(self, config: object) -> None:
+        """Save auto bet config to settings."""
+        service = getattr(self, "auto_bet_service", None)
+        if service is None:
+            return
+        from app.models.auto_bet import StrategyConfig
+        if isinstance(config, StrategyConfig):
+            service.apply_config(config)
+            self.settings["auto_bet"] = config.to_dict()
+            self.settings_service.save(self.settings)
+
+    def _on_auto_bet_start(self) -> None:
+        """Start the auto bet engine."""
+        service = getattr(self, "auto_bet_service", None)
+        if service is None:
+            return
+        resolved_db = getattr(self, "resolved_db", None)
+        if resolved_db is None:
+            return
+        from app.services.message_injector import MessageInjector
+        injector = MessageInjector(resolved_db.msg_db, resolved_db.accid)
+        service.set_injector(injector)
+        service.start()
+        timer = getattr(self, "_auto_bet_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _on_auto_bet_stop(self) -> None:
+        """Stop the auto bet engine."""
+        service = getattr(self, "auto_bet_service", None)
+        if service is not None:
+            service.stop()
+        timer = getattr(self, "_auto_bet_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _connect_auto_bet_panel(self) -> None:
+        """Wire auto bet panel signals and load saved config.
+        Called after panel is created in layout and DB is resolved."""
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None:
+            return
+
+        # Wire signals
+        panel.config_changed.connect(self._on_auto_bet_config_changed)
+        panel.start_clicked.connect(self._on_auto_bet_start)
+        panel.stop_clicked.connect(self._on_auto_bet_stop)
+        self.auto_bet_service.set_log_callback(panel.append_log)
+
+        # Populate groups
+        groups = []
+        if hasattr(self, "group_list"):
+            for i in range(self.group_list.count()):
+                item = self.group_list.item(i)
+                gid = str(item.data(Qt.UserRole) or item.data(32) or "")
+                gname = item.text()
+                if gname:
+                    groups.append((gid or gname, gname))
+        panel.set_available_groups(groups)
+
+        # Load saved config
+        saved = self.settings.get("auto_bet", {})
+        if saved:
+            from app.models.auto_bet import StrategyConfig
+            cfg = StrategyConfig.from_dict(saved)
+            panel.load_config(cfg)
+            self.auto_bet_service.apply_config(cfg)
+
+        # Show panel now that DB is resolved
+        panel.setVisible(True)
