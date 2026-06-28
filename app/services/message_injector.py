@@ -26,7 +26,7 @@ class MessageInjector:
     def __init__(self, msg_db: Path, sender_id: str) -> None:
         self._msg_db = Path(msg_db)
         self._sender_id = sender_id
-        self._time_unit = 1  # detected on first inject
+        self._time_unit = None  # detected on first inject
 
     # ------------------------------------------------------------------
     # Public API
@@ -54,6 +54,7 @@ class MessageInjector:
         rand_val = random.randint(0, 0x7FFFFFFF)
         element_descriptions = self._build_element_descriptions(text)
 
+        con = None
         try:
             con = sqlite3.connect(f"file:{self._msg_db.as_posix()}?mode=rw", uri=True)
             con.execute("PRAGMA journal_mode=WAL")
@@ -63,12 +64,17 @@ class MessageInjector:
                 (client_time, rand_val, group_id, self._sender_id, element_descriptions, text),
             )
             con.commit()
-            con.close()
             logger.info("Injected message: group=%s content=%s time=%s rand=%s", group_id, text, client_time, rand_val)
             return True
         except sqlite3.DatabaseError as exc:
             logger.exception("Failed to inject message into %s: %s", self._msg_db, exc)
             return False
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
 
     def _detect_time_unit(self) -> int:
         """Detect whether client_time is in seconds, milliseconds, or microseconds."""
@@ -83,10 +89,11 @@ class MessageInjector:
                 return 1000
             return 1
         except sqlite3.DatabaseError:
+            logger.debug("Could not detect client_time unit, defaulting to seconds")
             return 1
 
     def _now_in_db_units(self) -> int:
-        if self._time_unit == 1:
+        if self._time_unit is None:
             self._time_unit = self._detect_time_unit()
         return int(time.time() * max(1, self._time_unit))
 
@@ -110,7 +117,7 @@ class MessageInjector:
 
     @staticmethod
     def encrypt_content(plain: str) -> str:
-        """AES-ECB encrypt + Base64 encode. Returns empty string if pycryptodome unavailable."""
+        """AES-ECB encrypt + Base64 encode. Returns plaintext if pycryptodome unavailable."""
         if AES is None or pad is None:
             logger.warning("pycryptodome not available — storing plaintext")
             return plain
