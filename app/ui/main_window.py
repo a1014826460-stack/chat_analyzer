@@ -183,9 +183,6 @@ class MainWindow(
         self._refresh_license_banner()
         set_proxy_settings(self.settings)
 
-        # Wire auto bet panel signals (panel created during layout build)
-        self._connect_auto_bet_panel()
-
         self._activate_and_launch()
         QTimer.singleShot(1500, self._check_for_updates_async)
 
@@ -257,6 +254,10 @@ class MainWindow(
         self._refresh_timer.stop()
         self._countdown_timer.stop()
         self._message_refresh_timer.stop()
+        if hasattr(self, "_auto_bet_timer"):
+            self._auto_bet_timer.stop()
+        if hasattr(self, "auto_bet_service"):
+            self.auto_bet_service.stop()
         self._worker.shutdown(wait=False, cancel_futures=True)
         self._data_worker.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)

@@ -147,6 +147,8 @@ class MainWindowDataMixin:
                 self._save_settings()
             diagnostic = self.account_resolver.get_diagnostic()
             self.resolved_db = None
+            if hasattr(self, "auto_bet_panel"):
+                self.auto_bet_panel.setVisible(False)
             has_saved_source = bool(
                 hasattr(self, "resolved_path_edit")
                 and hasattr(self.resolved_path_edit, "text")
@@ -213,6 +215,7 @@ class MainWindowDataMixin:
             self.group_list.addItem(item)
         self.group_list.blockSignals(False)
         self._refresh_block_rule_group_selector()
+        self._refresh_auto_bet_groups()
         MainWindowDataMixin._push_chart_group_filters(self)
         logger.info("Loaded %d groups from %s", len(groups), source_path)
 
@@ -773,6 +776,9 @@ class MainWindowDataMixin:
             return
         resolved_db = getattr(self, "resolved_db", None)
         if resolved_db is None:
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None:
+                panel.set_running(False)
             return
         from app.services.message_injector import MessageInjector
         injector = MessageInjector(resolved_db.msg_db, resolved_db.accid)
@@ -794,13 +800,12 @@ class MainWindowDataMixin:
     def _connect_auto_bet_panel(self) -> None:
         """Wire auto bet panel signals and load saved config.
         Called after panel is created in layout and DB is resolved."""
-        if getattr(self, "_auto_bet_panel_connected", False):
-            return
-        self._auto_bet_panel_connected = True
-
         panel = getattr(self, "auto_bet_panel", None)
         if panel is None:
             return
+        if getattr(self, "_auto_bet_panel_connected", False):
+            return
+        self._auto_bet_panel_connected = True
 
         # Wire signals
         panel.config_changed.connect(self._on_auto_bet_config_changed)
@@ -809,15 +814,7 @@ class MainWindowDataMixin:
         self.auto_bet_service.set_log_callback(panel.append_log)
 
         # Populate groups
-        groups = []
-        if hasattr(self, "group_list"):
-            for i in range(self.group_list.count()):
-                item = self.group_list.item(i)
-                gid = str(item.data(Qt.UserRole) or item.data(32) or "")
-                gname = item.text()
-                if gname:
-                    groups.append((gid or gname, gname))
-        panel.set_available_groups(groups)
+        self._refresh_auto_bet_groups()
 
         # Load saved config
         saved = self.settings.get("auto_bet", {})
@@ -829,3 +826,18 @@ class MainWindowDataMixin:
 
         # Show panel now that DB is resolved
         panel.setVisible(True)
+
+    def _refresh_auto_bet_groups(self) -> None:
+        """Refresh the auto-bet panel's target group list from the current group_list."""
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None:
+            return
+        groups = []
+        if hasattr(self, "group_list"):
+            for i in range(self.group_list.count()):
+                item = self.group_list.item(i)
+                gid = str(item.data(Qt.UserRole) or item.data(32) or "")
+                gname = item.text()
+                if gname:
+                    groups.append((gid or gname, gname))
+        panel.set_available_groups(groups)
