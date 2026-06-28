@@ -794,6 +794,10 @@ class MainWindowDataMixin:
     def _connect_auto_bet_panel(self) -> None:
         """Wire auto bet panel signals and load saved config.
         Called after panel is created in layout and DB is resolved."""
+        if getattr(self, "_auto_bet_panel_connected", False):
+            return
+        self._auto_bet_panel_connected = True
+
         panel = getattr(self, "auto_bet_panel", None)
         if panel is None:
             return
