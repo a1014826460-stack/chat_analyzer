@@ -4,7 +4,7 @@ import logging
 import threading
 from datetime import datetime
 
-from app.models.auto_bet import BetDecision, DrawResult, DrawResultProvider, InjectRecord, StrategyConfig
+from app.models.auto_bet import BetDecision, DrawResultProvider, InjectRecord, StrategyConfig
 from app.services.message_injector import MessageInjector
 
 
@@ -114,29 +114,33 @@ class AutoBetService:
                 return
             if countdown_sec <= self._config.lock_threshold_sec:
                 return
-            if not self._injector:
-                return
             if self._last_bet_period == current_period:
                 return
+            # Mark this period as processed under lock to prevent race
+            self._last_bet_period = current_period
             cfg = self._config
+            injector = self._injector
+            result_provider = self._result_provider
 
-        decision = self._analyze(cfg)
+        if injector is None:
+            return
+
+        decision = self._analyze(cfg, result_provider)
         if not decision.should_bet:
             return
 
-        self._execute(decision)
-        self._last_bet_period = current_period
+        self._execute(decision, injector)
 
     # ------------------------------------------------------------------
     # Strategy: Trend Following
     # ------------------------------------------------------------------
 
-    def _analyze(self, cfg: StrategyConfig) -> BetDecision:
+    def _analyze(self, cfg: StrategyConfig, result_provider: DrawResultProvider | None = None) -> BetDecision:
         """Run the trend-following strategy."""
-        if self._result_provider is None:
+        if result_provider is None:
             return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="无历史数据提供者")
 
-        results = self._result_provider.get_recent_results(cfg.site, cfg.observation_window)
+        results = result_provider.get_recent_results(cfg.site, cfg.observation_window)
         if len(results) < cfg.trigger_threshold:
             return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="历史数据不足")
 
@@ -175,9 +179,8 @@ class AutoBetService:
             reason=f"连续{consecutive}期'{tail_result}'→反向'{opposite}'",
         )
 
-    def _execute(self, decision: BetDecision) -> None:
+    def _execute(self, decision: BetDecision, injector: MessageInjector | None = None) -> None:
         """Inject the bet into the database."""
-        injector = self._injector
         if injector is None:
             self._add_log(InjectRecord(
                 ts=datetime.now(), group_name=decision.group_id,
