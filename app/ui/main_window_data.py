@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime
 from datetime import timedelta
@@ -780,8 +781,62 @@ class MainWindowDataMixin:
             if panel is not None:
                 panel.set_running(False)
             return
+
+        # Build injector with ImSDK ctypes
+        import json
+        from pathlib import Path
+        from app.services.account_resolver import DEFAULT_SHARED_PREFS
         from app.services.message_injector import MessageInjector
-        injector = MessageInjector(resolved_db.msg_db, resolved_db.accid)
+
+        # Read UserSig from shared_preferences.json
+        try:
+            prefs = json.loads(
+                Path(DEFAULT_SHARED_PREFS).read_text(encoding="utf-8")
+            )
+        except Exception as exc:
+            logger.error("Cannot read shared_preferences.json: %s", exc)
+            return
+
+        # Find the matching account's token
+        accid = resolved_db.accid
+        im_appid = resolved_db.im_appid
+        user_sig = None
+        account_list = prefs.get("flutter.AccountManager_AccountList", [])
+        if isinstance(account_list, list):
+            for raw_acct in account_list:
+                try:
+                    acct = json.loads(raw_acct) if isinstance(raw_acct, str) else raw_acct
+                    login = acct.get("loginResultEntity", {})
+                    if login.get("accid") == accid:
+                        user_sig = login.get("token", "")
+                        break
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+        if not user_sig:
+            logger.error("UserSig not found for account %s", accid)
+            return
+
+        # Determine ImSDK.dll path (relative to project root)
+        dll_path = Path(__file__).resolve().parents[2] / "WuQuan" / "ImSDK.dll"
+        data_dir = Path(__file__).resolve().parents[2] / "WuQuan" / "data"
+
+        # Create and start injector (message pump runs internally)
+        injector = MessageInjector(
+            dll_path=dll_path,
+            sdk_app_id=int(im_appid),
+            accid=accid,
+            user_sig=user_sig,
+            data_dir=data_dir,
+        )
+
+        if not injector.startup():
+            logger.error("MessageInjector startup failed")
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None:
+                panel.set_running(False)
+            return
+
         service.set_injector(injector)
         service.start()
         timer = getattr(self, "_auto_bet_timer", None)
@@ -793,6 +848,15 @@ class MainWindowDataMixin:
         service = getattr(self, "auto_bet_service", None)
         if service is not None:
             service.stop()
+            # Shutdown injector
+            injector = getattr(service, "_injector", None)
+            if injector is not None:
+                try:
+                    injector.shutdown()
+                except Exception as exc:
+                    logger.debug("Injector shutdown error: %s", exc)
+                service.set_injector(None)
+
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
             timer.stop()
