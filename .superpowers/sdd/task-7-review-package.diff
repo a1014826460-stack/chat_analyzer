@@ -1,0 +1,276 @@
+diff --git a/app/ui/main_window.py b/app/ui/main_window.py
+index 16b3d7a..670c7c9 100644
+--- a/app/ui/main_window.py
++++ b/app/ui/main_window.py
+@@ -8,20 +8,22 @@ from concurrent.futures import ThreadPoolExecutor
+ from collections.abc import Callable
+ from pathlib import Path
+ from typing import Any
+ 
+ from PySide6.QtCore import QTimer, Signal, Qt
+ from PySide6.QtGui import QAction, QCloseEvent, QIcon, QShowEvent
+ from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QMessageBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QLabel, QPushButton
+ 
+ from app.build_config import APP_VERSION, IS_ADMIN_VERSION, UPDATE_PUBLIC_KEY_PEM, update_manifest_url
+ from app.models import StatsResult
++from app.services.auto_bet_service import AutoBetService
++from app.ui.auto_bet_panel import AutoBetPanel
+ from app.services.account_resolver import AccountResolver
+ from app.services.chat_service import ChatLogService
+ from app.services.license_service import LicenseService
+ from app.services.settings_service import SettingsService
+ from app.services.summary_check_report_service import SummaryCheckReportService
+ from app.services.update_installer import schedule_update_install
+ from app.services.update_service import download_and_verify, fetch_manifest, update_available
+ from app.ui.license_generator_dialog import LicenseGeneratorDialog
+ from app.ui.main_window_actions import MainWindowActionsMixin
+ from app.ui.main_window_blocking import MainWindowBlockingMixin
+@@ -55,20 +57,21 @@ class MainWindow(
+         self.setWindowTitle("StarTrace Analyzer" + (" (Admin)" if IS_ADMIN_VERSION else ""))
+         self.setMinimumSize(1180, 720)
+ 
+         self.chat_service = ChatLogService()
+         self.license_service = LicenseService()
+         self.settings_service = SettingsService()
+         self.account_resolver = AccountResolver()
+         self.settings = self.settings_service.load()
+         summary_export_dir = str(self.settings.get("export_dir", "") or "").strip()
+         self.summary_check_report_service = SummaryCheckReportService(Path(summary_export_dir).expanduser() if summary_export_dir else Path.cwd())
++        self.auto_bet_service = AutoBetService()
+ 
+         self.current_messages = []
+         self.raw_chat_messages = []
+         self.summary_check_history = []
+         self.current_stats = StatsResult(totals={}, totals_by_group={})
+         self.current_visual_rows = []
+         self.resolved_db = None
+         self.global_block_names: list[str] = []
+         self.group_block_rules: dict[str, dict[str, object]] = {}
+         self.group_types_by_id: dict[str, str] = {
+@@ -119,20 +122,23 @@ class MainWindow(
+         self._countdown_timer = QTimer(self)
+         self._countdown_timer.timeout.connect(self._on_countdown_tick)
+         self._message_refresh_timer = QTimer(self)
+         self._message_refresh_timer.setInterval(5000)
+         self._message_refresh_timer.timeout.connect(self._on_message_refresh_tick)
+         self._load_result_ready.connect(self._handle_load_result_ready)
+         self._draw_infos_ready.connect(self._apply_draw_infos)
+         self._single_draw_info_ready.connect(self._apply_single_draw_info)
+         self._update_check_ready.connect(self._handle_update_check_ready)
+         self._update_download_ready.connect(self._handle_update_download_ready)
++        self._auto_bet_timer = QTimer(self)
++        self._auto_bet_timer.setInterval(2000)
++        self._auto_bet_timer.timeout.connect(self._on_auto_bet_tick)
+         self._worker = ThreadPoolExecutor(max_workers=2)
+         self._data_worker = ThreadPoolExecutor(max_workers=1)
+ 
+         self._apply_icon()
+         self._restore_window_state()
+         group_rules_raw = self.settings.get("blocked_names_by_group", {})
+         if "global_block_names" in self.settings:
+             global_block_source = self.settings.get("global_block_names", [])
+         elif group_rules_raw:
+             # Legacy `blocked_names` may contain a mix of true global names and
+@@ -170,20 +176,23 @@ class MainWindow(
+             license_action = QAction("生成激活码", self)
+             license_action.triggered.connect(self._show_admin_license_panel)
+             help_menu.addAction(license_action)
+         self.setMenuBar(menubar)
+ 
+         self._build_license_page()
+         self._apply_theme()
+         self._refresh_license_banner()
+         set_proxy_settings(self.settings)
+ 
++        # Wire auto bet panel signals (panel created during layout build)
++        self._connect_auto_bet_panel()
++
+         self._activate_and_launch()
+         QTimer.singleShot(1500, self._check_for_updates_async)
+ 
+     def _activate_and_launch(self) -> None:
+         if not self._assert_activated():
+             self._show_activation_required()
+             return
+         if self.analysis_page is None:
+             self.analysis_page = QWidget()
+             self._build_analysis_page()
+diff --git a/app/ui/main_window_data.py b/app/ui/main_window_data.py
+index 418cfe0..2e4589e 100644
+--- a/app/ui/main_window_data.py
++++ b/app/ui/main_window_data.py
+@@ -156,20 +156,21 @@ class MainWindowDataMixin:
+                 self.resolved_path_edit.clear()
+             if not has_saved_source and hasattr(self, "group_list") and hasattr(self.group_list, "clear"):
+                 self.group_list.clear()
+             self._refresh_block_rule_group_selector()
+             self.db_status_label.setText(diagnostic.format_message() if diagnostic else "未找到数据库。")
+             self.status_label.setText("自动定位数据库失败，请手动选择数据源。")
+             self.fallback_box.setVisible(True)
+             logger.warning("Resolve database failed username=%s", username)
+             return
+         self.resolved_db = resolved
++        self._connect_auto_bet_panel()
+         self.resolved_path_edit.setText(str(resolved.msg_db))
+         self.db_status_label.setText(f"已定位 {resolved.account_name} -> {resolved.msg_db}")
+         self.status_label.setText("数据库已定位，可以加载消息。")
+         self.fallback_box.setVisible(False)
+         self._remember_username(username)
+         self._load_groups_from_current_source()
+         self._save_settings()
+         logger.info("Resolve database succeeded username=%s path=%s", username, resolved.msg_db)
+ 
+     def _load_groups_from_current_source(self) -> None:
+@@ -728,10 +729,99 @@ class MainWindowDataMixin:
+             group_types_by_id=dict(getattr(self, "group_types_by_id", {}) or {}),
+             group_ids=selected_group_ids,
+             blocked_user_ids=[],
+             period_filter=period_filter,
+             site=site,
+             period_window_start=period_window_start,
+             period_window_end=period_window_end,
+             period_interval_sec=period_interval_sec,
+             lock_threshold_sec=int(getattr(self, "_lock_threshold_sec", 0) or 0),
+         )
++
++    # ------------------------------------------------------------------
++    # Auto Bet Integration
++    # ------------------------------------------------------------------
++
++    def _on_auto_bet_tick(self) -> None:
++        """Called by auto_bet timer to evaluate betting strategy."""
++        service = getattr(self, "auto_bet_service", None)
++        if service is None or not service.is_running:
++            return
++        active_site = getattr(self, "_active_site", "")
++        draw_infos = getattr(self, "_draw_infos", {})
++        info = draw_infos.get(active_site) if isinstance(draw_infos, dict) else None
++        if info is None:
++            return
++        current_period = info.current_period or ""
++        countdown = info.next_countdown or 0
++        service.tick(active_site, countdown, current_period)
++
++    def _on_auto_bet_config_changed(self, config: object) -> None:
++        """Save auto bet config to settings."""
++        service = getattr(self, "auto_bet_service", None)
++        if service is None:
++            return
++        from app.models.auto_bet import StrategyConfig
++        if isinstance(config, StrategyConfig):
++            service.apply_config(config)
++            self.settings["auto_bet"] = config.to_dict()
++            self.settings_service.save(self.settings)
++
++    def _on_auto_bet_start(self) -> None:
++        """Start the auto bet engine."""
++        service = getattr(self, "auto_bet_service", None)
++        if service is None:
++            return
++        resolved_db = getattr(self, "resolved_db", None)
++        if resolved_db is None:
++            return
++        from app.services.message_injector import MessageInjector
++        injector = MessageInjector(resolved_db.msg_db, resolved_db.accid)
++        service.set_injector(injector)
++        service.start()
++        timer = getattr(self, "_auto_bet_timer", None)
++        if timer is not None:
++            timer.start()
++
++    def _on_auto_bet_stop(self) -> None:
++        """Stop the auto bet engine."""
++        service = getattr(self, "auto_bet_service", None)
++        if service is not None:
++            service.stop()
++        timer = getattr(self, "_auto_bet_timer", None)
++        if timer is not None:
++            timer.stop()
++
++    def _connect_auto_bet_panel(self) -> None:
++        """Wire auto bet panel signals and load saved config.
++        Called after panel is created in layout and DB is resolved."""
++        panel = getattr(self, "auto_bet_panel", None)
++        if panel is None:
++            return
++
++        # Wire signals
++        panel.config_changed.connect(self._on_auto_bet_config_changed)
++        panel.start_clicked.connect(self._on_auto_bet_start)
++        panel.stop_clicked.connect(self._on_auto_bet_stop)
++        self.auto_bet_service.set_log_callback(panel.append_log)
++
++        # Populate groups
++        groups = []
++        if hasattr(self, "group_list"):
++            for i in range(self.group_list.count()):
++                item = self.group_list.item(i)
++                gid = str(item.data(Qt.UserRole) or item.data(32) or "")
++                gname = item.text()
++                if gname:
++                    groups.append((gid or gname, gname))
++        panel.set_available_groups(groups)
++
++        # Load saved config
++        saved = self.settings.get("auto_bet", {})
++        if saved:
++            from app.models.auto_bet import StrategyConfig
++            cfg = StrategyConfig.from_dict(saved)
++            panel.load_config(cfg)
++            self.auto_bet_service.apply_config(cfg)
++
++        # Show panel now that DB is resolved
++        panel.setVisible(True)
+diff --git a/app/ui/main_window_layout.py b/app/ui/main_window_layout.py
+index 0c3e119..81c1e8c 100644
+--- a/app/ui/main_window_layout.py
++++ b/app/ui/main_window_layout.py
+@@ -15,20 +15,21 @@ from PySide6.QtWidgets import (
+     QScrollArea,
+     QSizePolicy,
+     QSpinBox,
+     QSplitter,
+     QTextEdit,
+     QVBoxLayout,
+     QWidget,
+ )
+ 
+ from app.ui.chart_window import ChartWindow
++from app.ui.auto_bet_panel import AutoBetPanel
+ from app.ui.main_window_theme import THEME
+ 
+ 
+ LEFT_SECTION_MIN_WIDTH = 360
+ LEFT_SECTION_MAX_WIDTH = 440
+ LEFT_SECTION_MIN_HEIGHT = 150
+ LEFT_CONTROL_MIN_HEIGHT = 34
+ LEFT_TEXT_MIN_HEIGHT = 110
+ 
+ 
+@@ -239,20 +240,26 @@ class MainWindowLayoutMixin:
+         self.block_rule_summary_view = QTextEdit()
+         self.block_rule_summary_view.setReadOnly(True)
+         self._configure_left_expanding_control(
+             self.block_rule_summary_view,
+             min_height=120,
+         )
+         block_layout.addWidget(self.block_rule_summary_view)
+         left.addWidget(block_box)
+         self._configure_left_section(block_box)
+ 
++        # --- Auto Bet Panel ---
++        self.auto_bet_panel = AutoBetPanel()
++        self.auto_bet_panel.setVisible(False)  # hidden until DB is resolved
++        left.addWidget(self.auto_bet_panel)
++        self._configure_left_section(self.auto_bet_panel)
++
+         action_box = QGroupBox("状态")
+         action_layout = QVBoxLayout(action_box)
+         self.status_title = QLabel("当前状态")
+         self.status_title.setObjectName("headingLabel")
+         self.status_label = QLabel("请选择线路并加载聊天记录。")
+         self.status_label.setWordWrap(True)
+         action_layout.addWidget(self.status_title)
+         action_layout.addWidget(self.status_label)
+         left.addWidget(action_box)
+         self._configure_left_section(action_box)

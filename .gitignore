@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 .chat_analyzer/
 summary_check/
+WuQuan/
 
 *.exe
 .codex_recovery/

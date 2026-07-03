@@ -1,0 +1,26 @@
+diff --git a/app/services/settings_service.py b/app/services/settings_service.py
+index dcb629e..6651191 100644
+--- a/app/services/settings_service.py
++++ b/app/services/settings_service.py
+@@ -39,20 +39,21 @@ class SettingsService:
+                 "advanced_time_start": "",
+                 "advanced_time_end": "",
+                 "window_geometry_b64": "",
+                 "window_state_b64": "",
+                 "main_splitter_sizes": [],
+                 "lock_threshold_sec": 20,
+                 "is_first_launch": True,
+                 "proxy_enabled": False,
+                 "proxy_http": "",
+                 "proxy_https": "",
++                "auto_bet": {},
+             }
+         )
+ 
+         logger.debug(
+             "加载设置: username=%s, blocked_groups=%d, groups=%d, proxy=%s",
+             data.get("username"),
+             len(data.get("blocked_names_by_group", {})),
+             len(data.get("selected_group_ids", [])),
+             data.get("proxy_enabled"),
+         )
