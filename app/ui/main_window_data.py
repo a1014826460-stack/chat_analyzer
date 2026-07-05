@@ -757,7 +757,16 @@ class MainWindowDataMixin:
             return
         current_period = info.current_period or ""
         countdown = info.next_countdown or 0
-        service.tick(active_site, countdown, current_period)
+        service.tick(
+            active_site,
+            countdown,
+            current_period,
+            period_start_time=getattr(info, "start_time", None),
+            period_end_time=getattr(info, "next_time", None),
+        )
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "update_runtime_state"):
+            panel.update_runtime_state(service.runtime_state)
 
     def _on_auto_bet_config_changed(self, config: object) -> None:
         """Save auto bet config to settings."""
@@ -782,63 +791,44 @@ class MainWindowDataMixin:
                 panel.set_running(False)
             return
 
-        # Build injector with ImSDK ctypes
-        import json
-        from pathlib import Path
-        from app.services.account_resolver import DEFAULT_SHARED_PREFS
-        from app.services.message_injector import MessageInjector
+        # Use remote thread injection to send messages through WuQuan's
+        # existing IM session.  Does NOT call TIMLogin — no kick-off.
+        from app.services.remote_im_sender import RemoteIMSender
 
-        # Read UserSig from shared_preferences.json
         try:
-            prefs = json.loads(
-                Path(DEFAULT_SHARED_PREFS).read_text(encoding="utf-8")
-            )
-        except Exception as exc:
-            logger.error("Cannot read shared_preferences.json: %s", exc)
+            injector = RemoteIMSender()
+        except (RuntimeError, OSError) as exc:
+            logger.error("RemoteIMSender init failed: %s", exc)
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None:
+                panel.set_running(False)
             return
-
-        # Find the matching account's token
-        accid = resolved_db.accid
-        im_appid = resolved_db.im_appid
-        user_sig = None
-        account_list = prefs.get("flutter.AccountManager_AccountList", [])
-        if isinstance(account_list, list):
-            for raw_acct in account_list:
-                try:
-                    acct = json.loads(raw_acct) if isinstance(raw_acct, str) else raw_acct
-                    login = acct.get("loginResultEntity", {})
-                    if login.get("accid") == accid:
-                        user_sig = login.get("token", "")
-                        break
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-        if not user_sig:
-            logger.error("UserSig not found for account %s", accid)
-            return
-
-        # Determine ImSDK.dll path (relative to project root)
-        dll_path = Path(__file__).resolve().parents[2] / "WuQuan" / "ImSDK.dll"
-        data_dir = Path(__file__).resolve().parents[2] / "WuQuan" / "data"
-
-        # Create and start injector (message pump runs internally)
-        injector = MessageInjector(
-            dll_path=dll_path,
-            sdk_app_id=int(im_appid),
-            accid=accid,
-            user_sig=user_sig,
-            data_dir=data_dir,
-        )
 
         if not injector.startup():
-            logger.error("MessageInjector startup failed")
+            logger.error("RemoteIMSender startup failed")
             panel = getattr(self, "auto_bet_panel", None)
             if panel is not None:
                 panel.set_running(False)
             return
 
         service.set_injector(injector)
+
+        from app.services.draw_result_store import DrawResultStore
+        from app.services.history_fetchers import HistoryFetcher
+        from app.utils.pathing import user_data_dir
+
+        store = DrawResultStore(
+            db_path=Path(user_data_dir()) / "draw_results.db",
+            fetcher=HistoryFetcher(),
+        )
+        svc_cfg = service.config
+        store.ensure_data(svc_cfg.site, min_count=svc_cfg.observation_window * 2)
+        service.set_result_provider(store)
+
         service.start()
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "update_runtime_state"):
+            panel.update_runtime_state(service.runtime_state)
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
             timer.start()
@@ -856,6 +846,9 @@ class MainWindowDataMixin:
                 except Exception as exc:
                     logger.debug("Injector shutdown error: %s", exc)
                 service.set_injector(None)
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None and hasattr(panel, "update_runtime_state"):
+                panel.update_runtime_state(service.runtime_state)
 
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
