@@ -99,6 +99,10 @@ SHELLCODE = bytes([
     0xC3,                         # ret
 ])
 
+# NOOP callback shellcode — SDK requires a valid callback, won't crash on NULL
+# void callback(int32_t, const char*, void*) { return; }
+NOOP_CALLBACK = bytes([0xC3])  # ret
+
 TIMMSG_RVA = 0x3EA473  # RVA of TIMMsgSendMessage in ImSDK.dll
 
 
@@ -163,6 +167,8 @@ class RemoteIMSender:
         remote_target = self._write_remote(target_id.encode("utf-8") + b"\x00")
         remote_json = self._write_remote(msg_json.encode("utf-8") + b"\x00")
         remote_buf = self._alloc_remote(512)
+        # Dummy callback — SDK will call it asynchronously; NULL causes crash
+        remote_cb = self._write_remote(NOOP_CALLBACK, executable=True)
 
         # Build params struct
         params = struct.pack(
@@ -171,7 +177,7 @@ class RemoteIMSender:
             conv_type,          # +0x08: int64 conv_type
             remote_json,        # +0x10: char* json
             remote_buf,         # +0x18: char* msg_buf
-            0,                  # +0x20: callback (NULL)
+            remote_cb,          # +0x20: callback (noop)
             0,                  # +0x28: user_data (NULL)
             self._func_addr,    # +0x30: TIMMsgSendMessage
         )
