@@ -28,6 +28,18 @@ class BetDecision:
     reason: str           # human-readable explanation for the run log
 
 
+DEFAULT_ODDS: dict[str, float] = {
+    "大": 1.98,
+    "小": 1.98,
+    "单": 1.98,
+    "双": 1.98,
+    "小单": 3.68,
+    "大双": 3.68,
+    "小双": 4.28,
+    "大单": 4.28,
+}
+
+
 @runtime_checkable
 class DrawResultProvider(Protocol):
     """Protocol for providing historical draw results.
@@ -54,6 +66,9 @@ class StrategyConfig:
     bet_amount: float = 10.0
     play_types: list[str] = field(default_factory=lambda: ["大", "小"])
     lock_threshold_sec: int = 15  # stop betting N seconds before draw cutoff
+    bet_mode: str = "size"
+    martingale_sequence: list[float] = field(default_factory=list)
+    odds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ODDS))
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +81,9 @@ class StrategyConfig:
             "bet_amount": self.bet_amount,
             "play_types": self.play_types,
             "lock_threshold_sec": self.lock_threshold_sec,
+            "bet_mode": self.bet_mode,
+            "martingale_sequence": self.martingale_sequence,
+            "odds": self.odds,
         }
 
     @classmethod
@@ -82,6 +100,9 @@ class StrategyConfig:
             bet_amount=float(data.get("bet_amount", 10.0)),
             play_types=_ensure_str_list(data.get("play_types", ["大", "小"])),
             lock_threshold_sec=int(data.get("lock_threshold_sec", 15)),
+            bet_mode=str(data.get("bet_mode", "size")),
+            martingale_sequence=_ensure_float_list(data.get("martingale_sequence"), default=[]),
+            odds=_ensure_odds(data.get("odds")),
         )
 
 
@@ -89,6 +110,67 @@ def _ensure_str_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return []
+
+
+def _ensure_float_list(value: object, default: list[float] | None = None) -> list[float]:
+    result: list[float] = []
+    if isinstance(value, list):
+        iterable = value
+    elif isinstance(value, str):
+        iterable = value.replace(",", "-").split("-")
+    else:
+        iterable = []
+    for item in iterable:
+        try:
+            amount = float(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if amount > 0:
+            result.append(amount)
+    if result:
+        return result
+    return list(default or [10.0])
+
+
+def _ensure_odds(value: object) -> dict[str, float]:
+    odds = dict(DEFAULT_ODDS)
+    if isinstance(value, dict):
+        for key, raw in value.items():
+            name = str(key).strip()
+            if not name:
+                continue
+            try:
+                number = float(str(raw).strip())
+            except (TypeError, ValueError):
+                continue
+            if number > 0:
+                odds[name] = number
+    return odds
+
+
+@dataclass
+class AutoBetRuntimeState:
+    current_step: int = 0
+    total_staked: float = 0.0
+    total_payout: float = 0.0
+    total_profit: float = 0.0
+    total_rounds: int = 0
+    win_rounds: int = 0
+    lose_rounds: int = 0
+    consecutive_losses: int = 0
+    halted: bool = False
+    halt_reason: str = ""
+
+
+@dataclass
+class AutoBetRound:
+    period: str
+    site: str
+    bets: list[BetDecision]
+    settled: bool = False
+    result: str = ""
+    payout: float = 0.0
+    profit: float = 0.0
 
 
 @dataclass

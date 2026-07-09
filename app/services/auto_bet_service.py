@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Protocol
 
-from app.models.auto_bet import BetDecision, DrawResultProvider, InjectRecord, StrategyConfig
-from app.services.message_injector import MessageInjector
+from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, StrategyConfig
 
 
 logger = logging.getLogger(__name__)
+
+
+class BetMessageSender(Protocol):
+    def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool: ...
 
 
 class AutoBetService:
@@ -19,11 +23,11 @@ class AutoBetService:
 
     Historical draw results come from an external DrawResultProvider
     (implemented by a separate script that fetches/parses lottery APIs).
-    """
+        """
 
     def __init__(self) -> None:
         self._config = StrategyConfig()
-        self._injector: MessageInjector | None = None
+        self._injector: BetMessageSender | None = None
         self._result_provider: DrawResultProvider | None = None
         self._running = False
         self._lock = threading.Lock()
@@ -31,6 +35,8 @@ class AutoBetService:
         self._max_log_lines = 500
         self._on_log_updated: callable | None = None
         self._last_bet_period = ""
+        self._runtime_state = AutoBetRuntimeState()
+        self._rounds: list[AutoBetRound] = []
 
     # ------------------------------------------------------------------
     # Configuration
@@ -49,13 +55,16 @@ class AutoBetService:
                 bet_amount=self._config.bet_amount,
                 play_types=list(self._config.play_types),
                 lock_threshold_sec=self._config.lock_threshold_sec,
+                bet_mode=self._config.bet_mode,
+                martingale_sequence=list(self._config.martingale_sequence),
+                odds=dict(self._config.odds),
             )
 
     def apply_config(self, config: StrategyConfig) -> None:
         with self._lock:
             self._config = config
 
-    def set_injector(self, injector: MessageInjector | None) -> None:
+    def set_injector(self, injector: BetMessageSender | None) -> None:
         with self._lock:
             self._injector = injector
 
@@ -105,14 +114,29 @@ class AutoBetService:
     # Main tick — called by GUI on each countdown update
     # ------------------------------------------------------------------
 
-    def tick(self, site: str, countdown_sec: int, current_period: str) -> None:
+    def tick(
+        self,
+        site: str,
+        countdown_sec: int,
+        current_period: str,
+        *,
+        period_start_time: datetime | None = None,
+        period_end_time: datetime | None = None,
+        now: datetime | None = None,
+    ) -> None:
         """Evaluate strategy and place bets if conditions are met."""
         with self._lock:
             if not self._running:
                 return
             if site != self._config.site:
                 return
-            if countdown_sec <= self._config.lock_threshold_sec:
+            if not self._within_bet_window(
+                countdown_sec,
+                self._config.lock_threshold_sec,
+                period_start_time=period_start_time,
+                period_end_time=period_end_time,
+                now=now,
+            ):
                 return
             if self._last_bet_period == current_period:
                 return
@@ -125,11 +149,17 @@ class AutoBetService:
         if injector is None:
             return
 
-        decision = self._analyze(cfg, result_provider)
-        if not decision.should_bet:
+        if result_provider is not None:
+            self.settle_pending_rounds(result_provider)
+
+        decisions = self._analyze_many(cfg, result_provider)
+        active_decisions = [decision for decision in decisions if decision.should_bet]
+        if not active_decisions:
             return
 
-        self._execute(decision, injector)
+        for decision in active_decisions:
+            self._execute(decision, injector)
+        self._record_round(site, current_period, active_decisions)
 
     # ------------------------------------------------------------------
     # Strategy: Trend Following
@@ -137,50 +167,69 @@ class AutoBetService:
 
     def _analyze(self, cfg: StrategyConfig, result_provider: DrawResultProvider | None = None) -> BetDecision:
         """Run the trend-following strategy."""
+        decisions = self._analyze_many(cfg, result_provider)
+        if decisions:
+            return decisions[0]
+        if self._runtime_state.halted:
+            return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason=self._runtime_state.halt_reason)
+        return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="无可用下注决策")
+
+    def _analyze_many(self, cfg: StrategyConfig, result_provider: DrawResultProvider | None = None) -> list[BetDecision]:
+        """Run the configured strategy and return one or more betting decisions."""
+        if self._runtime_state.halted:
+            return []
+
+        mode = self._effective_bet_mode(cfg)
+        amount = self._current_bet_amount(cfg)
+        target_group = cfg.target_groups[0] if cfg.target_groups else ""
+        if mode == "three_doors":
+            doors = [play for play in cfg.play_types if play in {"小单", "大双", "小双", "大单"}]
+            if len(doors) != 3:
+                return []
+            return [
+                BetDecision(True, play, amount, target_group, "三门下注")
+                for play in doors
+            ]
+
         if result_provider is None:
-            return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="无历史数据提供者")
+            return []
 
         results = result_provider.get_recent_results(cfg.site, cfg.observation_window)
         if len(results) < cfg.trigger_threshold:
-            return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="历史数据不足")
+            return []
 
         # Get the most recent results, ordered by period
         sorted_results = sorted(results, key=lambda r: r.period)[-cfg.observation_window:]
 
         if not sorted_results:
-            return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="无数据")
+            return []
 
-        tail_result = sorted_results[-1].result
+        tail_result = self._result_for_mode(sorted_results[-1].result, mode)
         consecutive = 0
         for r in reversed(sorted_results):
-            if r.result == tail_result:
+            if self._result_for_mode(r.result, mode) == tail_result:
                 consecutive += 1
             else:
                 break
 
         if consecutive < cfg.trigger_threshold:
-            return BetDecision(
-                should_bet=False, play_type="", amount=0, group_id="",
-                reason=f"连续{consecutive}期'{tail_result}'，未达阈值{cfg.trigger_threshold}",
-            )
+            return []
 
         # Reverse bet: bet on the opposite
-        opposite = self._opposite_play(tail_result, cfg.play_types)
+        opposite = self._opposite_play(tail_result, self._allowed_play_types_for_mode(cfg, mode))
         if opposite is None:
-            return BetDecision(should_bet=False, play_type="", amount=0, group_id="", reason="无可用反向玩法")
+            return []
 
-        target_group = cfg.target_groups[0] if cfg.target_groups else ""
-
-        return BetDecision(
+        return [BetDecision(
             should_bet=True,
             play_type=opposite,
-            amount=cfg.bet_amount,
+            amount=amount,
             group_id=target_group,
             reason=f"连续{consecutive}期'{tail_result}'→反向'{opposite}'",
-        )
+        )]
 
-    def _execute(self, decision: BetDecision, injector: MessageInjector | None = None) -> None:
-        """Inject the bet into the database."""
+    def _execute(self, decision: BetDecision, injector: BetMessageSender | None = None) -> None:
+        """Send the bet through the configured message sender."""
         if injector is None:
             self._add_log(InjectRecord(
                 ts=datetime.now(), group_name=decision.group_id,
@@ -205,9 +254,40 @@ class AutoBetService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _within_bet_window(
+        countdown_sec: int,
+        lock_threshold_sec: int,
+        *,
+        period_start_time: datetime | None = None,
+        period_end_time: datetime | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Return True only during start+30s through end-30s.
+
+        When period boundaries are unavailable, keep the legacy countdown
+        cutoff as a fallback so older callers continue to work.
+        """
+        if period_start_time is None or period_end_time is None:
+            return countdown_sec > lock_threshold_sec
+
+        current = now or datetime.now(tz=period_start_time.tzinfo)
+        window_start = period_start_time + timedelta(seconds=30)
+        window_end = period_end_time - timedelta(seconds=30)
+        return window_start <= current <= window_end
+
+    @staticmethod
     def _opposite_play(result: str, play_types: list[str]) -> str | None:
-        """Given a result like '大', return the opposite play from the allowed list."""
-        opposites = {"大": "小", "小": "大", "单": "双", "双": "单"}
+        """Given a result like '大双', return the opposite play from the allowed list."""
+        opposites = {
+            "大双": "小单",
+            "小单": "大双",
+            "大单": "小双",
+            "小双": "大单",
+            "大": "小",
+            "小": "大",
+            "单": "双",
+            "双": "单",
+        }
         opposite = opposites.get(result)
         if opposite and opposite in play_types:
             return opposite
@@ -215,6 +295,116 @@ class AutoBetService:
             if pt != result:
                 return pt
         return None
+
+    @property
+    def runtime_state(self) -> AutoBetRuntimeState:
+        with self._lock:
+            return AutoBetRuntimeState(**self._runtime_state.__dict__)
+
+    def reset_runtime_state(self) -> None:
+        with self._lock:
+            self._runtime_state = AutoBetRuntimeState()
+            self._rounds = []
+
+    def settle_pending_rounds(self, result_provider: DrawResultProvider) -> int:
+        settled = 0
+        cfg = self.config
+        for round_info in list(self._rounds):
+            if round_info.settled:
+                continue
+            result = result_provider.get_result(round_info.site, round_info.period)
+            if result is None:
+                continue
+            self._settle_round(round_info, result.result, cfg)
+            settled += 1
+        return settled
+
+    def _record_round(self, site: str, period: str, bets: list[BetDecision]) -> None:
+        if not period or not bets:
+            return
+        self._rounds.append(AutoBetRound(period=period, site=site, bets=list(bets)))
+
+    def _settle_round(self, round_info: AutoBetRound, result: str, cfg: StrategyConfig) -> None:
+        if round_info.settled:
+            return
+        staked = sum(float(bet.amount) for bet in round_info.bets)
+        payout = 0.0
+        for bet in round_info.bets:
+            if self._bet_wins(bet.play_type, result):
+                payout += float(bet.amount) * float(cfg.odds.get(bet.play_type, 1.0))
+        profit = payout - staked
+
+        round_info.settled = True
+        round_info.result = result
+        round_info.payout = payout
+        round_info.profit = profit
+
+        with self._lock:
+            state = self._runtime_state
+            state.total_staked += staked
+            state.total_payout += payout
+            state.total_profit += profit
+            state.total_rounds += 1
+            if profit > 0:
+                state.win_rounds += 1
+                state.consecutive_losses = 0
+                state.current_step = 0
+            else:
+                state.lose_rounds += 1
+                state.consecutive_losses += 1
+                if state.current_step >= len(cfg.martingale_sequence) - 1:
+                    state.halted = True
+                    state.halt_reason = "倍投已到最后一档，等待人工处理"
+                else:
+                    state.current_step += 1
+
+    def _current_bet_amount(self, cfg: StrategyConfig) -> float:
+        sequence = cfg.martingale_sequence or [cfg.bet_amount]
+        index = min(max(self._runtime_state.current_step, 0), len(sequence) - 1)
+        return float(sequence[index])
+
+    def _allowed_play_types_for_mode(self, cfg: StrategyConfig, mode: str | None = None) -> list[str]:
+        mode = mode or self._effective_bet_mode(cfg)
+        mode_allowed = {
+            "size": {"大", "小"},
+            "parity": {"单", "双"},
+            "small_odd_big_even": {"小单", "大双"},
+            "small_even_big_odd": {"小双", "大单"},
+            "three_doors": {"小单", "大双", "小双", "大单"},
+        }.get(mode, set(cfg.play_types))
+        return [play for play in cfg.play_types if play in mode_allowed]
+
+    @staticmethod
+    def _effective_bet_mode(cfg: StrategyConfig) -> str:
+        """Keep legacy configs working when play_types imply a non-size mode."""
+        plays = set(cfg.play_types)
+        if cfg.bet_mode == "size" and not (plays & {"大", "小"}):
+            return "custom"
+        if cfg.bet_mode == "parity" and not (plays & {"单", "双"}):
+            return "custom"
+        return cfg.bet_mode
+
+    @staticmethod
+    def _result_for_mode(result: str, mode: str) -> str:
+        if mode == "size":
+            if "大" in result:
+                return "大"
+            if "小" in result:
+                return "小"
+        if mode == "parity":
+            if "单" in result:
+                return "单"
+            if "双" in result:
+                return "双"
+        return result
+
+    @staticmethod
+    def _bet_wins(play_type: str, result: str) -> bool:
+        if play_type == result:
+            return True
+        if play_type in {"大", "小", "单", "双"}:
+            return play_type in result
+        return False
 
     def _add_log(self, record: InjectRecord) -> None:
         with self._lock:

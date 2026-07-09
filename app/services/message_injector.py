@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 TIMCommCallback = ctypes.CFUNCTYPE(
     None, ctypes.c_int32, ctypes.c_char_p, ctypes.c_void_p
+)
+TIMRecvNewMsgCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_char_p, ctypes.c_void_p
 )
 
 
@@ -63,10 +67,14 @@ class MessageInjector:
 
         # Per-call result holders
         self._msg_result: list[tuple[int, str]] = []
+        self._received_messages: list[dict] = []
+        self._recv_handlers: list[Callable[[dict], None]] = []
+        self._recv_condition = threading.Condition()
 
         # Keep-alive references
         self._login_cb: TIMCommCallback | None = None
         self._msg_cb: TIMCommCallback | None = None
+        self._recv_cb: TIMRecvNewMsgCallback | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,6 +96,50 @@ class MessageInjector:
             is_group: True for group message, False for C2C.
         """
         return self._send(target_id, 2 if is_group else 1, text)
+
+    def add_recv_handler(self, handler: Callable[[dict], None]) -> None:
+        """Register a Python handler for every newly received IM message."""
+        with self._recv_condition:
+            self._recv_handlers.append(handler)
+
+    def clear_received_messages(self) -> None:
+        """Clear the in-memory receive queue."""
+        with self._recv_condition:
+            self._received_messages.clear()
+
+    @property
+    def received_messages(self) -> list[dict]:
+        """Return a snapshot of messages received through TIMAddRecvNewMsgCallback."""
+        with self._recv_condition:
+            return list(self._received_messages)
+
+    def wait_for_messages(
+        self,
+        timeout: float = 30.0,
+        predicate: Callable[[dict], bool] | None = None,
+        *,
+        min_count: int = 1,
+    ) -> list[dict]:
+        """Wait until at least ``min_count`` queued messages match ``predicate``.
+
+        The Tencent IM Windows SDK dispatches callbacks through Windows messages
+        in this ctypes setup, so this method pumps messages while waiting.
+        """
+        deadline = time.time() + timeout
+        predicate = predicate or (lambda _msg: True)
+
+        while time.time() < deadline:
+            self._pump_once()
+            with self._recv_condition:
+                matched = [msg for msg in self._received_messages if predicate(msg)]
+                if len(matched) >= min_count:
+                    return matched
+                remaining = max(0.0, min(0.05, deadline - time.time()))
+                if remaining:
+                    self._recv_condition.wait(timeout=remaining)
+
+        with self._recv_condition:
+            return [msg for msg in self._received_messages if predicate(msg)]
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -119,6 +171,8 @@ class MessageInjector:
                 return False
             logger.info("TIMInit OK (sdk_app_id=%d)", self._sdk_app_id)
 
+            self._register_recv_callback()
+
             # -- TIMLogin --
             self._logged_in.clear()
             self._login_error = None
@@ -146,13 +200,9 @@ class MessageInjector:
             self._running = True
 
         # Wait for async login — pump INLINE
-        user32 = ctypes.windll.user32
-        msg = ctypes.wintypes.MSG()
         deadline = time.time() + self._CALLBACK_TIMEOUT
         while time.time() < deadline and not self._logged_in.is_set():
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
+            self._pump_once()
             time.sleep(0.05)
 
         if not self._logged_in.is_set():
@@ -171,6 +221,16 @@ class MessageInjector:
         with self._lock:
             if not self._running or self._dll is None:
                 return
+            if self._recv_cb is not None:
+                try:
+                    self._dll.TIMRemoveRecvNewMsgCallback.argtypes = [ctypes.c_void_p]
+                    self._dll.TIMRemoveRecvNewMsgCallback.restype = None
+                except AttributeError:
+                    pass
+                try:
+                    self._dll.TIMRemoveRecvNewMsgCallback(self._recv_cb)
+                except Exception as exc:
+                    logger.debug("TIMRemoveRecvNewMsgCallback: %s", exc)
             try:
                 self._dll.TIMLogout.restype = ctypes.c_int
                 self._dll.TIMLogout.argtypes = [
@@ -233,15 +293,77 @@ class MessageInjector:
         if inj is not None:
             inj._msg_result.append((code, desc_str))
 
+    def _register_recv_callback(self) -> None:
+        """Wire TIMAddRecvNewMsgCallback and keep the callback alive."""
+        if self._dll is None:
+            return
+
+        self._recv_cb = TIMRecvNewMsgCallback(self._recv_new_msg_handler)
+        try:
+            self._dll.TIMAddRecvNewMsgCallback.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p,
+            ]
+            self._dll.TIMAddRecvNewMsgCallback.restype = None
+        except AttributeError:
+            # Unit-test fakes use normal Python methods, not ctypes functions.
+            pass
+        self._dll.TIMAddRecvNewMsgCallback(self._recv_cb, None)
+        logger.info("TIMAddRecvNewMsgCallback registered")
+
+    def _recv_new_msg_handler(
+        self, json_msg_array: ctypes.c_char_p, _ud: ctypes.c_void_p,
+    ) -> None:
+        """Callback for newly received messages.
+
+        Tencent's C API passes a JSON array string.  Each item is appended to
+        ``_received_messages`` and dispatched to registered Python handlers.
+        """
+        raw = json_msg_array.decode("utf-8", errors="replace") if json_msg_array else "[]"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.exception("Failed to decode TIM receive payload: %r", raw[:500])
+            return
+
+        if isinstance(parsed, dict):
+            messages = [parsed]
+        elif isinstance(parsed, list):
+            messages = [msg for msg in parsed if isinstance(msg, dict)]
+        else:
+            logger.warning("Unexpected TIM receive payload type: %s", type(parsed).__name__)
+            return
+
+        with self._recv_condition:
+            self._received_messages.extend(messages)
+            handlers = list(self._recv_handlers)
+            self._recv_condition.notify_all()
+
+        for message in messages:
+            logger.info(
+                "Received IM message: conv=%s sender=%s",
+                message.get("message_conv_id") or message.get("message_conv_id".upper()),
+                message.get("message_sender") or message.get("message_sender".upper()),
+            )
+            for handler in handlers:
+                try:
+                    handler(message)
+                except Exception:
+                    logger.exception("Receive handler failed")
+
     def _msg_pump(self) -> None:
         """Windows message pump (background thread)."""
+        while self._pump_running:
+            self._pump_once()
+            time.sleep(0.05)
+
+    @staticmethod
+    def _pump_once() -> None:
+        """Dispatch all pending Windows messages for SDK callbacks."""
         user32 = ctypes.windll.user32
         msg = ctypes.wintypes.MSG()
-        while self._pump_running:
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-            time.sleep(0.05)
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
 
     def _send(self, target_id: str, conv_type: int, text: str) -> bool:
         """Send a text message via TIMMsgSendMessage."""
@@ -280,13 +402,9 @@ class MessageInjector:
         logger.debug("TIMMsgSendMessage queued: msg_id=%s target=%s", msg_id, target_id)
 
         # Pump messages while waiting for the callback
-        user32 = ctypes.windll.user32
-        msg = ctypes.wintypes.MSG()
         deadline = time.time() + self._CALLBACK_TIMEOUT
         while time.time() < deadline and not self._msg_result:
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
+            self._pump_once()
             time.sleep(0.05)
 
         if not self._msg_result:

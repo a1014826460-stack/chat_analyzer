@@ -791,25 +791,38 @@ class MainWindowDataMixin:
                 panel.set_running(False)
             return
 
-        # Use remote thread injection to send messages through WuQuan's
-        # existing IM session.  Does NOT call TIMLogin — no kick-off.
-        from app.services.remote_im_sender import RemoteIMSender
+        # Prefer UI Automation because WuQuan exposes the message input Edit
+        # control and searchable group text. Fall back to background window
+        # messages only if UIA is unavailable. Neither path calls SDK login or
+        # injects code into WuQuan.
+        from app.services.background_window_sender import BackgroundWindowMessageSender
+        from app.services.uia_wuquan_sender import UiaWuQuanMessageSender
 
         try:
-            injector = RemoteIMSender()
+            injector = UiaWuQuanMessageSender(msg_db_path=resolved_db.msg_db)
         except (RuntimeError, OSError) as exc:
-            logger.error("RemoteIMSender init failed: %s", exc)
+            logger.error("UiaWuQuanMessageSender init failed: %s", exc)
             panel = getattr(self, "auto_bet_panel", None)
             if panel is not None:
                 panel.set_running(False)
             return
 
         if not injector.startup():
-            logger.error("RemoteIMSender startup failed")
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None:
-                panel.set_running(False)
-            return
+            logger.warning("UiaWuQuanMessageSender startup failed; fallback to BackgroundWindowMessageSender")
+            try:
+                injector = BackgroundWindowMessageSender(msg_db_path=resolved_db.msg_db)
+            except (RuntimeError, OSError) as exc:
+                logger.error("BackgroundWindowMessageSender init failed: %s", exc)
+                panel = getattr(self, "auto_bet_panel", None)
+                if panel is not None:
+                    panel.set_running(False)
+                return
+            if not injector.startup():
+                logger.error("BackgroundWindowMessageSender startup failed")
+                panel = getattr(self, "auto_bet_panel", None)
+                if panel is not None:
+                    panel.set_running(False)
+                return
 
         service.set_injector(injector)
 

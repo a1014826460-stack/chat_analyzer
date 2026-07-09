@@ -1,0 +1,13 @@
+{
+  "flutter.SpKeyAccid": "x1DuArYgV",
+  "flutter.SpKeyAppBaseUrlKey": "https://www.571919.xyz/",
+  "flutter.SpKeyCacheLoginPhone": "15215738838",
+  "flutter.SpKeyCacheTencentAppID": "LYGG88888",
+  "flutter.SpKeyLoginResult-x1DuArYgV": "{\"access_token\":\"eyJhbGciOiJIUzUxMiJ9.eyJ1c2VyX2lkIjoxMDAwMzc4LCJ1c2VyX2tleSI6IjVlNDM4MzY1LTk5MDEtNGNiMi1hMTAyLTcwNzlhNTkzMjI1YSIsInVzZXJuYW1lIjoiMTUyMTU3Mzg4MzgifQ.M7zwRBXu0oeAdWNhwMbUFOnUUmhJjZ04zh1QiRwl7S0tw2xvO7VISY9sOvlnrBXU_lAXmV6PGMXdVc3Bp93_Rw\",\"nickName\":\"齐天大圣\",\"appid\":\"LYGG88888\",\"phonenumber\":\"15215738838\",\"accid\":\"x1DuArYgV\",\"avatar\":\"https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg\",\"userName\":\"15215738838\",\"expires_in\":432000,\"email\":\"\",\"token\":\"eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwhWGLqWORZHpYVDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWRmAkSGUEMy04H6g-zds0u8vDODC7KLk8pcfdJz09LSzZJC3fzztJ30yywcPXIyw028cyMqsm2VagHB6DK6\",\"imAppid\":\"20011216\"}",
+  "flutter.SpKeyToken": "eyJhbGciOiJIUzUxMiJ9.eyJ1c2VyX2lkIjoxMDAwMzc4LCJ1c2VyX2tleSI6IjVlNDM4MzY1LTk5MDEtNGNiMi1hMTAyLTcwNzlhNTkzMjI1YSIsInVzZXJuYW1lIjoiMTUyMTU3Mzg4MzgifQ.M7zwRBXu0oeAdWNhwMbUFOnUUmhJjZ04zh1QiRwl7S0tw2xvO7VISY9sOvlnrBXU_lAXmV6PGMXdVc3Bp93_Rw",
+  "flutter.SpKeyUniqueId": "LYGG88888",
+  "flutter.SpKeyUserSig": "eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwhWGLqWORZHpYVDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWRmAkSGUEMy04H6g-zds0u8vDODC7KLk8pcfdJz09LSzZJC3fzztJ30yywcPXIyw028cyMqsm2VagHB6DK6",
+  "flutter.isClearOld": "1",
+  "TIM_20011216_x1DuArYgV_conversationMap": "[{\"conversationID\":\"C2Cx1DuArYgV\",\"type\":\"C2C\"}]",
+  "TIM_20011216_x1DuArYgV_profile": "[{\"userID\":\"x1DuArYgV\",\"nick\":\"齐天大圣\"}]"
+}

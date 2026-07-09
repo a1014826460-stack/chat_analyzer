@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -21,13 +22,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.models.auto_bet import InjectRecord, StrategyConfig
+from app.models.auto_bet import DEFAULT_ODDS, AutoBetRuntimeState, InjectRecord, StrategyConfig
 
 
 logger = logging.getLogger(__name__)
 
 PLAY_TYPE_OPTIONS = ["大", "小", "单", "双", "大单", "小单", "大双", "小双"]
 SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
+BET_MODE_OPTIONS = [
+    ("压大小", "size"),
+    ("压单双", "parity"),
+    ("压小单大双", "small_odd_big_even"),
+    ("压小双大单", "small_even_big_odd"),
+    ("压三门", "three_doors"),
+]
 
 
 class AutoBetPanel(QGroupBox):
@@ -87,6 +95,24 @@ class AutoBetPanel(QGroupBox):
             line += f"  ({record.error})"
         self._log_edit.append(line)
 
+    def update_runtime_state(self, state: AutoBetRuntimeState) -> None:
+        """Refresh practical win/loss statistics."""
+        self._stats_label.setText(
+            "总下注: {staked:.2f} | 总派彩: {payout:.2f} | 总盈亏: {profit:.2f}\n"
+            "当前倍投档: {step} | 当前连输: {losses} | 已结算: {rounds} | 命中: {wins} | 未中: {loses}\n"
+            "状态: {status}".format(
+                staked=state.total_staked,
+                payout=state.total_payout,
+                profit=state.total_profit,
+                step=state.current_step + 1,
+                losses=state.consecutive_losses,
+                rounds=state.total_rounds,
+                wins=state.win_rounds,
+                loses=state.lose_rounds,
+                status=state.halt_reason if state.halted else ("运行中" if self._running else "已停止"),
+            )
+        )
+
     def get_config(self) -> StrategyConfig:
         """Build config from current UI state."""
         checked_groups: list[str] = []
@@ -112,6 +138,9 @@ class AutoBetPanel(QGroupBox):
             bet_amount=self._amount_spin.value(),
             play_types=checked_plays,
             lock_threshold_sec=self._lock_spin.value(),
+            bet_mode=str(self._mode_combo.currentData() or "size"),
+            martingale_sequence=self._parse_martingale_text(self._martingale_edit.text()),
+            odds=self._odds_from_inputs(),
         )
 
     def load_config(self, config: StrategyConfig) -> None:
@@ -124,8 +153,15 @@ class AutoBetPanel(QGroupBox):
         self._trigger_spin.setValue(config.trigger_threshold)
         self._amount_spin.setValue(config.bet_amount)
         self._lock_spin.setValue(config.lock_threshold_sec)
+        idx = self._mode_combo.findData(config.bet_mode)
+        if idx >= 0:
+            self._mode_combo.setCurrentIndex(idx)
+        self._martingale_edit.setText("-".join(self._format_amount(value) for value in config.martingale_sequence))
         for pt, cb in self._play_checkboxes.items():
             cb.setChecked(pt in config.play_types)
+        for play, edit in self._odds_edits.items():
+            edit.setText(str(config.odds.get(play, DEFAULT_ODDS.get(play, 1.0))))
+        self._sync_play_checkboxes_for_mode()
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -143,6 +179,15 @@ class AutoBetPanel(QGroupBox):
         self._strategy_combo.currentIndexChanged.connect(self._emit_config)
         strategy_row.addWidget(self._strategy_combo, 1)
         layout.addLayout(strategy_row)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("功能:"))
+        self._mode_combo = QComboBox()
+        for label, value in BET_MODE_OPTIONS:
+            self._mode_combo.addItem(label, value)
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self._mode_combo, 1)
+        layout.addLayout(mode_row)
 
         # --- Row: site ---
         site_row = QHBoxLayout()
@@ -191,6 +236,14 @@ class AutoBetPanel(QGroupBox):
         amt_row.addStretch(1)
         layout.addLayout(amt_row)
 
+        martingale_row = QHBoxLayout()
+        martingale_row.addWidget(QLabel("倍投序列:"))
+        self._martingale_edit = QLineEdit("100-200-400-800")
+        self._martingale_edit.setPlaceholderText("例如: 100-200-400-800")
+        self._martingale_edit.textChanged.connect(self._emit_config)
+        martingale_row.addWidget(self._martingale_edit, 1)
+        layout.addLayout(martingale_row)
+
         # --- Play types ---
         play_row = QHBoxLayout()
         play_row.addWidget(QLabel("玩法:"))
@@ -203,6 +256,22 @@ class AutoBetPanel(QGroupBox):
             play_row.addWidget(cb)
         play_row.addStretch(1)
         layout.addLayout(play_row)
+
+        odds_box = QGroupBox("赔率设置（含本金）")
+        odds_layout = QVBoxLayout(odds_box)
+        self._odds_edits: dict[str, QLineEdit] = {}
+        for chunk in (PLAY_TYPE_OPTIONS[:4], PLAY_TYPE_OPTIONS[4:]):
+            row = QHBoxLayout()
+            for play in chunk:
+                row.addWidget(QLabel(f"{play}:"))
+                edit = QLineEdit(str(DEFAULT_ODDS.get(play, 1.0)))
+                edit.setMaximumWidth(56)
+                edit.textChanged.connect(self._emit_config)
+                self._odds_edits[play] = edit
+                row.addWidget(edit)
+            row.addStretch(1)
+            odds_layout.addLayout(row)
+        layout.addWidget(odds_box)
 
         # --- Lock threshold ---
         lock_row = QHBoxLayout()
@@ -231,6 +300,11 @@ class AutoBetPanel(QGroupBox):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
+        layout.addWidget(QLabel("实战统计:"))
+        self._stats_label = QLabel("总下注: 0.00 | 总派彩: 0.00 | 总盈亏: 0.00\n当前倍投档: 1 | 当前连输: 0 | 已结算: 0 | 命中: 0 | 未中: 0\n状态: 已停止")
+        self._stats_label.setWordWrap(True)
+        layout.addWidget(self._stats_label)
+
         # --- Run log ---
         layout.addWidget(QLabel("运行日志:"))
         self._log_edit = QTextEdit()
@@ -246,6 +320,10 @@ class AutoBetPanel(QGroupBox):
     def _emit_config(self) -> None:
         self.config_changed.emit(self.get_config())
 
+    def _on_mode_changed(self) -> None:
+        self._sync_play_checkboxes_for_mode()
+        self._emit_config()
+
     def _on_start(self) -> None:
         self.set_running(True)
         self.start_clicked.emit()
@@ -253,3 +331,52 @@ class AutoBetPanel(QGroupBox):
     def _on_stop(self) -> None:
         self.set_running(False)
         self.stop_clicked.emit()
+
+    def _sync_play_checkboxes_for_mode(self) -> None:
+        mode = str(self._mode_combo.currentData() or "size")
+        allowed = {
+            "size": {"大", "小"},
+            "parity": {"单", "双"},
+            "small_odd_big_even": {"小单", "大双"},
+            "small_even_big_odd": {"小双", "大单"},
+            "three_doors": {"小单", "大双", "小双", "大单"},
+        }.get(mode, set(PLAY_TYPE_OPTIONS))
+        defaults = {
+            "size": {"大", "小"},
+            "parity": {"单", "双"},
+            "small_odd_big_even": {"小单", "大双"},
+            "small_even_big_odd": {"小双", "大单"},
+            "three_doors": {"小单", "大双", "小双"},
+        }.get(mode, allowed)
+        for play, cb in self._play_checkboxes.items():
+            cb.blockSignals(True)
+            cb.setEnabled(play in allowed)
+            cb.setChecked(play in defaults if play in allowed else False)
+            cb.blockSignals(False)
+
+    @staticmethod
+    def _parse_martingale_text(text: str) -> list[float]:
+        values: list[float] = []
+        for chunk in str(text or "").replace(",", "-").split("-"):
+            try:
+                value = float(chunk.strip())
+            except ValueError:
+                continue
+            if value > 0:
+                values.append(value)
+        return values or [10.0]
+
+    def _odds_from_inputs(self) -> dict[str, float]:
+        odds = dict(DEFAULT_ODDS)
+        for play, edit in self._odds_edits.items():
+            try:
+                value = float(edit.text().strip())
+            except ValueError:
+                continue
+            if value > 0:
+                odds[play] = value
+        return odds
+
+    @staticmethod
+    def _format_amount(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else str(value)

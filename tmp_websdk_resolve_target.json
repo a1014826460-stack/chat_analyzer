@@ -1,0 +1,386 @@
+{
+  "version": "3.2.1",
+  "methods": [
+    "accept",
+    "acceptFriendApplication",
+    "addConversationsToGroup",
+    "addFriend",
+    "addGroupMember",
+    "addMessageReaction",
+    "addSignalingListener",
+    "addToBlacklist",
+    "addToFriendGroup",
+    "callExperimentalAPI",
+    "cancel",
+    "changeGroupOwner",
+    "checkFriend",
+    "clearHistoryMessage",
+    "convertVoiceToText",
+    "createAudioMessage",
+    "createConversationGroup",
+    "createCustomMessage",
+    "createFaceMessage",
+    "createFileMessage",
+    "createForwardMessage",
+    "createFriendGroup",
+    "createGroup",
+    "createImageMessage",
+    "createLocationMessage",
+    "createMergerMessage",
+    "createTextAtMessage",
+    "createTextMessage",
+    "createTopicInCommunity",
+    "createVideoMessage",
+    "decreaseGroupCounter",
+    "deleteConversation",
+    "deleteConversationGroup",
+    "deleteConversationsFromGroup",
+    "deleteFriend",
+    "deleteFriendApplication",
+    "deleteFriendGroup",
+    "deleteGroupAttributes",
+    "deleteGroupMember",
+    "deleteMessage",
+    "deleteMessageExtensions",
+    "deleteTopicFromCommunity",
+    "destroy",
+    "dismissGroup",
+    "downloadMergerMessage",
+    "findMessage",
+    "getAllUserListOfMessageReaction",
+    "getBlacklist",
+    "getConversationGroupList",
+    "getConversationList",
+    "getConversationProfile",
+    "getFriendApplicationList",
+    "getFriendGroupList",
+    "getFriendList",
+    "getFriendProfile",
+    "getGroupApplicationList",
+    "getGroupAttributes",
+    "getGroupCounters",
+    "getGroupList",
+    "getGroupMemberList",
+    "getGroupMemberProfile",
+    "getGroupMessageReadMemberList",
+    "getGroupOnlineMemberCount",
+    "getGroupProfile",
+    "getJoinedCommunityList",
+    "getLoginUser",
+    "getMessageExtensions",
+    "getMessageList",
+    "getMessageListHopping",
+    "getMessageReactions",
+    "getMessageReadReceiptList",
+    "getMyProfile",
+    "getSignalingInfo",
+    "getTopicList",
+    "getTotalUnreadMessageCount",
+    "getUserProfile",
+    "getUserStatus",
+    "handleGroupApplication",
+    "increaseGroupCounter",
+    "initGroupAttributes",
+    "invite",
+    "inviteInGroup",
+    "inviteInGroupSync",
+    "inviteSync",
+    "isReady",
+    "joinGroup",
+    "login",
+    "logout",
+    "markConversation",
+    "markGroupMemberList",
+    "modifyInvitation",
+    "modifyMessage",
+    "off",
+    "on",
+    "once",
+    "pinConversation",
+    "quitGroup",
+    "refuseFriendApplication",
+    "registerPlugin",
+    "reject",
+    "removeFromBlacklist",
+    "removeFromFriendGroup",
+    "removeMessageReaction",
+    "removeSignalingListener",
+    "renameConversationGroup",
+    "renameFriendGroup",
+    "resendMessage",
+    "revokeMessage",
+    "searchCloudMessages",
+    "searchGroupByID",
+    "sendMessage",
+    "sendMessageReadReceipt",
+    "setAllMessageRead",
+    "setConversationCustomData",
+    "setConversationDraft",
+    "setFriendApplicationRead",
+    "setGroupAttributes",
+    "setGroupCounters",
+    "setGroupMemberCustomField",
+    "setGroupMemberMuteTime",
+    "setGroupMemberNameCard",
+    "setGroupMemberRole",
+    "setLogLevel",
+    "setMessageExtensions",
+    "setMessageRead",
+    "setMessageRemindType",
+    "setSelfStatus",
+    "subscribeUserStatus",
+    "translateText",
+    "unsubscribeUserStatus",
+    "updateFriend",
+    "updateGroupProfile",
+    "updateMyProfile",
+    "updateTopicProfile"
+  ],
+  "errors": {},
+  "login": {
+    "code": 0,
+    "data": {
+      "errorCode": 0,
+      "errorInfo": "success",
+      "actionStatus": "OK",
+      "a2Key": "fdf65c3e80d7b08215fe00484b922d8af9a7c94ce14b39e5f8d4cb30e58666668b0e7d6bb3080b632afd0fbfc6c51ed4ecd64ab5a704321652d961823be4125cff0edca4417e4da1",
+      "tinyID": "144115267581171584",
+      "instanceID": 252487066,
+      "helloInterval": 120,
+      "timeStamp": 1783500943,
+      "purchaseBits": "1111111111111111000000000010000000000000000000001111111111111111"
+    }
+  },
+  "getUserProfile_targets": {
+    "code": 0,
+    "data": [
+      {
+        "userID": "x1DuArYgV",
+        "nick": "齐天大圣",
+        "gender": "Gender_Type_Unknown",
+        "birthday": 0,
+        "location": "",
+        "selfSignature": "心想事成",
+        "allowType": "AllowType_Type_DenyAny",
+        "language": 0,
+        "avatar": "https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg",
+        "messageSettings": 0,
+        "adminForbidType": "AdminForbid_Type_None",
+        "level": 0,
+        "role": 0,
+        "lastUpdatedTime": 1783500945553,
+        "profileCustomField": [
+          {
+            "key": "Tag_Profile_Custom_color",
+            "value": ""
+          },
+          {
+            "key": "Tag_Profile_Custom_icon",
+            "value": ""
+          },
+          {
+            "key": "Tag_Profile_Custom_num",
+            "value": "2"
+          }
+        ]
+      },
+      {
+        "userID": "A7MYtCxL8",
+        "nick": "用户761042",
+        "gender": "Gender_Type_Unknown",
+        "birthday": 0,
+        "location": "",
+        "selfSignature": "",
+        "allowType": "AllowType_Type_NeedConfirm",
+        "language": 0,
+        "avatar": "https://img.e18888.com/path/avatar/20260703/607f2b2b57f04016843913d816d6c7c5.png",
+        "messageSettings": 0,
+        "adminForbidType": "AdminForbid_Type_None",
+        "level": 0,
+        "role": 0,
+        "lastUpdatedTime": 1783500945548,
+        "profileCustomField": [
+          {
+            "key": "Tag_Profile_Custom_color",
+            "value": ""
+          },
+          {
+            "key": "Tag_Profile_Custom_icon",
+            "value": ""
+          },
+          {
+            "key": "Tag_Profile_Custom_num",
+            "value": "2"
+          }
+        ]
+      }
+    ]
+  },
+  "getFriendList": {
+    "code": 0,
+    "data": [
+      {
+        "userID": "x1DuArYgV",
+        "remark": "",
+        "groupList": [],
+        "source": "AddSource_Type_Android",
+        "addTime": 1783089140,
+        "friendCustomField": [],
+        "timestamp": 0,
+        "profile": {
+          "userID": "x1DuArYgV",
+          "nick": "",
+          "gender": "",
+          "birthday": 0,
+          "location": "",
+          "selfSignature": "",
+          "allowType": "AllowType_Type_AllowAny",
+          "language": 0,
+          "avatar": "",
+          "messageSettings": 0,
+          "adminForbidType": "AdminForbid_Type_None",
+          "level": 0,
+          "role": 0,
+          "lastUpdatedTime": 0,
+          "profileCustomField": []
+        }
+      }
+    ]
+  },
+  "checkFriend_targets": {
+    "code": 0,
+    "data": {
+      "successUserIDList": [
+        {
+          "userID": "x1DuArYgV",
+          "code": 0,
+          "relation": "CheckResult_Type_BothWay"
+        },
+        {
+          "userID": "A7MYtCxL8",
+          "code": 0,
+          "relation": "CheckResult_Type_NoRelation"
+        }
+      ],
+      "failureUserIDList": [
+        {
+          "userID": "@TLS#NOT_FOUND",
+          "code": 30003,
+          "message": "Err_SNS_Invalid_To_Account"
+        }
+      ]
+    }
+  },
+  "getConversationList": {
+    "code": 0,
+    "data": {
+      "conversationList": [
+        {
+          "conversationID": "C2Cx1DuArYgV",
+          "unreadCount": 0,
+          "type": "C2C",
+          "lastMessage": {
+            "lastTime": 1783397221,
+            "lastSequence": 1207020001,
+            "fromAccount": "A7MYtCxL8",
+            "type": "TIMTextElem",
+            "payload": {
+              "text": "gIBfdZt8vZ/DSrAHYlouNg=="
+            },
+            "cloudCustomData": "{\"messageFeature\":{\"needTyping\":1,\"version\":1}}",
+            "isRevoked": false,
+            "onlineOnlyFlag": false,
+            "nick": "",
+            "nameCard": "",
+            "version": 0,
+            "isPeerRead": false,
+            "revoker": null,
+            "messageForShow": "gIBfdZt8vZ/DSrAHYlouNg=="
+          },
+          "_isInfoCompleted": false,
+          "peerReadTime": 1783397098,
+          "groupAtInfoList": [],
+          "remark": "",
+          "isPinned": false,
+          "messageRemindType": "AcceptAndNotify",
+          "markList": [],
+          "customData": "",
+          "conversationGroupList": [],
+          "draftText": "",
+          "userProfile": {
+            "userID": "x1DuArYgV",
+            "nick": "齐天大圣",
+            "gender": "",
+            "birthday": 0,
+            "location": "",
+            "selfSignature": "",
+            "allowType": "AllowType_Type_AllowAny",
+            "language": 0,
+            "avatar": "https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg",
+            "messageSettings": 0,
+            "adminForbidType": "AdminForbid_Type_None",
+            "level": 0,
+            "role": 0,
+            "lastUpdatedTime": 0,
+            "profileCustomField": []
+          }
+        },
+        {
+          "conversationID": "C2C10001",
+          "unreadCount": 0,
+          "type": "C2C",
+          "lastMessage": {
+            "lastTime": 1779981617,
+            "lastSequence": 36889916,
+            "fromAccount": "10001",
+            "type": "TIMTextElem",
+            "payload": {
+              "text": "📢【重要提醒｜谨防电信诈骗】\r\n\r\n亲爱的用户：\r\n\r\n近期，公安部公布了当前十大高发电信网络诈骗类型，案件频发、手法升级，已造成大量财产损失！为保护您的财产安全，请务必提高警惕，牢记以下高危诈骗类型：\r\n\r\n🚨 十大高发诈骗类型警示：\r\n1️⃣ 刷单返利类诈骗：打着“兼职刷单”“轻松赚钱”旗号，初期小额返利博取信任，后期以“账户冻结”等理由骗取巨额资金。\r\n2️⃣ 虚假投资理财类诈骗：伪装“投资导师”，通过假截图、假App诱导开户转账，最终无法提现。\r\n3️⃣ 虚假购物/服务类诈骗：低价引流私下交易，后续以“税费”“清关”等为由多次索款。\r\n4️⃣ 冒充电商/物流客服类诈骗：借快递问题联系受害人，诱导下载App或开启屏幕共享，远程操控盗走资金。\r\n5️⃣ 贷款/征信类诈骗：虚假放贷平台索要“保证金”“解冻费”等，放款始终遥遥无期。\r\n6️⃣ 冒充领导/熟人类诈骗：通过盗号或伪装身份，以“急用钱”为由骗取转账。\r\n7️⃣ 冒充公检法类诈骗：声称你涉嫌犯罪，诱导转账至“安全账户”，实为诈骗账户。\r\n8️⃣ 婚恋交友类诈骗：包装“白富美/高富帅”人设，骗取感情后以各种理由索要钱财。\r\n9️⃣ 网络游戏虚假交易类诈骗：诱导脱离正规平台，转账购买账号/道具后被拉黑。\r\n🔟 机票退改签类诈骗：谎称航班取消，诱导下载App或共享屏幕盗取资金。\r\n\r\n🔐 反诈提示：\r\n✅ 所有涉及转账的请求务必核实！\r\n✅ 不轻信陌生人信息，不下载未知App！\r\n✅ 所有投资理财、网购、贷款请通过正规平台操作！\r\n✅ 不随意开启屏幕共享、远程协助功能！\r\n\r\n让我们共同守护您的“钱袋子”！\r\n如需协助，欢迎联系我方客服/管理员。\r\n\r\n—【吾圈】"
+            },
+            "cloudCustomData": "",
+            "isRevoked": false,
+            "onlineOnlyFlag": false,
+            "nick": "",
+            "nameCard": "",
+            "version": 0,
+            "isPeerRead": false,
+            "revoker": null,
+            "messageForShow": "📢【重要提醒｜谨防电信诈骗】\r\n\r\n亲爱的用户：\r\n\r\n近期，公安部公布了当前十大高发电信网络诈骗类型，案件频发、手法升级，已造成大量财产损失！为保护您的财产安全，请务必提高警惕，牢记以下高危诈骗类型：\r\n\r\n🚨 十大高发诈骗类型警示：\r\n1️⃣ 刷单返利类诈骗：打着“兼职刷单”“轻松赚钱”旗号，初期小额返利博取信任，后期以“账户冻结”等理由骗取巨额资金。\r\n2️⃣ 虚假投资理财类诈骗：伪装“投资导师”，通过假截图、假App诱导开户转账，最终无法提现。\r\n3️⃣ 虚假购物/服务类诈骗：低价引流私下交易，后续以“税费”“清关”等为由多次索款。\r\n4️⃣ 冒充电商/物流客服类诈骗：借快递问题联系受害人，诱导下载App或开启屏幕共享，远程操控盗走资金。\r\n5️⃣ 贷款/征信类诈骗：虚假放贷平台索要“保证金”“解冻费”等，放款始终遥遥无期。\r\n6️⃣ 冒充领导/熟人类诈骗：通过盗号或伪装身份，以“急用钱”为由骗取转账。\r\n7️⃣ 冒充公检法类诈骗：声称你涉嫌犯罪，诱导转账至“安全账户”，实为诈骗账户。\r\n8️⃣ 婚恋交友类诈骗：包装“白富美/高富帅”人设，骗取感情后以各种理由索要钱财。\r\n9️⃣ 网络游戏虚假交易类诈骗：诱导脱离正规平台，转账购买账号/道具后被拉黑。\r\n🔟 机票退改签类诈骗：谎称航班取消，诱导下载App或共享屏幕盗取资金。\r\n\r\n🔐 反诈提示：\r\n✅ 所有涉及转账的请求务必核实！\r\n✅ 不轻信陌生人信息，不下载未知App！\r\n✅ 所有投资理财、网购、贷款请通过正规平台操作！\r\n✅ 不随意开启屏幕共享、远程协助功能！\r\n\r\n让我们共同守护您的“钱袋子”！\r\n如需协助，欢迎联系我方客服/管理员。\r\n\r\n—【吾圈】"
+          },
+          "_isInfoCompleted": false,
+          "peerReadTime": 0,
+          "groupAtInfoList": [],
+          "remark": "",
+          "isPinned": false,
+          "messageRemindType": "AcceptAndNotify",
+          "markList": [],
+          "customData": "",
+          "conversationGroupList": [],
+          "draftText": "",
+          "userProfile": {
+            "userID": "10001",
+            "nick": "吾圈通知",
+            "gender": "",
+            "birthday": 0,
+            "location": "",
+            "selfSignature": "",
+            "allowType": "AllowType_Type_AllowAny",
+            "language": 0,
+            "avatar": "https://img.e18888.com/headImg.png",
+            "messageSettings": 0,
+            "adminForbidType": "AdminForbid_Type_None",
+            "level": 0,
+            "role": 0,
+            "lastUpdatedTime": 0,
+            "profileCustomField": []
+          }
+        }
+      ],
+      "isSyncCompleted": true
+    }
+  },
+  "getBlacklist": {
+    "code": 0,
+    "data": []
+  }
+}

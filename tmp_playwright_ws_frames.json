@@ -1,0 +1,1605 @@
+{
+  "result": {
+    "events": [
+      {
+        "event": "ready",
+        "e": {
+          "name": "sdkStateReady"
+        }
+      }
+    ],
+    "login": {
+      "code": 0,
+      "data": {
+        "errorCode": 0,
+        "errorInfo": "success",
+        "actionStatus": "OK",
+        "a2Key": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+        "tinyID": "144115267581171584",
+        "instanceID": 251744844,
+        "helloInterval": 120,
+        "timeStamp": 1783426721,
+        "purchaseBits": "1111111111111111000000000010000000000000000000001111111111111111"
+      }
+    },
+    "msg": {
+      "ID": "144115267581171584-1783426723-89919044",
+      "conversationID": "C2CLYGG88888",
+      "conversationType": "C2C",
+      "time": 1783426724,
+      "sequence": 2018430001,
+      "clientSequence": 2018430001,
+      "random": 89919044,
+      "priority": "Normal",
+      "nick": "用户761042",
+      "avatar": "https://img.e18888.com/path/avatar/20260703/607f2b2b57f04016843913d816d6c7c5.png",
+      "isPeerRead": false,
+      "nameCard": "",
+      "hasRiskContent": false,
+      "_elements": [
+        {
+          "type": "TIMTextElem",
+          "content": {
+            "text": "WSS Web?????"
+          }
+        }
+      ],
+      "isPlaceMessage": 0,
+      "isRevoked": false,
+      "from": "A7MYtCxL8",
+      "to": "LYGG88888",
+      "flow": "out",
+      "isSystemMessage": false,
+      "protocol": "JSON",
+      "isResend": false,
+      "isRead": true,
+      "status": "unSend",
+      "_onlineOnlyFlag": false,
+      "_groupAtInfoList": [],
+      "_relayFlag": false,
+      "atUserList": [],
+      "cloudCustomData": "{\"messageFeature\":{\"needTyping\":1,\"version\":1}}",
+      "isDeleted": false,
+      "isModified": false,
+      "_isExcludedFromUnreadCount": false,
+      "_isExcludedFromLastMessage": false,
+      "clientTime": 1783426723,
+      "senderTinyID": "144115267581171584",
+      "readReceiptInfo": {},
+      "needReadReceipt": false,
+      "version": 0,
+      "isBroadcastMessage": false,
+      "isSupportExtension": false,
+      "revoker": "",
+      "revokerInfo": {
+        "userID": "",
+        "nick": "",
+        "avatar": ""
+      },
+      "revokeReason": "",
+      "payload": {
+        "text": "WSS Web?????"
+      },
+      "type": "TIMTextElem"
+    },
+    "sendError": {
+      "message": "Invalid sender or receiver identifier!",
+      "code": 20003,
+      "data": {
+        "message": {
+          "ID": "144115267581171584-1783426723-89919044",
+          "conversationID": "C2CLYGG88888",
+          "conversationType": "C2C",
+          "time": 1783426724,
+          "sequence": 2018430001,
+          "clientSequence": 2018430001,
+          "random": 89919044,
+          "priority": "Normal",
+          "nick": "用户761042",
+          "avatar": "https://img.e18888.com/path/avatar/20260703/607f2b2b57f04016843913d816d6c7c5.png",
+          "isPeerRead": false,
+          "nameCard": "",
+          "hasRiskContent": false,
+          "_elements": [
+            {
+              "type": "TIMTextElem",
+              "content": {
+                "text": "WSS Web?????"
+              }
+            }
+          ],
+          "isPlaceMessage": 0,
+          "isRevoked": false,
+          "from": "A7MYtCxL8",
+          "to": "LYGG88888",
+          "flow": "out",
+          "isSystemMessage": false,
+          "protocol": "JSON",
+          "isResend": false,
+          "isRead": true,
+          "status": "fail",
+          "_onlineOnlyFlag": false,
+          "_groupAtInfoList": [],
+          "_relayFlag": false,
+          "atUserList": [],
+          "cloudCustomData": "{\"messageFeature\":{\"needTyping\":1,\"version\":1}}",
+          "isDeleted": false,
+          "isModified": false,
+          "_isExcludedFromUnreadCount": false,
+          "_isExcludedFromLastMessage": false,
+          "clientTime": 1783426723,
+          "senderTinyID": "144115267581171584",
+          "readReceiptInfo": {},
+          "needReadReceipt": false,
+          "version": 0,
+          "isBroadcastMessage": false,
+          "isSupportExtension": false,
+          "revoker": "",
+          "revokerInfo": {
+            "userID": "",
+            "nick": "",
+            "avatar": ""
+          },
+          "revokeReason": "",
+          "payload": {
+            "text": "WSS Web?????"
+          },
+          "type": "TIMTextElem"
+        }
+      },
+      "stack": "Error\n    at i.value (https://www.571919.xyz/node_modules/@tencentcloud/chat/index.js:1:416969)\n    at https://www.571919.xyz/node_modules/@tencentcloud/chat/index.js:1:415889\n    at async eval (eval at evaluate (:303:30), <anonymous>:12:25)\n    at async <anonymous>:329:30"
+    }
+  },
+  "frames": [
+    {
+      "ev": "ws",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1"
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 538,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsInN0YXR1c19pbnN0aWQiOjAsInNka2FwcGlkIjoyMDAxMTIxNiwiY29udGVudHR5cGUiOiJqc29uIiwicmVxdGltZSI6MTc4MzQyNjcyMCwiaWRlbnRpZmllciI6IkE3TVl0Q3hMOCIsInVzZXJzaWciOiJlSnlyVmdyeENkWXJTeTFTc2xJeTBqTlEwZ0h6TTFOUzgwb3kwekxCd283bXZwRWx6aFUqRmxESjRwVHN4SUtDekJTUURnTURRME1qUXpPb1RHcEZRV1pScXBLVm9aR2xtWUdCQVVTd0pETVhKR1J1WVd4c2JtSmhiZ0kxSkRNZHFEODRLY3ZYTUtzc01pMnp6TnU5TkN3b3M2QWd6VGZRT1Z6YjJLbXl3cnZRTUNnNU1xSWkxU3ZGSk16VFZxa1dBSmlQTW5JXyIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoiaW1fb3Blbl9zdGF0dXMud3Nsb2dpbiIsInNlcSI6NTE2NzcxNDV9LCJib2R5Ijp7IlN0YXRlIjoiT25saW5lIiwiaXNfd2ViX3VuaWFwcCI6MCwiSW5zdFR5cGUiOjB9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c227374617475735f696e73746964223a302c2273646b6170706964223a32303031313231362c22"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "status_instid": 0,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426720,
+            "identifier": "A7MYtCxL8",
+            "usersig": "eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwo7mvpElzhU*FlDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWxsbmJhbgI1JDMdqD84KcvXMKssMi2zzNu9NCwos6AgzTfQOVzb2KmywrvQMCg5MqIi1SvFJMzTVqkWAJiPMnI_",
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "im_open_status.wslogin",
+            "seq": 51677145
+          },
+          "body": {
+            "State": "Online",
+            "is_web_uniapp": 0,
+            "InstType": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 484,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsInN0YXR1c19pbnN0aWQiOjAsInNka2FwcGlkIjoyMDAxMTIxNiwiY29udGVudHR5cGUiOiJqc29uIiwicmVxdGltZSI6MTc4MzQyNjcyMSwiaWRlbnRpZmllciI6IkE3TVl0Q3hMOCIsInVzZXJzaWciOiJlSnlyVmdyeENkWXJTeTFTc2xJeTBqTlEwZ0h6TTFOUzgwb3kwekxCd283bXZwRWx6aFUqRmxESjRwVHN4SUtDekJTUURnTURRME1qUXpPb1RHcEZRV1pScXBLVm9aR2xtWUdCQVVTd0pETVhKR1J1WVd4c2JtSmhiZ0kxSkRNZHFEODRLY3ZYTUtzc01pMnp6TnU5TkN3b3M2QWd6VGZRT1Z6YjJLbXl3cnZRTUNnNU1xSWkxU3ZGSk16VFZxa1dBSmlQTW5JXyIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoiaGVhcnRiZWF0LmFsaXZlIiwic2VxIjo1MTY3NzE0Nn0sImJvZHkiOnt9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c227374617475735f696e73746964223a302c2273646b6170706964223a32303031313231362c22"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "status_instid": 0,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426721,
+            "identifier": "A7MYtCxL8",
+            "usersig": "eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwo7mvpElzhU*FlDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWxsbmJhbgI1JDMdqD84KcvXMKssMi2zzNu9NCwos6AgzTfQOVzb2KmywrvQMCg5MqIi1SvFJMzTVqkWAJiPMnI_",
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "heartbeat.alive",
+            "seq": 51677146
+          },
+          "body": {}
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 133,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJoZWFydGJlYXQuYWxpdmUiLCJzZXEiOjUxNjc3MTQ2LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjAsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnt9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a226865617274626561742e616c697665222c22736571223a35313637373134362c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f6b"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "heartbeat.alive",
+            "seq": 51677146,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {}
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 524,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJpbV9vcGVuX3N0YXR1cy53c2xvZ2luIiwic2VxIjo1MTY3NzE0NSwidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IkVycm9yQ29kZSI6MCwiRXJyb3JJbmZvIjoic3VjY2VzcyIsIkFjdGlvblN0YXR1cyI6Ik9LIiwiQTJLZXkiOiJlZDViM2RhMjU5YzkwNmVlODc0NTgyZDY5Y2QxMThhMzQ5ZWJhMTI1YjY3MjBhYmQxOGNlYjBjZDM2NTYwYTQ1MGM4YTA5MzNhMjY2YzgyNDA1ODUxNWI0OTA1MzcwOWQ3YjVhODlkNDMwZjg0NzE2ZmFlOTZlYjBmMjQ4YmJmZjFlZDZjNzc1ZDhmOWJkMzUiLCJUaW55SWQiOiIxNDQxMTUyNjc1ODExNzE1ODQiLCJJbnN0SWQiOjI1MTc0NDg0NCwiSGVsbG9JbnRlcnZhbCI6MTIwLCJUaW1lU3RhbXAiOjE3ODM0MjY3MjEsIlB1cmNoYXNlQml0cyI6IjExMTExMTExMTExMTExMTEwMDAwMDAwMDAwMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDExMTExMTExMTExMTExMTEifX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22696d5f6f70656e5f7374617475732e77736c6f67696e222c22736571223a35313637373134352c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c2272657473"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "im_open_status.wslogin",
+            "seq": 51677145,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "ErrorCode": 0,
+            "ErrorInfo": "success",
+            "ActionStatus": "OK",
+            "A2Key": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "TinyId": "144115267581171584",
+            "InstId": 251744844,
+            "HelloInterval": 120,
+            "TimeStamp": 1783426721,
+            "PurchaseBits": "1111111111111111000000000010000000000000000000001111111111111111"
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 551,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoicHJvZmlsZS5wb3J0cmFpdF9nZXRfYWxsIiwic2VxIjo1MTY3NzE0N30sImJvZHkiOnsiRnJvbV9BY2NvdW50IjoiQTdNWXRDeEw4IiwiVXNlckl0ZW0iOlt7IlRvX0FjY291bnQiOiJBN01ZdEN4TDgiLCJTdGFuZGFyZFNlcXVlbmNlIjowLCJDdXN0b21TZXF1ZW5jZSI6MH1dfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677147
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "UserItem": [
+              {
+                "To_Account": "A7MYtCxL8",
+                "StandardSequence": 0,
+                "CustomSequence": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 514,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoic25zLmJsYWNrX2xpc3RfZ2V0Iiwic2VxIjo1MTY3NzE0OH0sImJvZHkiOnsiRnJvbV9BY2NvdW50IjoiQTdNWXRDeEw4IiwiU3RhcnRJbmRleCI6MCwiTWF4TGltaXRlZCI6MTAwLCJMYXN0U2VxdWVuY2UiOjB9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "sns.black_list_get",
+            "seq": 51677148
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "StartIndex": 0,
+            "MaxLimited": 100,
+            "LastSequence": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 584,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoicmVjZW50Y29udGFjdC5wYWdlX2dldCIsInNlcSI6NTE2NzcxNDl9LCJib2R5Ijp7IkZyb21fQWNjb3VudCI6IkE3TVl0Q3hMOCIsIlRpbWVTdGFtcCI6MCwiU3RhcnRJbmRleCI6MCwiVG9wVGltZVN0YW1wIjowLCJUb3BTdGFydEluZGV4IjowLCJPcmRlclR5cGUiOjEsIk1zZ0Fzc2lzdEZsYWdzIjoxNSwiQXNzaXN0RmxhZ3MiOjMxfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "recentcontact.page_get",
+            "seq": 51677149
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "TimeStamp": 0,
+            "StartIndex": 0,
+            "TopTimeStamp": 0,
+            "TopStartIndex": 0,
+            "OrderType": 1,
+            "MsgAssistFlags": 15,
+            "AssistFlags": 31
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 710,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoiZ3JvdXBfb3Blbl9odHRwX3N2Yy5nZXRfam9pbmVkX2dyb3VwX2xpc3QiLCJzZXEiOjUxNjc3MTUwfSwiYm9keSI6eyJNZW1iZXJfQWNjb3VudCI6IkE3TVl0Q3hMOCIsIkxpbWl0IjoyMDAsIk9mZnNldCI6MCwiUmVzcG9uc2VGaWx0ZXIiOnsiR3JvdXBCYXNlSW5mb0ZpbHRlciI6WyJUeXBlIiwiTmFtZSIsIkZhY2VVcmwiLCJOZXh0TXNnU2VxIiwiTGFzdE1zZ1RpbWUiLCJBdEluZm9MaXN0IiwiTGFzdFJlY2FsbFRpbWUiXSwiU2VsZkluZm9GaWx0ZXIiOlsiUm9sZSIsIkpvaW5UaW1lIiwiTXNnRmxhZyIsIk1zZ1NlcSJdfSwiU3VwcG9ydFRvcGljIjowfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "group_open_http_svc.get_joined_group_list",
+            "seq": 51677150
+          },
+          "body": {
+            "Member_Account": "A7MYtCxL8",
+            "Limit": 200,
+            "Offset": 0,
+            "ResponseFilter": {
+              "GroupBaseInfoFilter": [
+                "Type",
+                "Name",
+                "FaceUrl",
+                "NextMsgSeq",
+                "LastMsgTime",
+                "AtInfoList",
+                "LastRecallTime"
+              ],
+              "SelfInfoFilter": [
+                "Role",
+                "JoinTime",
+                "MsgFlag",
+                "MsgSeq"
+              ]
+            },
+            "SupportTopic": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 510,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoib3BlbmltLmdldG1zZyIsInNlcSI6NTE2NzcxNTF9LCJib2R5Ijp7IkNvb2tpZSI6IiIsIlN5bmNGbGFnIjowLCJOZWVkQWJzdHJhY3QiOjEsIklzT25saW5lU3luYyI6MCwiTmVlZFNpZ25hbGluZyI6MX19",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "openim.getmsg",
+            "seq": 51677151
+          },
+          "body": {
+            "Cookie": "",
+            "SyncFlag": 0,
+            "NeedAbstract": 1,
+            "IsOnlineSync": 0,
+            "NeedSignaling": 1
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 516,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoic25zLmZyaWVuZF9nZXQiLCJzZXEiOjUxNjc3MTUyfSwiYm9keSI6eyJGcm9tX0FjY291bnQiOiJBN01ZdEN4TDgiLCJTdGFydEluZGV4IjowLCJTdGFuZGFyZFNlcXVlbmNlIjowLCJDdXN0b21TZXF1ZW5jZSI6MH19",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "sns.friend_get",
+            "seq": 51677152
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "StartIndex": 0,
+            "StandardSequence": 0,
+            "CustomSequence": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 513,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoic25zLmdyb3VwX2dldCIsInNlcSI6NTE2NzcxNTN9LCJib2R5Ijp7IkZyb21fQWNjb3VudCI6IkE3TVl0Q3hMOCIsIkxhc3RTZXF1ZW5jZSI6MCwiTmVlZEZyaWVuZCI6Ik5lZWRfRnJpZW5kX1R5cGVfWWVzIn19",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "sns.group_get",
+            "seq": 51677153
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "LastSequence": 0,
+            "NeedFriend": "Need_Friend_Type_Yes"
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 547,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoic25zLnBlbmRlbmN5X2dldCIsInNlcSI6NTE2NzcxNTR9LCJib2R5Ijp7IkZyb21fQWNjb3VudCI6IkE3TVl0Q3hMOCIsIlBlbmRlbmN5VHlwZSI6IlBlbmRlbmN5X1R5cGVfQm90aCIsIlN0YXJ0VGltZSI6MCwiTWF4TGltaXRlZCI6MTAwLCJMYXN0U2VxdWVuY2UiOjB9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "sns.pendency_get",
+            "seq": 51677154
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "PendencyType": "Pendency_Type_Both",
+            "StartTime": 0,
+            "MaxLimited": 100,
+            "LastSequence": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 496,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoiaW1fc2RrX2NvbmZpZ19tZ3IuZmV0Y2hfY29uZmlnIiwic2VxIjo1MTY3NzE1NX0sImJvZHkiOnsidWludDMyX3Nka2FwcGlkIjoyMDAxMTIxNiwidWludDY0X3ZlcnNpb24iOjB9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "im_sdk_config_mgr.fetch_config",
+            "seq": 51677155
+          },
+          "body": {
+            "uint32_sdkappid": 20011216,
+            "uint64_version": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 492,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoiaW1fc2RrX2NvbmZpZ19tZ3IuZmV0Y2hfaW1zZGtfcHVyY2hhc2VfYml0c3YyIiwic2VxIjo1MTY3NzE1Nn0sImJvZHkiOnsidWludDMyX3Nka2FwcGlkIjoyMDAxMTIxNn19",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "im_sdk_config_mgr.fetch_imsdk_purchase_bitsv2",
+            "seq": 51677156
+          },
+          "body": {
+            "uint32_sdkappid": 20011216
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 328,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJpbV9zZGtfY29uZmlnX21nci5wdXNoX2ltc2RrX3B1cmNoYXNlX2JpdHN2MiIsInNlcSI6NDA5OTYwNDk1NiwidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7ImludDMyX2Vycm9yX2NvZGUiOjAsInN0cl9lcnJvcl9tZXNzYWdlIjoic3VjY2VzcyIsInN0cl9wdXJjaGFzZV9iaXRzIjoiMTExMTExMTExMTExMTExMTAwMDAwMDAwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMTExMTExMTExMTExMTExMSIsInVpbnQzMl9leHBpcmVkX3RpbWUiOjM2MDB9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22696d5f73646b5f636f6e6669675f6d67722e707573685f696d73646b5f70757263686173655f626974737632222c22736571223a343039393630343935362c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "im_sdk_config_mgr.push_imsdk_purchase_bitsv2",
+            "seq": 4099604956,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "int32_error_code": 0,
+            "str_error_message": "success",
+            "str_purchase_bits": "1111111111111111000000000010000000000000000000001111111111111111",
+            "uint32_expired_time": 3600
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 238,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJzbnMuYmxhY2tfbGlzdF9nZXQiLCJzZXEiOjUxNjc3MTQ4LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjAsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiU3RhcnRJbmRleCI6MCwiQ3VycnVlbnRTZXF1ZW5jZSI6MCwiQWN0aW9uU3RhdHVzIjoiT0siLCJFcnJvckNvZGUiOjAsIkVycm9ySW5mbyI6IiIsIkVycm9yRGlzcGxheSI6IiJ9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22736e732e626c61636b5f6c6973745f676574222c22736571223a35313637373134382c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "sns.black_list_get",
+            "seq": 51677148,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "StartIndex": 0,
+            "CurruentSequence": 0,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 992,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJwcm9maWxlLnBvcnRyYWl0X2dldF9hbGwiLCJzZXEiOjUxNjc3MTQ3LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjAsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiVXNlclByb2ZpbGVJdGVtIjpbeyJUb19BY2NvdW50IjoiQTdNWXRDeEw4IiwiUHJvZmlsZUl0ZW0iOlt7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX05pY2siLCJWYWx1ZSI6IueUqOaItzc2MTA0MiJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fR2VuZGVyIiwiVmFsdWUiOiJHZW5kZXJfVHlwZV9Vbmtub3duIn0seyJUYWciOiJUYWdfUHJvZmlsZV9JTV9TZWxmU2lnbmF0dXJlIiwiVmFsdWUiOiIifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX0FsbG93VHlwZSIsIlZhbHVlIjoiQWxsb3dUeXBlX1R5cGVfTmVlZENvbmZpcm0ifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX0ltYWdlIiwiVmFsdWUiOiJodHRwczovL2ltZy5lMTg4ODguY29tL3BhdGgvYXZhdGFyLzIwMjYwNzAzLzYwN2YyYjJiNTdmMDQwMTY4NDM5MTNkODE2ZDZjN2M1LnBuZyJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fQWRtaW5Gb3JiaWRUeXBlIiwiVmFsdWUiOiJBZG1pbkZvcmJpZF9UeXBlX05vbmUifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX0xldmVsIiwiVmFsdWUiOjB9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fUm9sZSIsIlZhbHVlIjowfSx7IlRhZyI6IlRhZ19Qcm9maWxlX0N1c3RvbV9jb2xvciIsIlZhbHVlIjoiIn0seyJUYWciOiJUYWdfUHJvZmlsZV9DdXN0b21faWNvbiIsIlZhbHVlIjoiIn0seyJUYWciOiJUYWdfUHJvZmlsZV9DdXN0b21fbnVtIiwiVmFsdWUiOiIyIn1dLCJSZXN1bHRDb2RlIjowLCJSZXN1bHRJbmZvIjoiIiwiU3RhbmRhcmRTZXF1ZW5jZSI6MTAsIkN1c3RvbVNlcXVlbmNlIjowfV0sIkFjdGlvblN0YXR1cyI6Ik9LIiwiRXJyb3JDb2RlIjowLCJFcnJvckluZm8iOiIiLCJFcnJvckRpc3BsYXkiOiIifX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a2270726f66696c652e706f7274726169745f6765745f616c6c222c22736571223a35313637373134372c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c227265"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677147,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "UserProfileItem": [
+              {
+                "To_Account": "A7MYtCxL8",
+                "ProfileItem": [
+                  {
+                    "Tag": "Tag_Profile_IM_Nick",
+                    "Value": "用户761042"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Gender",
+                    "Value": "Gender_Type_Unknown"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_SelfSignature",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AllowType",
+                    "Value": "AllowType_Type_NeedConfirm"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Image",
+                    "Value": "https://img.e18888.com/path/avatar/20260703/607f2b2b57f04016843913d816d6c7c5.png"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AdminForbidType",
+                    "Value": "AdminForbid_Type_None"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Level",
+                    "Value": 0
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Role",
+                    "Value": 0
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_color",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_icon",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_num",
+                    "Value": "2"
+                  }
+                ],
+                "ResultCode": 0,
+                "ResultInfo": "",
+                "StandardSequence": 10,
+                "CustomSequence": 0
+              }
+            ],
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 240,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJncm91cF9vcGVuX2h0dHBfc3ZjLmdldF9qb2luZWRfZ3JvdXBfbGlzdCIsInNlcSI6NTE2NzcxNTAsInRpbWVzdGFtcCI6MTc4MzQyNjcyMCwiY29udGVudHR5cGUiOiJqc29uIiwicmV0Y29kZSI6MCwicmV0c3RyIjoib2sifSwiYm9keSI6eyJBY3Rpb25TdGF0dXMiOiJPSyIsIkVycm9yQ29kZSI6MCwiRXJyb3JJbmZvIjoiIiwiR3JvdXBJZExpc3QiOltdLCJUb3RhbENvdW50IjowfQp9",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a2267726f75705f6f70656e5f687474705f7376632e6765745f6a6f696e65645f67726f75705f6c697374222c22736571223a35313637373135302c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "group_open_http_svc.get_joined_group_list",
+            "seq": 51677150,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "GroupIdList": [],
+            "TotalCount": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 534,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJpbV9zZGtfY29uZmlnX21nci5mZXRjaF9jb25maWciLCJzZXEiOjUxNjc3MTU1LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjAsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiaW50MzJfZXJyb3JfY29kZSI6MCwic3RyX2Vycm9yX21lc3NhZ2UiOiJzdWNjZXNzIiwidWludDMyX3Nka2FwcGlkIjoyMDAxMTIxNiwidWludDY0X3ZlcnNpb24iOjQzNTUwOTY4MzgxNDQsInN0cl9qc29uX2NvbmZpZyI6IntcImVuYWJsZV93b3JrZXJcIjpcIjFcIixcInBvbGxpbmdfaW50ZXJ2YWxcIjpcIjEyMDBcIixcInBvbGxpbmdfaW50ZXJ2YWxfcGx1c1wiOlwiMjAwMFwiLFwicG9sbGluZ19ub19tc2dfY291bnRcIjpcIjIwXCIsXCJydGNfY21kXCI6XCJbXFxcImNhbGxraXRfcmVjb3Jkc19zdnIuKlxcXCJdXCIsXCJjbWRfZnJlcXVlbmN5X2xpbWl0XCI6XCJbXVwiLFwiZW5hYmxlX3dlYnJ0Y19sZWJcIjpcIjBcIn0iLCJ1aW50MzJfZXhwaXJlZF90aW1lIjoyMTYwMH19",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22696d5f73646b5f636f6e6669675f6d67722e66657463685f636f6e666967222c22736571223a35313637373135352c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f646522"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "im_sdk_config_mgr.fetch_config",
+            "seq": 51677155,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "int32_error_code": 0,
+            "str_error_message": "success",
+            "uint32_sdkappid": 20011216,
+            "uint64_version": 4355096838144,
+            "str_json_config": "{\"enable_worker\":\"1\",\"polling_interval\":\"1200\",\"polling_interval_plus\":\"2000\",\"polling_no_msg_count\":\"20\",\"rtc_cmd\":\"[\\\"callkit_records_svr.*\\\"]\",\"cmd_frequency_limit\":\"[]\",\"enable_webrtc_leb\":\"0\"}",
+            "uint32_expired_time": 21600
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 718,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoibWlsbGlvbl9ncm91cF9vcGVuX2h0dHBfc3ZjLmdldF9qb2luZWRfZ3JvdXBfbGlzdCIsInNlcSI6NTE2NzcxNTd9LCJib2R5Ijp7Ik1lbWJlcl9BY2NvdW50IjoiQTdNWXRDeEw4IiwiTGltaXQiOjIwMCwiT2Zmc2V0IjowLCJSZXNwb25zZUZpbHRlciI6eyJHcm91cEJhc2VJbmZvRmlsdGVyIjpbIlR5cGUiLCJOYW1lIiwiRmFjZVVybCIsIk5leHRNc2dTZXEiLCJMYXN0TXNnVGltZSIsIkF0SW5mb0xpc3QiLCJMYXN0UmVjYWxsVGltZSJdLCJTZWxmSW5mb0ZpbHRlciI6WyJSb2xlIiwiSm9pblRpbWUiLCJNc2dGbGFnIiwiTXNnU2VxIl19LCJTdXBwb3J0VG9waWMiOjB9fQ==",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "million_group_open_http_svc.get_joined_group_list",
+            "seq": 51677157
+          },
+          "body": {
+            "Member_Account": "A7MYtCxL8",
+            "Limit": 200,
+            "Offset": 0,
+            "ResponseFilter": {
+              "GroupBaseInfoFilter": [
+                "Type",
+                "Name",
+                "FaceUrl",
+                "NextMsgSeq",
+                "LastMsgTime",
+                "AtInfoList",
+                "LastRecallTime"
+              ],
+              "SelfInfoFilter": [
+                "Role",
+                "JoinTime",
+                "MsgFlag",
+                "MsgSeq"
+              ]
+            },
+            "SupportTopic": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 218,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJzbnMuZ3JvdXBfZ2V0Iiwic2VxIjo1MTY3NzE1MywidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IkN1cnJlbnRTZXF1ZW5jZSI6MTAsIkFjdGlvblN0YXR1cyI6Ik9LIiwiRXJyb3JDb2RlIjowLCJFcnJvckluZm8iOiIiLCJFcnJvckRpc3BsYXkiOiIifX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22736e732e67726f75705f676574222c22736571223a35313637373135332c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f6b227d"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "sns.group_get",
+            "seq": 51677153,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "CurrentSequence": 10,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 259,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJzbnMucGVuZGVuY3lfZ2V0Iiwic2VxIjo1MTY3NzE1NCwidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IlN0YXJ0VGltZSI6MCwiVW5yZWFkUGVuZGVuY3lDb3VudCI6MCwiQ3VycmVudFNlcXVlbmNlIjoxMCwiQWN0aW9uU3RhdHVzIjoiT0siLCJFcnJvckNvZGUiOjAsIkVycm9ySW5mbyI6IiIsIkVycm9yRGlzcGxheSI6IiJ9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22736e732e70656e64656e63795f676574222c22736571223a35313637373135342c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "sns.pendency_get",
+            "seq": 51677154,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "StartTime": 0,
+            "UnreadPendencyCount": 0,
+            "CurrentSequence": 10,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 575,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJzbnMuZnJpZW5kX2dldCIsInNlcSI6NTE2NzcxNTIsInRpbWVzdGFtcCI6MTc4MzQyNjcyMCwiY29udGVudHR5cGUiOiJqc29uIiwicmV0Y29kZSI6MCwicmV0c3RyIjoib2sifSwiYm9keSI6eyJVc2VyRGF0YUl0ZW0iOlt7IlRvX0FjY291bnQiOiJ4MUR1QXJZZ1YiLCJWYWx1ZUl0ZW0iOlt7IlRhZyI6IlRhZ19TTlNfSU1fQWRkU291cmNlIiwiVmFsdWUiOiJBZGRTb3VyY2VfVHlwZV9BbmRyb2lkIn0seyJUYWciOiJUYWdfU05TX0lNX0FkZFRpbWUiLCJWYWx1ZSI6MTc4MzA4OTE0MH0seyJUYWciOiJUYWdfU05TX0lNX0FkZFdvcmRpbmciLCJWYWx1ZSI6IuaIkeaYrzog6b2Q5aSp5aSn5ZyjIn0seyJUYWciOiJUYWdfU05TX0lNX1BlbmRlbmN5VGltZSIsIlZhbHVlIjoxNzgzMDg5MTI3fV19XSwiU3RhbmRhcmRTZXF1ZW5jZSI6MTAsIkN1c3RvbVNlcXVlbmNlIjowLCJGcmllbmROdW0iOjEsIkNvbXBsZXRlRmxhZyI6MSwiTmV4dFN0YXJ0SW5kZXgiOjAsIkFjdGlvblN0YXR1cyI6Ik9LIiwiRXJyb3JDb2RlIjowLCJFcnJvckluZm8iOiIiLCJFcnJvckRpc3BsYXkiOiIifX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22736e732e667269656e645f676574222c22736571223a35313637373135322c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f6b22"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "sns.friend_get",
+            "seq": 51677152,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "UserDataItem": [
+              {
+                "To_Account": "x1DuArYgV",
+                "ValueItem": [
+                  {
+                    "Tag": "Tag_SNS_IM_AddSource",
+                    "Value": "AddSource_Type_Android"
+                  },
+                  {
+                    "Tag": "Tag_SNS_IM_AddTime",
+                    "Value": 1783089140
+                  },
+                  {
+                    "Tag": "Tag_SNS_IM_AddWording",
+                    "Value": "我是: 齐天大圣"
+                  },
+                  {
+                    "Tag": "Tag_SNS_IM_PendencyTime",
+                    "Value": 1783089127
+                  }
+                ]
+              }
+            ],
+            "StandardSequence": 10,
+            "CustomSequence": 0,
+            "FriendNum": 1,
+            "CompleteFlag": 1,
+            "NextStartIndex": 0,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 551,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoicHJvZmlsZS5wb3J0cmFpdF9nZXRfYWxsIiwic2VxIjo1MTY3NzE1OH0sImJvZHkiOnsiRnJvbV9BY2NvdW50IjoiQTdNWXRDeEw4IiwiVXNlckl0ZW0iOlt7IlRvX0FjY291bnQiOiJ4MUR1QXJZZ1YiLCJTdGFuZGFyZFNlcXVlbmNlIjowLCJDdXN0b21TZXF1ZW5jZSI6MH1dfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677158
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "UserItem": [
+              {
+                "To_Account": "x1DuArYgV",
+                "StandardSequence": 0,
+                "CustomSequence": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 3451,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJyZWNlbnRjb250YWN0LnBhZ2VfZ2V0Iiwic2VxIjo1MTY3NzE0OSwidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IlNlc3Npb25JdGVtIjpbeyJUb19BY2NvdW50IjoiMTAwMDEiLCJUeXBlIjoxLCJMYXN0TXNnIjp7Ik1zZ1ZlcnNpb24iOjAsIk1zZ0JvZHkiOlt7Ik1zZ1R5cGUiOiJUSU1UZXh0RWxlbSIsIk1zZ0NvbnRlbnQiOnsiVGV4dCI6IvCfk6LjgJDph43opoHmj5DphpLvvZzosKjpmLLnlLXkv6Hor4jpqpfjgJFcclxuXHJcbuS6sueIseeahOeUqOaIt++8mlxyXG5cclxu6L+R5pyf77yM5YWs5a6J6YOo5YWs5biD5LqG5b2T5YmN5Y2B5aSn6auY5Y+R55S15L+h572R57uc6K+I6aqX57G75Z6L77yM5qGI5Lu26aKR5Y+R44CB5omL5rOV5Y2H57qn77yM5bey6YCg5oiQ5aSn6YeP6LSi5Lqn5o2f5aSx77yB5Li65L+d5oqk5oKo55qE6LSi5Lqn5a6J5YWo77yM6K+35Yqh5b+F5o+Q6auY6K2m5oOV77yM54mi6K6w5Lul5LiL6auY5Y2x6K+I6aqX57G75Z6L77yaXHJcblxyXG7wn5qoIOWNgeWkp+mrmOWPkeiviOmql+exu+Wei+itpuekuu+8mlxyXG4x77iP4oOjIOWIt+WNlei/lOWIqeexu+iviOmql++8muaJk+edgOKAnOWFvOiBjOWIt+WNleKAneKAnOi9u+advui1mumSseKAneaXl+WPt++8jOWIneacn+Wwj+minei/lOWIqeWNmuWPluS/oeS7u++8jOWQjuacn+S7peKAnOi0puaIt+WGu+e7k+KAneetieeQhueUsemql+WPluW3qOminei1hOmHkeOAglxyXG4y77iP4oOjIOiZmuWBh+aKlei1hOeQhui0ouexu+iviOmql++8muS8quijheKAnOaKlei1hOWvvOW4iOKAne+8jOmAmui/h+WBh+aIquWbvuOAgeWBh0FwcOivseWvvOW8gOaIt+i9rOi0pu+8jOacgOe7iOaXoOazleaPkOeOsOOAglxyXG4z77iP4oOjIOiZmuWBh+i0reeJqS/mnI3liqHnsbvor4jpqpfvvJrkvY7ku7flvJXmtYHnp4HkuIvkuqTmmJPvvIzlkI7nu63ku6XigJznqI7otLnigJ3igJzmuIXlhbPigJ3nrYnkuLrnlLHlpJrmrKHntKLmrL7jgIJcclxuNO+4j+KDoyDlhpLlhYXnlLXllYYv54mp5rWB5a6i5pyN57G76K+I6aqX77ya5YCf5b+r6YCS6Zeu6aKY6IGU57O75Y+X5a6z5Lq677yM6K+x5a+85LiL6L29QXBw5oiW5byA5ZCv5bGP5bmV5YWx5Lqr77yM6L+c56iL5pON5o6n55uX6LWw6LWE6YeR44CCXHJcbjXvuI/ig6Mg6LS35qy+L+W+geS/oeexu+iviOmql++8muiZmuWBh+aUvui0t+W5s+WPsOe0ouimgeKAnOS/neivgemHkeKAneKAnOino+WGu+i0ueKAneetie+8jOaUvuasvuWni+e7iOmBpemBpeaXoOacn+OAglxyXG4277iP4oOjIOWGkuWFhemihuWvvC/nhp/kurrnsbvor4jpqpfvvJrpgJrov4fnm5flj7fmiJbkvKroo4Xouqvku73vvIzku6XigJzmgKXnlKjpkrHigJ3kuLrnlLHpqpflj5bovazotKbjgIJcclxuN++4j+KDoyDlhpLlhYXlhazmo4Dms5Xnsbvor4jpqpfvvJrlo7Dnp7DkvaDmtonlq4zniq/nvarvvIzor7Hlr7zovazotKboh7PigJzlronlhajotKbmiLfigJ3vvIzlrp7kuLror4jpqpfotKbmiLfjgIJcclxuOO+4j+KDoyDlqZrmgYvkuqTlj4vnsbvor4jpqpfvvJrljIXoo4XigJznmb3lr4znvo4v6auY5a+M5biF4oCd5Lq66K6+77yM6aqX5Y+W5oSf5oOF5ZCO5Lul5ZCE56eN55CG55Sx57Si6KaB6ZKx6LSi44CCXHJcbjnvuI/ig6Mg572R57uc5ri45oiP6Jma5YGH5Lqk5piT57G76K+I6aqX77ya6K+x5a+86ISx56a75q2j6KeE5bmz5Y+w77yM6L2s6LSm6LSt5Lmw6LSm5Y+3L+mBk+WFt+WQjuiiq+aLiem7keOAglxyXG7wn5SfIOacuuelqOmAgOaUueetvuexu+iviOmql++8muiwjuensOiIquePreWPlua2iO+8jOivseWvvOS4i+i9vUFwcOaIluWFseS6q+Wxj+W5leebl+WPlui1hOmHkeOAglxyXG5cclxu8J+UkCDlj43or4jmj5DnpLrvvJpcclxu4pyFIOaJgOaciea2ieWPiui9rOi0pueahOivt+axguWKoeW/heaguOWunu+8gVxyXG7inIUg5LiN6L275L+h6ZmM55Sf5Lq65L+h5oGv77yM5LiN5LiL6L295pyq55+lQXBw77yBXHJcbuKchSDmiYDmnInmipXotYTnkIbotKLjgIHnvZHotK3jgIHotLfmrL7or7fpgJrov4fmraPop4TlubPlj7Dmk43kvZzvvIFcclxu4pyFIOS4jemaj+aEj+W8gOWQr+Wxj+W5leWFseS6q+OAgei/nOeoi+WNj+WKqeWKn+iDve+8gVxyXG5cclxu6K6p5oiR5Lus5YWx5ZCM5a6I5oqk5oKo55qE4oCc6ZKx6KKL5a2Q4oCd77yBXHJcbuWmgumcgOWNj+WKqe+8jOasoui/juiBlOezu+aIkeaWueWuouacjS/nrqHnkIblkZjjgIJcclxuXHJcbuKAlOOAkOWQvuWciOOAkSJ9fV19LCJUb0FjY291bnQiOiIxNDQxMTUyNjcwODMwODU5ODAiLCJDMmNOaWNrIjoi5ZC+5ZyI6YCa55+lIiwiQzJjSW1hZ2UiOiJodHRwczovL2ltZy5lMTg4ODguY29tL2hlYWRJbWcucG5nIiwiVW5yZWFkTXNnQ291bnQiOjAsIk1zZ1NlcSI6MzY4ODk5MTYsIk1zZ1JhbmRvbSI6MTAxNjc4MywiTXNnVGltZVN0YW1wIjoxNzc5OTgxNjE3LCJMYXN0QzJjTXNnRnJvbV9BY2NvdW50IjoiMTAwMDEiLCJDMmNQZWVyUmVhZFRpbWUiOjAsIkxhc3RNc2dGbGFncyI6MCwiVG9wRmxhZ3MiOjAsIkMyY1JlbWFyayI6IiIsIk1zZ1JlY3ZPcHRpb24iOjAsIkMyY0lzUGVlclJlYWQiOjAsIkxhc3RDMmNNc2dQZWVyUmVhZFRpbWUiOjB9LHsiVG9fQWNjb3VudCI6IngxRHVBcllnViIsIlR5cGUiOjEsIkxhc3RNc2ciOnsiQ2xvdWRDdXN0b21EYXRhIjoie1wibWVzc2FnZUZlYXR1cmVcIjp7XCJuZWVkVHlwaW5nXCI6MSxcInZlcnNpb25cIjoxfX0iLCJNc2dWZXJzaW9uIjowLCJNc2dCb2R5IjpbeyJNc2dUeXBlIjoiVElNVGV4dEVsZW0iLCJNc2dDb250ZW50Ijp7IlRleHQiOiJnSUJmZFp0OHZaL0RTckFIWWxvdU5nPT0ifX1dfSwiVG9BY2NvdW50IjoiMTQ0MTE1MjY2NzI1NDA0NzEyIiwiQzJjTmljayI6Ium9kOWkqeWkp+WcoyIsIkMyY0ltYWdlIjoiaHR0cHM6Ly9pbWcuZTE4ODg4LmNvbS9wYXRoL2F2YXRhci8yMDI1MDUxMi9jMGI0MDQ2OTIxODQ0YjUxYTk1MGM4MDA0ODM4YTQ3Mi5qcGciLCJVbnJlYWRNc2dDb3VudCI6MCwiTXNnU2VxIjoxMjA3MDIwMDAxLCJNc2dSYW5kb20iOjU1NjQ0NzcyLCJNc2dUaW1lU3RhbXAiOjE3ODMzOTcyMjEsIkxhc3RDMmNNc2dGcm9tX0FjY291bnQiOiJBN01ZdEN4TDgiLCJDMmNQZWVyUmVhZFRpbWUiOjE3ODMzOTcwOTgsIkxhc3RNc2dGbGFncyI6MCwiVG9wRmxhZ3MiOjAsIkMyY1JlbWFyayI6IiIsIk1zZ1JlY3ZPcHRpb24iOjAsIkMyY0lzUGVlclJlYWQiOjAsIkxhc3RDMmNNc2dQZWVyUmVhZFRpbWUiOjB9XSwiVGltZVN0YW1wIjoxNzgzNDI2NzIxLCJDb21wbGV0ZUZsYWciOjEsIlN0YXJ0SW5kZXgiOjAsIlRvcFRpbWVTdGFtcCI6MTc4MzQyNjcyMSwiVG9wU3RhcnRJbmRleCI6MCwiQWN0aW9uU3RhdHVzIjoiT0siLCJFcnJvckNvZGUiOjAsIkVycm9ySW5mbyI6IiIsIkVycm9yRGlzcGxheSI6IiJ9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22726563656e74636f6e746163742e706167655f676574222c22736571223a35313637373134392c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c2272657473"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "recentcontact.page_get",
+            "seq": 51677149,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "SessionItem": [
+              {
+                "To_Account": "10001",
+                "Type": 1,
+                "LastMsg": {
+                  "MsgVersion": 0,
+                  "MsgBody": [
+                    {
+                      "MsgType": "TIMTextElem",
+                      "MsgContent": {
+                        "Text": "📢【重要提醒｜谨防电信诈骗】\r\n\r\n亲爱的用户：\r\n\r\n近期，公安部公布了当前十大高发电信网络诈骗类型，案件频发、手法升级，已造成大量财产损失！为保护您的财产安全，请务必提高警惕，牢记以下高危诈骗类型：\r\n\r\n🚨 十大高发诈骗类型警示：\r\n1️⃣ 刷单返利类诈骗：打着“兼职刷单”“轻松赚钱”旗号，初期小额返利博取信任，后期以“账户冻结”等理由骗取巨额资金。\r\n2️⃣ 虚假投资理财类诈骗：伪装“投资导师”，通过假截图、假App诱导开户转账，最终无法提现。\r\n3️⃣ 虚假购物/服务类诈骗：低价引流私下交易，后续以“税费”“清关”等为由多次索款。\r\n4️⃣ 冒充电商/物流客服类诈骗：借快递问题联系受害人，诱导下载App或开启屏幕共享，远程操控盗走资金。\r\n5️⃣ 贷款/征信类诈骗：虚假放贷平台索要“保证金”“解冻费”等，放款始终遥遥无期。\r\n6️⃣ 冒充领导/熟人类诈骗：通过盗号或伪装身份，以“急用钱”为由骗取转账。\r\n7️⃣ 冒充公检法类诈骗：声称你涉嫌犯罪，诱导转账至“安全账户”，实为诈骗账户。\r\n8️⃣ 婚恋交友类诈骗：包装“白富美/高富帅”人设，骗取感情后以各种理由索要钱财。\r\n9️⃣ 网络游戏虚假交易类诈骗：诱导脱离正规平台，转账购买账号/道具后被拉黑。\r\n🔟 机票退改签类诈骗：谎称航班取消，诱导下载App或共享屏幕盗取资金。\r\n\r\n🔐 反诈提示：\r\n✅ 所有涉及转账的请求务必核实！\r\n✅ 不轻信陌生人信息，不下载未知App！\r\n✅ 所有投资理财、网购、贷款请通过正规平台操作！\r\n✅ 不随意开启屏幕共享、远程协助功能！\r\n\r\n让我们共同守护您的“钱袋子”！\r\n如需协助，欢迎联系我方客服/管理员。\r\n\r\n—【吾圈】"
+                      }
+                    }
+                  ]
+                },
+                "ToAccount": "144115267083085980",
+                "C2cNick": "吾圈通知",
+                "C2cImage": "https://img.e18888.com/headImg.png",
+                "UnreadMsgCount": 0,
+                "MsgSeq": 36889916,
+                "MsgRandom": 1016783,
+                "MsgTimeStamp": 1779981617,
+                "LastC2cMsgFrom_Account": "10001",
+                "C2cPeerReadTime": 0,
+                "LastMsgFlags": 0,
+                "TopFlags": 0,
+                "C2cRemark": "",
+                "MsgRecvOption": 0,
+                "C2cIsPeerRead": 0,
+                "LastC2cMsgPeerReadTime": 0
+              },
+              {
+                "To_Account": "x1DuArYgV",
+                "Type": 1,
+                "LastMsg": {
+                  "CloudCustomData": "{\"messageFeature\":{\"needTyping\":1,\"version\":1}}",
+                  "MsgVersion": 0,
+                  "MsgBody": [
+                    {
+                      "MsgType": "TIMTextElem",
+                      "MsgContent": {
+                        "Text": "gIBfdZt8vZ/DSrAHYlouNg=="
+                      }
+                    }
+                  ]
+                },
+                "ToAccount": "144115266725404712",
+                "C2cNick": "齐天大圣",
+                "C2cImage": "https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg",
+                "UnreadMsgCount": 0,
+                "MsgSeq": 1207020001,
+                "MsgRandom": 55644772,
+                "MsgTimeStamp": 1783397221,
+                "LastC2cMsgFrom_Account": "A7MYtCxL8",
+                "C2cPeerReadTime": 1783397098,
+                "LastMsgFlags": 0,
+                "TopFlags": 0,
+                "C2cRemark": "",
+                "MsgRecvOption": 0,
+                "C2cIsPeerRead": 0,
+                "LastC2cMsgPeerReadTime": 0
+              }
+            ],
+            "TimeStamp": 1783426721,
+            "CompleteFlag": 1,
+            "StartIndex": 0,
+            "TopTimeStamp": 1783426721,
+            "TopStartIndex": 0,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 551,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoicHJvZmlsZS5wb3J0cmFpdF9nZXRfYWxsIiwic2VxIjo1MTY3NzE1OX0sImJvZHkiOnsiRnJvbV9BY2NvdW50IjoiQTdNWXRDeEw4IiwiVXNlckl0ZW0iOlt7IlRvX0FjY291bnQiOiJ4MUR1QXJZZ1YiLCJTdGFuZGFyZFNlcXVlbmNlIjowLCJDdXN0b21TZXF1ZW5jZSI6MH1dfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677159
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "UserItem": [
+              {
+                "To_Account": "x1DuArYgV",
+                "StandardSequence": 0,
+                "CustomSequence": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 516,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjIsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIiLCJzZXJ2Y21kIjoicmVjZW50Y29udGFjdC5nZXRfY29udGFjdF9ncm91cCIsInNlcSI6NTE2NzcxNjB9LCJib2R5Ijp7IkZyb21fQWNjb3VudCI6IkE3TVl0Q3hMOCIsIlN0YXJ0VGltZSI6MTc4MzQyNjcyMiwiU3RhcnRJbmRleCI6MH19",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426722,
+            "sdkability": 192371,
+            "tjgID": "",
+            "servcmd": "recentcontact.get_contact_group",
+            "seq": 51677160
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "StartTime": 1783426722,
+            "StartIndex": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 349,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJvcGVuaW0uZ2V0bXNnIiwic2VxIjo1MTY3NzE1MSwidGltZXN0YW1wIjoxNzgzNDI2NzIwLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IkFjdGlvblN0YXR1cyI6Ik9LIiwiRXJyb3JJbmZvIjoiIiwiRXJyb3JDb2RlIjowLCJDb29raWUiOiIwOGExZGRiM2QyMDYxMGExZGRiM2QyMDYyODkzYjE5NWY1MDEzMGVjYjcyYTM4OTlmYjliOWNhMmRlOTFkZTE4IiwiU3luY0ZsYWciOjIsIk1zZ0xpc3QiOltdLCJDMkNQYWlyVW5yZWFkQ291bnQiOlt7IkZyb21fQWNjb3VudCI6IngxRHVBcllnViIsIlVucmVhZENvdW50IjowfV19fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a226f70656e696d2e6765746d7367222c22736571223a35313637373135312c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f6b227d"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "openim.getmsg",
+            "seq": 51677151,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "ActionStatus": "OK",
+            "ErrorInfo": "",
+            "ErrorCode": 0,
+            "Cookie": "08a1ddb3d20610a1ddb3d2062893b195f50130ecb72a3899fb9b9ca2de91de18",
+            "SyncFlag": 2,
+            "MsgList": [],
+            "C2CPairUnreadCount": [
+              {
+                "From_Account": "x1DuArYgV",
+                "UnreadCount": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 327,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJpbV9zZGtfY29uZmlnX21nci5mZXRjaF9pbXNka19wdXJjaGFzZV9iaXRzdjIiLCJzZXEiOjUxNjc3MTU2LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjAsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiaW50MzJfZXJyb3JfY29kZSI6MCwic3RyX2Vycm9yX21lc3NhZ2UiOiJzdWNjZXNzIiwic3RyX3B1cmNoYXNlX2JpdHMiOiIxMTExMTExMTExMTExMTExMDAwMDAwMDAwMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAxMTExMTExMTExMTExMTExIiwidWludDMyX2V4cGlyZWRfdGltZSI6MzYwMH19",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22696d5f73646b5f636f6e6669675f6d67722e66657463685f696d73646b5f70757263686173655f626974737632222c22736571223a35313637373135362c2274696d657374616d70223a313738333432363732302c22636f6e74656e7474797065223a22"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "im_sdk_config_mgr.fetch_imsdk_purchase_bitsv2",
+            "seq": 51677156,
+            "timestamp": 1783426720,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "int32_error_code": 0,
+            "str_error_message": "success",
+            "str_purchase_bits": "1111111111111111000000000010000000000000000000001111111111111111",
+            "uint32_expired_time": 3600
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 296,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJtaWxsaW9uX2dyb3VwX29wZW5faHR0cF9zdmMuZ2V0X2pvaW5lZF9ncm91cF9saXN0Iiwic2VxIjo1MTY3NzE1NywidGltZXN0YW1wIjoxNzgzNDI2NzIxLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IkFjdGlvblN0YXR1cyI6IkZBSUwiLCJFcnJvckluZm8iOiJjb21tdW5pdHkgZ3JvdXAgbm90IG9wZW4iLCJFcnJvckNvZGUiOjExMDAwLCJSZXF1ZXN0SWQiOiIxNWZjMTFiNy0zNDQxLTRiZDAtODA1YS0zZGE0NzM4MzVhOTEifX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a226d696c6c696f6e5f67726f75705f6f70656e5f687474705f7376632e6765745f6a6f696e65645f67726f75705f6c697374222c22736571223a35313637373135372c2274696d657374616d70223a313738333432363732312c22636f6e74656e74747970"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "million_group_open_http_svc.get_joined_group_list",
+            "seq": 51677157,
+            "timestamp": 1783426721,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "ActionStatus": "FAIL",
+            "ErrorInfo": "community group not open",
+            "ErrorCode": 11000,
+            "RequestId": "15fc11b7-3441-4bd0-805a-3da473835a91"
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 919,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJwcm9maWxlLnBvcnRyYWl0X2dldF9hbGwiLCJzZXEiOjUxNjc3MTU4LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjEsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiVXNlclByb2ZpbGVJdGVtIjpbeyJUb19BY2NvdW50IjoieDFEdUFyWWdWIiwiUHJvZmlsZUl0ZW0iOlt7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX05pY2siLCJWYWx1ZSI6Ium9kOWkqeWkp+WcoyJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fR2VuZGVyIiwiVmFsdWUiOiJHZW5kZXJfVHlwZV9Vbmtub3duIn0seyJUYWciOiJUYWdfUHJvZmlsZV9JTV9TZWxmU2lnbmF0dXJlIiwiVmFsdWUiOiLlv4Pmg7PkuovmiJAifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX0FsbG93VHlwZSIsIlZhbHVlIjoiQWxsb3dUeXBlX1R5cGVfRGVueUFueSJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fSW1hZ2UiLCJWYWx1ZSI6Imh0dHBzOi8vaW1nLmUxODg4OC5jb20vcGF0aC9hdmF0YXIvMjAyNTA1MTIvYzBiNDA0NjkyMTg0NGI1MWE5NTBjODAwNDgzOGE0NzIuanBnIn0seyJUYWciOiJUYWdfUHJvZmlsZV9JTV9BZG1pbkZvcmJpZFR5cGUiLCJWYWx1ZSI6IkFkbWluRm9yYmlkX1R5cGVfTm9uZSJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfQ3VzdG9tX2NvbG9yIiwiVmFsdWUiOiIifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0N1c3RvbV9pY29uIiwiVmFsdWUiOiIifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0N1c3RvbV9udW0iLCJWYWx1ZSI6IjIifV0sIlJlc3VsdENvZGUiOjAsIlJlc3VsdEluZm8iOiIiLCJTdGFuZGFyZFNlcXVlbmNlIjozNiwiQ3VzdG9tU2VxdWVuY2UiOjB9XSwiQWN0aW9uU3RhdHVzIjoiT0siLCJFcnJvckNvZGUiOjAsIkVycm9ySW5mbyI6IiIsIkVycm9yRGlzcGxheSI6IiJ9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a2270726f66696c652e706f7274726169745f6765745f616c6c222c22736571223a35313637373135382c2274696d657374616d70223a313738333432363732312c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c227265"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677158,
+            "timestamp": 1783426721,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "UserProfileItem": [
+              {
+                "To_Account": "x1DuArYgV",
+                "ProfileItem": [
+                  {
+                    "Tag": "Tag_Profile_IM_Nick",
+                    "Value": "齐天大圣"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Gender",
+                    "Value": "Gender_Type_Unknown"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_SelfSignature",
+                    "Value": "心想事成"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AllowType",
+                    "Value": "AllowType_Type_DenyAny"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Image",
+                    "Value": "https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AdminForbidType",
+                    "Value": "AdminForbid_Type_None"
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_color",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_icon",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_num",
+                    "Value": "2"
+                  }
+                ],
+                "ResultCode": 0,
+                "ResultInfo": "",
+                "StandardSequence": 36,
+                "CustomSequence": 0
+              }
+            ],
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 258,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJyZWNlbnRjb250YWN0LmdldF9jb250YWN0X2dyb3VwIiwic2VxIjo1MTY3NzE2MCwidGltZXN0YW1wIjoxNzgzNDI2NzIxLCJjb250ZW50dHlwZSI6Impzb24iLCJyZXRjb2RlIjowLCJyZXRzdHIiOiJvayJ9LCJib2R5Ijp7IkNvbXBsZXRlRmxhZyI6MSwiQ29tcGxldGVUaW1lIjoxNzgzNDI2NzIyLCJBY3Rpb25TdGF0dXMiOiJPSyIsIkVycm9yQ29kZSI6MCwiRXJyb3JJbmZvIjoiIiwiRXJyb3JEaXNwbGF5IjoiIn19",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a22726563656e74636f6e746163742e6765745f636f6e746163745f67726f7570222c22736571223a35313637373136302c2274696d657374616d70223a313738333432363732312c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "recentcontact.get_contact_group",
+            "seq": 51677160,
+            "timestamp": 1783426721,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "CompleteFlag": 1,
+            "CompleteTime": 1783426722,
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 919,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJwcm9maWxlLnBvcnRyYWl0X2dldF9hbGwiLCJzZXEiOjUxNjc3MTU5LCJ0aW1lc3RhbXAiOjE3ODM0MjY3MjEsImNvbnRlbnR0eXBlIjoianNvbiIsInJldGNvZGUiOjAsInJldHN0ciI6Im9rIn0sImJvZHkiOnsiVXNlclByb2ZpbGVJdGVtIjpbeyJUb19BY2NvdW50IjoieDFEdUFyWWdWIiwiUHJvZmlsZUl0ZW0iOlt7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX05pY2siLCJWYWx1ZSI6Ium9kOWkqeWkp+WcoyJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fR2VuZGVyIiwiVmFsdWUiOiJHZW5kZXJfVHlwZV9Vbmtub3duIn0seyJUYWciOiJUYWdfUHJvZmlsZV9JTV9TZWxmU2lnbmF0dXJlIiwiVmFsdWUiOiLlv4Pmg7PkuovmiJAifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0lNX0FsbG93VHlwZSIsIlZhbHVlIjoiQWxsb3dUeXBlX1R5cGVfRGVueUFueSJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfSU1fSW1hZ2UiLCJWYWx1ZSI6Imh0dHBzOi8vaW1nLmUxODg4OC5jb20vcGF0aC9hdmF0YXIvMjAyNTA1MTIvYzBiNDA0NjkyMTg0NGI1MWE5NTBjODAwNDgzOGE0NzIuanBnIn0seyJUYWciOiJUYWdfUHJvZmlsZV9JTV9BZG1pbkZvcmJpZFR5cGUiLCJWYWx1ZSI6IkFkbWluRm9yYmlkX1R5cGVfTm9uZSJ9LHsiVGFnIjoiVGFnX1Byb2ZpbGVfQ3VzdG9tX2NvbG9yIiwiVmFsdWUiOiIifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0N1c3RvbV9pY29uIiwiVmFsdWUiOiIifSx7IlRhZyI6IlRhZ19Qcm9maWxlX0N1c3RvbV9udW0iLCJWYWx1ZSI6IjIifV0sIlJlc3VsdENvZGUiOjAsIlJlc3VsdEluZm8iOiIiLCJTdGFuZGFyZFNlcXVlbmNlIjozNiwiQ3VzdG9tU2VxdWVuY2UiOjB9XSwiQWN0aW9uU3RhdHVzIjoiT0siLCJFcnJvckNvZGUiOjAsIkVycm9ySW5mbyI6IiIsIkVycm9yRGlzcGxheSI6IiJ9fQ==",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a2270726f66696c652e706f7274726169745f6765745f616c6c222c22736571223a35313637373135392c2274696d657374616d70223a313738333432363732312c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c227265"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "profile.portrait_get_all",
+            "seq": 51677159,
+            "timestamp": 1783426721,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "UserProfileItem": [
+              {
+                "To_Account": "x1DuArYgV",
+                "ProfileItem": [
+                  {
+                    "Tag": "Tag_Profile_IM_Nick",
+                    "Value": "齐天大圣"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Gender",
+                    "Value": "Gender_Type_Unknown"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_SelfSignature",
+                    "Value": "心想事成"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AllowType",
+                    "Value": "AllowType_Type_DenyAny"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_Image",
+                    "Value": "https://img.e18888.com/path/avatar/20250512/c0b4046921844b51a950c8004838a472.jpg"
+                  },
+                  {
+                    "Tag": "Tag_Profile_IM_AdminForbidType",
+                    "Value": "AdminForbid_Type_None"
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_color",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_icon",
+                    "Value": ""
+                  },
+                  {
+                    "Tag": "Tag_Profile_Custom_num",
+                    "Value": "2"
+                  }
+                ],
+                "ResultCode": 0,
+                "ResultInfo": "",
+                "StandardSequence": 36,
+                "CustomSequence": 0
+              }
+            ],
+            "ActionStatus": "OK",
+            "ErrorCode": 0,
+            "ErrorInfo": "",
+            "ErrorDisplay": ""
+          }
+        }
+      }
+    },
+    {
+      "ev": "sent",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 1079,
+        "b64": "eyJoZWFkIjp7InZlciI6InY0IiwicGxhdGZvcm0iOjcsIndlYnNka2FwcGlkIjo1MzcwNDgxNjgsIndlYnNka3ZlcnNpb24iOiIxLjcuMyIsImEyIjoiZWQ1YjNkYTI1OWM5MDZlZTg3NDU4MmQ2OWNkMTE4YTM0OWViYTEyNWI2NzIwYWJkMThjZWIwY2QzNjU2MGE0NTBjOGEwOTMzYTI2NmM4MjQwNTg1MTViNDkwNTM3MDlkN2I1YTg5ZDQzMGY4NDcxNmZhZTk2ZWIwZjI0OGJiZmYxZWQ2Yzc3NWQ4ZjliZDM1IiwidGlueWlkIjoiMTQ0MTE1MjY3NTgxMTcxNTg0Iiwic3RhdHVzX2luc3RpZCI6MjUxNzQ0ODQ0LCJzZGthcHBpZCI6MjAwMTEyMTYsImNvbnRlbnR0eXBlIjoianNvbiIsInJlcXRpbWUiOjE3ODM0MjY3MjMsInNka2FiaWxpdHkiOjE5MjM3MSwidGpnSUQiOiIxNDQxMTUyNjc1ODExNzE1ODQtODk5MTkwNDQiLCJzZXJ2Y21kIjoib3BlbmltLnNlbmRtc2ciLCJzZXEiOjUxNjc3MTYxfSwiYm9keSI6eyJGcm9tX0FjY291bnQiOiJBN01ZdEN4TDgiLCJUb19BY2NvdW50IjoiTFlHRzg4ODg4IiwiTXNnU2VxIjoyMDE4NDMwMDAxLCJNc2dSYW5kb20iOjg5OTE5MDQ0LCJNc2dCb2R5IjpbeyJNc2dUeXBlIjoiVElNVGV4dEVsZW0iLCJNc2dDb250ZW50Ijp7IlRleHQiOiJXU1MgV2ViPz8/Pz8ifX1dLCJDbG91ZEN1c3RvbURhdGEiOiJ7XCJtZXNzYWdlRmVhdHVyZVwiOntcIm5lZWRUeXBpbmdcIjoxLFwidmVyc2lvblwiOjF9fSIsIkZyb21fQWNjb3VudE5pY2siOiLnlKjmiLc3NjEwNDIiLCJGcm9tX0FjY291bnRIZWFkdXJsIjoiaHR0cHM6Ly9pbWcuZTE4ODg4LmNvbS9wYXRoL2F2YXRhci8yMDI2MDcwMy82MDdmMmIyYjU3ZjA0MDE2ODQzOTEzZDgxNmQ2YzdjNS5wbmciLCJPZmZsaW5lUHVzaEluZm8iOnsiUHVzaEZsYWciOjAsIlRpdGxlIjoiIiwiRGVzYyI6IiIsIkV4dCI6IiIsIkFwbnNJbmZvIjp7IkJhZGdlTW9kZSI6MH0sIkFuZHJvaWRJbmZvIjp7Ik9QUE9DaGFubmVsSUQiOiIifX0sIlNlbmRNc2dDb250cm9sIjpbXSwiTXNnQ2xpZW50VGltZSI6MTc4MzQyNjcyMywiSXNOZWVkUmVhZFJlY2VpcHQiOjAsIlN1cHBvcnRNZXNzYWdlRXh0ZW5zaW9uIjowLCJJc1JlbGF5TXNnIjowfX0=",
+        "hex_prefix": "7b2268656164223a7b22766572223a227634222c22706c6174666f726d223a372c2277656273646b6170706964223a3533373034383136382c2277656273646b76657273696f6e223a22312e372e33222c226132223a22656435623364613235396339303665653837343538326436396364313138613334"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "ver": "v4",
+            "platform": 7,
+            "websdkappid": 537048168,
+            "websdkversion": "1.7.3",
+            "a2": "ed5b3da259c906ee874582d69cd118a349eba125b6720abd18ceb0cd36560a450c8a0933a266c824058515b49053709d7b5a89d430f84716fae96eb0f248bbff1ed6c775d8f9bd35",
+            "tinyid": "144115267581171584",
+            "status_instid": 251744844,
+            "sdkappid": 20011216,
+            "contenttype": "json",
+            "reqtime": 1783426723,
+            "sdkability": 192371,
+            "tjgID": "144115267581171584-89919044",
+            "servcmd": "openim.sendmsg",
+            "seq": 51677161
+          },
+          "body": {
+            "From_Account": "A7MYtCxL8",
+            "To_Account": "LYGG88888",
+            "MsgSeq": 2018430001,
+            "MsgRandom": 89919044,
+            "MsgBody": [
+              {
+                "MsgType": "TIMTextElem",
+                "MsgContent": {
+                  "Text": "WSS Web?????"
+                }
+              }
+            ],
+            "CloudCustomData": "{\"messageFeature\":{\"needTyping\":1,\"version\":1}}",
+            "From_AccountNick": "用户761042",
+            "From_AccountHeadurl": "https://img.e18888.com/path/avatar/20260703/607f2b2b57f04016843913d816d6c7c5.png",
+            "OfflinePushInfo": {
+              "PushFlag": 0,
+              "Title": "",
+              "Desc": "",
+              "Ext": "",
+              "ApnsInfo": {
+                "BadgeMode": 0
+              },
+              "AndroidInfo": {
+                "OPPOChannelID": ""
+              }
+            },
+            "SendMsgControl": [],
+            "MsgClientTime": 1783426723,
+            "IsNeedReadReceipt": 0,
+            "SupportMessageExtension": 0,
+            "IsRelayMsg": 0
+          }
+        }
+      }
+    },
+    {
+      "ev": "recv",
+      "url": "wss://wsssgp.im.qcloud.com/binfo?sdkappid=20011216&instanceid=726fbb9b41160007a3fde8d5664bc8b8&random=0.567469757900041&platform=7&host=windows&version=-1&sdkversion=3.2.1",
+      "payload": {
+        "kind": "bytes",
+        "len": 224,
+        "b64": "eyJoZWFkIjp7InNlcnZjbWQiOiJvcGVuaW0uc2VuZG1zZyIsInNlcSI6NTE2NzcxNjEsInRpbWVzdGFtcCI6MTc4MzQyNjcyMiwiY29udGVudHR5cGUiOiJqc29uIiwicmV0Y29kZSI6MCwicmV0c3RyIjoib2sifSwiYm9keSI6eyJBY3Rpb25TdGF0dXMiOiJGQUlMIiwiRXJyb3JJbmZvIjoiSW52YWxpZCBzZW5kZXIgb3IgcmVjZWl2ZXIgaWRlbnRpZmllciEiLCJFcnJvckNvZGUiOjIwMDAzfX0=",
+        "hex_prefix": "7b2268656164223a7b2273657276636d64223a226f70656e696d2e73656e646d7367222c22736571223a35313637373136312c2274696d657374616d70223a313738333432363732322c22636f6e74656e7474797065223a226a736f6e222c22726574636f6465223a302c22726574737472223a226f6b22"
+      },
+      "decoded": {
+        "outer": {
+          "head": {
+            "servcmd": "openim.sendmsg",
+            "seq": 51677161,
+            "timestamp": 1783426722,
+            "contenttype": "json",
+            "retcode": 0,
+            "retstr": "ok"
+          },
+          "body": {
+            "ActionStatus": "FAIL",
+            "ErrorInfo": "Invalid sender or receiver identifier!",
+            "ErrorCode": 20003
+          }
+        }
+      }
+    }
+  ]
+}

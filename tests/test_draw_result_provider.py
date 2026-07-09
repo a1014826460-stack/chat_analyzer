@@ -1,0 +1,285 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+from app.models.auto_bet import DrawResult, StrategyConfig
+from app.services.auto_bet_service import AutoBetService
+from app.services.draw_result_store import DrawResultStore
+from app.services.history_fetchers import HistoryFetcher, normalize_result_label
+
+
+class FakeFetcher:
+    def __init__(self, results: list[DrawResult] | None = None) -> None:
+        self.results = results or []
+        self.calls: list[tuple[str, int]] = []
+
+    def fetch(self, site: str, count: int) -> list[DrawResult]:
+        self.calls.append((site, count))
+        return list(self.results[:count])
+
+
+def test_normalize_result_label_uses_site_thresholds_and_parity():
+    assert normalize_result_label("pc28", 13) == "小单"
+    assert normalize_result_label("pc28", 14) == "大双"
+    assert normalize_result_label("macao", 24) == "小双"
+    assert normalize_result_label("macao", 25) == "大单"
+    assert normalize_result_label("australia", 18) == "小双"
+    assert normalize_result_label("australia", 19) == "大单"
+    assert normalize_result_label("norway", 13) == "小单"
+    assert normalize_result_label("norway", 14) == "大双"
+    assert normalize_result_label("pc28", "大") == "大"
+
+
+def test_history_fetcher_converts_normalized_history_records_to_draw_results(monkeypatch):
+    def fake_fetch_history_records(site: str, page: int = 1, page_size: int = 20):
+        assert site == "pc28"
+        assert page == 1
+        assert page_size == 3
+        return [
+            {"site": "pc28", "period": "1001", "open_time": datetime(2026, 7, 4, 1), "sum": 13},
+            {"site": "pc28", "period": "1002", "open_time": datetime(2026, 7, 4, 2), "sum": 14},
+            {"site": "pc28", "period": "1003", "open_time": None, "sum": None},
+        ]
+
+    monkeypatch.setattr("app.services.history_fetchers.fetch_history_records", fake_fetch_history_records)
+
+    results = HistoryFetcher().fetch("pc28", count=3)
+
+    assert results == [
+        DrawResult(site="pc28", period="1001", result="小单", open_time=datetime(2026, 7, 4, 1)),
+        DrawResult(site="pc28", period="1002", result="大双", open_time=datetime(2026, 7, 4, 2)),
+    ]
+
+
+def test_draw_result_store_persists_and_returns_recent_results_oldest_first(tmp_path: Path):
+    store = DrawResultStore(tmp_path / "draw_results.db", fetcher=FakeFetcher([]))
+    inserted = store.insert_results(
+        "pc28",
+        [
+            DrawResult(site="pc28", period="2026001", result="大单", open_time=datetime(2026, 7, 4, 1)),
+            DrawResult(site="pc28", period="2026002", result="小双", open_time=datetime(2026, 7, 4, 2)),
+            DrawResult(site="pc28", period="2026003", result="大双", open_time=datetime(2026, 7, 4, 3)),
+        ],
+    )
+
+    assert inserted == 3
+    recent = store.get_recent_results("pc28", 2)
+    assert [item.period for item in recent] == ["2026002", "2026003"]
+    assert [item.result for item in recent] == ["小双", "大双"]
+    assert recent[0].open_time == datetime(2026, 7, 4, 2)
+
+    one = store.get_result("pc28", "2026001")
+    assert one == DrawResult(site="pc28", period="2026001", result="大单", open_time=datetime(2026, 7, 4, 1))
+    assert store.get_result("pc28", "missing") is None
+
+
+def test_draw_result_store_ensure_data_fetches_once_per_site(tmp_path: Path):
+    fake = FakeFetcher(
+        [DrawResult(site="pc28", period=str(1000 + i), result="大单") for i in range(25)]
+    )
+    store = DrawResultStore(tmp_path / "draw_results.db", fetcher=fake)
+
+    store.ensure_data("pc28", min_count=20)
+    store.ensure_data("pc28", min_count=20)
+
+    assert fake.calls == [("pc28", 20)]
+    assert len(store.get_recent_results("pc28", 25)) == 20
+
+
+def test_auto_bet_opposite_play_handles_composite_labels():
+    plays = ["大双", "小单", "大单", "小双"]
+    assert AutoBetService._opposite_play("大双", plays) == "小单"
+    assert AutoBetService._opposite_play("小单", plays) == "大双"
+    assert AutoBetService._opposite_play("大单", plays) == "小双"
+    assert AutoBetService._opposite_play("小双", plays) == "大单"
+    assert AutoBetService._opposite_play("大", ["大", "小"]) == "小"
+    assert AutoBetService._opposite_play("小", ["大", "小"]) == "大"
+    assert AutoBetService._opposite_play("大双", ["大", "小"]) == "大"
+
+
+def test_auto_bet_analyze_can_make_decision_from_store_data(tmp_path: Path):
+    store = DrawResultStore(tmp_path / "draw_results.db", fetcher=FakeFetcher([]))
+    store.insert_results(
+        "pc28",
+        [
+            DrawResult(site="pc28", period="1", result="大双"),
+            DrawResult(site="pc28", period="2", result="大双"),
+            DrawResult(site="pc28", period="3", result="大双"),
+        ],
+    )
+    cfg = StrategyConfig(
+        site="pc28",
+        observation_window=3,
+        trigger_threshold=3,
+        bet_amount=12.5,
+        target_groups=["group-1"],
+        play_types=["大双", "小单"],
+    )
+
+    decision = AutoBetService()._analyze(cfg, store)
+
+    assert decision.should_bet is True
+    assert decision.play_type == "小单"
+    assert decision.amount == 12.5
+    assert decision.group_id == "group-1"
+
+
+def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_path: Path):
+    import json
+    import sys
+    import types
+
+    from app.models.auto_bet import StrategyConfig
+    if "PySide6" not in sys.modules:
+        qtcore = types.ModuleType("PySide6.QtCore")
+        qtwidgets = types.ModuleType("PySide6.QtWidgets")
+
+        class FakeQDateTime:
+            @classmethod
+            def currentDateTime(cls):
+                return cls()
+
+            @classmethod
+            def fromString(cls, *args, **kwargs):
+                return cls()
+
+            def isValid(self):
+                return False
+
+            def addDays(self, days):
+                return self
+
+        class FakeQt:
+            UserRole = 256
+            Checked = 2
+            ISODate = 1
+
+        qtcore.QDateTime = FakeQDateTime
+        qtcore.Qt = FakeQt
+        qtwidgets.QFileDialog = object
+        qtwidgets.QListWidgetItem = object
+        qtwidgets.QMessageBox = object
+        pyside = types.ModuleType("PySide6")
+        pyside.QtCore = qtcore
+        pyside.QtWidgets = qtwidgets
+        monkeypatch.setitem(sys.modules, "PySide6", pyside)
+        monkeypatch.setitem(sys.modules, "PySide6.QtCore", qtcore)
+        monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", qtwidgets)
+
+    from app.ui.main_window_data import MainWindowDataMixin
+    import app.services.account_resolver as account_resolver
+    import app.services.background_window_sender as background_window_sender
+    import app.services.message_injector as message_injector
+    import app.services.draw_result_store as draw_result_store
+    import app.services.history_fetchers as history_fetchers
+    import app.utils.pathing as pathing
+
+    prefs_path = tmp_path / "shared_preferences.json"
+    prefs_path.write_text(
+        json.dumps(
+            {
+                "flutter.AccountManager_AccountList": [
+                    json.dumps({"loginResultEntity": {"accid": "acc-1", "token": "sig-1"}})
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(account_resolver, "DEFAULT_SHARED_PREFS", prefs_path)
+    monkeypatch.setattr(pathing, "user_data_dir", lambda: tmp_path)
+
+    class ForbiddenInjector:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("MessageInjector/TIMLogin must not be used for auto betting")
+
+    class FakeBackgroundSender:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            FakeBackgroundSender.instances.append(self)
+
+        def startup(self):
+            self.started = True
+            return True
+
+        def shutdown(self):
+            self.started = False
+
+    class FakeFetcher:
+        pass
+
+    class FakeStore:
+        instances = []
+
+        def __init__(self, db_path, fetcher):
+            self.db_path = Path(db_path)
+            self.fetcher = fetcher
+            self.ensure_calls = []
+            FakeStore.instances.append(self)
+
+        def ensure_data(self, site, min_count=20):
+            self.ensure_calls.append((site, min_count))
+
+    monkeypatch.setattr(message_injector, "MessageInjector", ForbiddenInjector)
+    monkeypatch.setattr(background_window_sender, "BackgroundWindowMessageSender", FakeBackgroundSender)
+    monkeypatch.setattr(history_fetchers, "HistoryFetcher", FakeFetcher)
+    monkeypatch.setattr(draw_result_store, "DrawResultStore", FakeStore)
+
+    class FakeService:
+        def __init__(self):
+            self.config = StrategyConfig(site="pc28", observation_window=10)
+            self.injector = None
+            self.provider = None
+            self.started = False
+
+        def set_injector(self, injector):
+            self.injector = injector
+
+        def set_result_provider(self, provider):
+            self.provider = provider
+
+        def start(self):
+            self.started = True
+
+    class FakePanel:
+        def set_running(self, value):
+            self.running = value
+
+    class FakeTimer:
+        def __init__(self):
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    class FakeWindow(MainWindowDataMixin):
+        pass
+
+    win = FakeWindow()
+    win.auto_bet_service = FakeService()
+    win.resolved_db = type("Resolved", (), {
+        "accid": "acc-1",
+        "im_appid": "123456",
+        "msg_db": tmp_path / "msg_0.db",
+    })()
+    win.auto_bet_panel = FakePanel()
+    win._auto_bet_timer = FakeTimer()
+
+    win._on_auto_bet_start()
+
+    assert win.auto_bet_service.started is True
+    assert len(FakeBackgroundSender.instances) == 1
+    sender = FakeBackgroundSender.instances[0]
+    assert sender.started is True
+    assert sender.kwargs == {"msg_db_path": tmp_path / "msg_0.db"}
+    assert win.auto_bet_service.injector is sender
+    assert len(FakeStore.instances) == 1
+    store = FakeStore.instances[0]
+    assert store.db_path == tmp_path / "draw_results.db"
+    assert isinstance(store.fetcher, FakeFetcher)
+    assert store.ensure_calls == [("pc28", 20)]
+    assert win.auto_bet_service.provider is store
+    assert win._auto_bet_timer.started is True
