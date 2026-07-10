@@ -51,7 +51,7 @@ def test_rest_group_message_sender_posts_group_message_with_account_token(monkey
         "Random": 123456,
         "From_Account": "x1DuArYgV",
         "MsgBody": [
-            {"MsgType": "TIMTextElem", "MsgContent": {"Text": "小单 100"}}
+            {"MsgType": "TIMTextElem", "MsgContent": {"Text": "小单100"}}
         ],
     }
 
@@ -168,7 +168,7 @@ def test_rest_group_message_sender_marks_success_only_when_group_content_appears
             con = sqlite3.connect(db_path)
             con.execute(
                 "INSERT INTO message (sid, content, client_time) VALUES (?, ?, ?)",
-                ("207191791", "小单 100", 123456789),
+                ("207191791", "小单100", 123456789),
             )
             con.commit()
             con.close()

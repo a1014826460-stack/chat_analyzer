@@ -791,38 +791,67 @@ class MainWindowDataMixin:
                 panel.set_running(False)
             return
 
-        # Prefer UI Automation because WuQuan exposes the message input Edit
-        # control and searchable group text. Fall back to background window
-        # messages only if UIA is unavailable. Neither path calls SDK login or
-        # injects code into WuQuan.
+        # Prefer the browser/WebSDK WSS protocol: it uses a separate WebSocket
+        # instance and does not call the native IM SDK login, so it avoids kicking the
+        # running WuQuan client offline. Fall back to UIA/background window
+        # senders if WSS credentials are missing or WSS startup fails.
+        from app.services.account_resolver import DEFAULT_SHARED_PREFS
         from app.services.background_window_sender import BackgroundWindowMessageSender
         from app.services.uia_wuquan_sender import UiaWuQuanMessageSender
+        from app.services.ws_message_sender import WsMessageSender
+        from app.services.wuquan_account_mapping import load_shared_preferences, resolve_login_account
+
+        panel = getattr(self, "auto_bet_panel", None)
+        injector = None
 
         try:
-            injector = UiaWuQuanMessageSender(msg_db_path=resolved_db.msg_db)
-        except (RuntimeError, OSError) as exc:
-            logger.error("UiaWuQuanMessageSender init failed: %s", exc)
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None:
-                panel.set_running(False)
-            return
+            prefs_payload = load_shared_preferences(DEFAULT_SHARED_PREFS)
+            account = resolve_login_account(resolved_db.accid, prefs_payload)
+        except Exception as exc:
+            logger.warning("Web WSS credential lookup failed: %s", exc)
+            account = None
 
-        if not injector.startup():
-            logger.warning("UiaWuQuanMessageSender startup failed; fallback to BackgroundWindowMessageSender")
+        if account is not None and account.user_sig:
             try:
-                injector = BackgroundWindowMessageSender(msg_db_path=resolved_db.msg_db)
+                injector = WsMessageSender(
+                    resolved_db.im_appid or account.im_appid,
+                    account.accid,
+                    account.user_sig,
+                    nick=account.nick_name,
+                    avatar=account.avatar,
+                )
+                if not injector.startup():
+                    logger.warning("WsMessageSender startup failed; fallback to UIA/background sender")
+                    injector = None
             except (RuntimeError, OSError) as exc:
-                logger.error("BackgroundWindowMessageSender init failed: %s", exc)
-                panel = getattr(self, "auto_bet_panel", None)
+                logger.error("WsMessageSender init/startup failed: %s", exc)
+                injector = None
+        else:
+            logger.warning("Web WSS credentials not found for accid=%s; fallback to UIA/background sender", resolved_db.accid)
+
+        if injector is None:
+            try:
+                injector = UiaWuQuanMessageSender(msg_db_path=resolved_db.msg_db)
+            except (RuntimeError, OSError) as exc:
+                logger.error("UiaWuQuanMessageSender init failed: %s", exc)
                 if panel is not None:
                     panel.set_running(False)
                 return
+
             if not injector.startup():
-                logger.error("BackgroundWindowMessageSender startup failed")
-                panel = getattr(self, "auto_bet_panel", None)
-                if panel is not None:
-                    panel.set_running(False)
-                return
+                logger.warning("UiaWuQuanMessageSender startup failed; fallback to BackgroundWindowMessageSender")
+                try:
+                    injector = BackgroundWindowMessageSender(msg_db_path=resolved_db.msg_db)
+                except (RuntimeError, OSError) as exc:
+                    logger.error("BackgroundWindowMessageSender init failed: %s", exc)
+                    if panel is not None:
+                        panel.set_running(False)
+                    return
+                if not injector.startup():
+                    logger.error("BackgroundWindowMessageSender startup failed")
+                    if panel is not None:
+                        panel.set_running(False)
+                    return
 
         service.set_injector(injector)
 
@@ -894,6 +923,10 @@ class MainWindowDataMixin:
             panel.load_config(cfg)
             self.auto_bet_service.apply_config(cfg)
 
+        active_site = str(getattr(self, "_active_site", "") or "").strip()
+        if active_site and hasattr(panel, "set_active_site"):
+            panel.set_active_site(active_site)
+
         # Show panel now that DB is resolved
         panel.setVisible(True)
 
@@ -911,3 +944,6 @@ class MainWindowDataMixin:
                 if gname:
                     groups.append((gid or gname, gname))
         panel.set_available_groups(groups)
+        service = getattr(self, "auto_bet_service", None)
+        if service is not None and hasattr(service, "set_group_names"):
+            service.set_group_names({group_id: group_name for group_id, group_name in groups})

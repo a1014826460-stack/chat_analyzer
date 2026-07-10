@@ -7,6 +7,7 @@ __pycache__/
 .chat_analyzer/
 summary_check/
 WuQuan/
+.playwright-mcp/
 
 *.exe
 .codex_recovery/
@@ -65,3 +66,9 @@ secrets.*
 *.dylib
 *.pdb
 main.dart.js
+
+# Archived / decluttered files
+archive/
+
+# Temporary analysis & capture artifacts
+tmp_*

@@ -143,7 +143,7 @@ class RemoteIMSender:
         return self._running and bool(self._hProcess)
 
     def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool:
-        text = f"{play_type} {self._fmt_amount(amount)}"
+        text = f"{play_type}{self._fmt_amount(amount)}"
         return self.inject_text(group_id, text, is_group=True)
 
     def inject_text(

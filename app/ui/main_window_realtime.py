@@ -33,6 +33,7 @@ class MainWindowRealtimeMixin:
         if self._site_card_widgets and set(self._site_card_widgets) == set(sites) and self.site_cards_layout.count():
             for site in sites:
                 self._update_site_card_widgets(site, self._draw_infos.get(site, DrawInfo(current_period="")))
+            self._refresh_site_card_selection()
             if hasattr(self, "site_status_label"):
                 self.site_status_label.setText("线路数据已加载")
             return
@@ -48,6 +49,7 @@ class MainWindowRealtimeMixin:
             frame, widgets = self._build_site_card(site, self._draw_infos.get(site, DrawInfo(current_period="")))
             self.site_cards_layout.addWidget(frame, index // 2, index % 2)
             self._site_card_widgets[site] = widgets
+        self._refresh_site_card_selection()
 
         if hasattr(self, "site_status_label"):
             self.site_status_label.setText("线路数据已加载")
@@ -60,6 +62,12 @@ class MainWindowRealtimeMixin:
         widgets["period"].setText(f"当前: {info.current_period or '-'}")
         widgets["next"].setText(f"下期: {info.next_period or '-'}")
         widgets["countdown"].setText(f"倒计时: {self._format_countdown(info.next_countdown)}")
+        frame = widgets.get("frame")
+        if isinstance(frame, QFrame):
+            self._apply_site_card_selection_style(site, frame)
+        selected = widgets.get("selected")
+        if isinstance(selected, QLabel):
+            selected.setVisible(site == getattr(self, "_active_site", ""))
 
     def _handle_site_cards_loaded(self, future) -> None:
         try:
@@ -83,6 +91,7 @@ class MainWindowRealtimeMixin:
     def _build_site_card(self, site: str, info: DrawInfo) -> tuple[QFrame, dict[str, QLabel]]:
         frame = QFrame()
         frame.setObjectName("siteFrame")
+        frame.setProperty("activeSite", False)
         frame.setMinimumHeight(120)
         frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         layout = QVBoxLayout(frame)
@@ -90,6 +99,9 @@ class MainWindowRealtimeMixin:
         layout.setSpacing(3)
         name_lbl = QLabel(site_label(site))
         name_lbl.setObjectName("emphasisLabel")
+        selected_lbl = QLabel("\u2713")
+        selected_lbl.setObjectName("activeSiteMark")
+        selected_lbl.setToolTip("\u5f53\u524d\u9009\u4e2d\u7ad9\u70b9")
         period_lbl = QLabel(f"当前: {info.current_period or '-'}")
         next_lbl = QLabel(f"下期: {info.next_period or '-'}")
         countdown_lbl = QLabel(f"倒计时: {self._format_countdown(info.next_countdown)}")
@@ -99,17 +111,51 @@ class MainWindowRealtimeMixin:
         top_row = QHBoxLayout()
         top_row.addWidget(name_lbl)
         top_row.addStretch(1)
+        top_row.addWidget(selected_lbl)
         top_row.addWidget(open_btn)
         layout.addLayout(top_row)
         layout.addWidget(period_lbl)
         layout.addWidget(next_lbl)
         layout.addWidget(countdown_lbl)
         return frame, {
+            "frame": frame,
             "name": name_lbl,
+            "selected": selected_lbl,
             "period": period_lbl,
             "next": next_lbl,
             "countdown": countdown_lbl,
         }
+
+    def _refresh_site_card_selection(self) -> None:
+        for site, widgets in getattr(self, "_site_card_widgets", {}).items():
+            if not isinstance(widgets, dict):
+                continue
+            frame = widgets.get("frame")
+            if isinstance(frame, QFrame):
+                self._apply_site_card_selection_style(site, frame)
+            selected = widgets.get("selected")
+            if isinstance(selected, QLabel):
+                selected.setVisible(site == getattr(self, "_active_site", ""))
+
+    def _apply_site_card_selection_style(self, site: str, frame: QFrame) -> None:
+        active = site == getattr(self, "_active_site", "")
+        frame.setProperty("activeSite", active)
+        if active:
+            frame.setStyleSheet(
+                "QFrame#siteFrame {"
+                f"background: {THEME['time_bg']};"
+                f"border: 2px solid {THEME['c2']};"
+                "border-radius: 14px;"
+                "}"
+            )
+        else:
+            frame.setStyleSheet(
+                "QFrame#siteFrame {"
+                f"background: {THEME['panel']};"
+                f"border: 1px solid {THEME['border']};"
+                "border-radius: 14px;"
+                "}"
+            )
 
     def _select_site(self, site: str) -> None:
         logger.info("Switch site: %s", site)
@@ -123,6 +169,7 @@ class MainWindowRealtimeMixin:
         self.lock_status_label.setText("")
         self.auto_refresh_label.setText("自动刷新")
         self.auto_refresh_label.setStyleSheet("")
+        self._refresh_site_card_selection()
         self._refresh_active_site_info()
         if hasattr(self, "_set_status"):
             self._set_status(f"已切换线路: {site_label(site)}", "info")
@@ -136,6 +183,9 @@ class MainWindowRealtimeMixin:
         self.active_period_label.setText(info.current_period or "-")
         self.next_period_label.setText(info.next_period or "-")
         self.countdown_label.setText(self._format_countdown(info.next_countdown))
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "set_active_site"):
+            panel.set_active_site(self._active_site)
         self._sync_period_input_from_site(info)
         self._sync_chart_status()
 

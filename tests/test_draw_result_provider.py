@@ -171,6 +171,7 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     import app.services.account_resolver as account_resolver
     import app.services.background_window_sender as background_window_sender
     import app.services.message_injector as message_injector
+    import app.services.ws_message_sender as ws_message_sender
     import app.services.draw_result_store as draw_result_store
     import app.services.history_fetchers as history_fetchers
     import app.utils.pathing as pathing
@@ -192,6 +193,22 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     class ForbiddenInjector:
         def __init__(self, *args, **kwargs):
             raise AssertionError("MessageInjector/TIMLogin must not be used for auto betting")
+
+    class FakeWsSender:
+        instances = []
+
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.started = False
+            FakeWsSender.instances.append(self)
+
+        def startup(self):
+            self.started = True
+            return True
+
+        def shutdown(self):
+            self.started = False
 
     class FakeBackgroundSender:
         instances = []
@@ -224,6 +241,7 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
             self.ensure_calls.append((site, min_count))
 
     monkeypatch.setattr(message_injector, "MessageInjector", ForbiddenInjector)
+    monkeypatch.setattr(ws_message_sender, "WsMessageSender", FakeWsSender)
     monkeypatch.setattr(background_window_sender, "BackgroundWindowMessageSender", FakeBackgroundSender)
     monkeypatch.setattr(history_fetchers, "HistoryFetcher", FakeFetcher)
     monkeypatch.setattr(draw_result_store, "DrawResultStore", FakeStore)
@@ -271,11 +289,12 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     win._on_auto_bet_start()
 
     assert win.auto_bet_service.started is True
-    assert len(FakeBackgroundSender.instances) == 1
-    sender = FakeBackgroundSender.instances[0]
+    assert len(FakeWsSender.instances) == 1
+    sender = FakeWsSender.instances[0]
     assert sender.started is True
-    assert sender.kwargs == {"msg_db_path": tmp_path / "msg_0.db"}
+    assert sender.args == ("123456", "acc-1", "sig-1")
     assert win.auto_bet_service.injector is sender
+    assert FakeBackgroundSender.instances == []
     assert len(FakeStore.instances) == 1
     store = FakeStore.instances[0]
     assert store.db_path == tmp_path / "draw_results.db"
@@ -283,3 +302,149 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     assert store.ensure_calls == [("pc28", 20)]
     assert win.auto_bet_service.provider is store
     assert win._auto_bet_timer.started is True
+
+
+def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(monkeypatch, tmp_path: Path):
+    import json
+    import sys
+    import types
+
+    from app.models.auto_bet import StrategyConfig
+    if "PySide6" not in sys.modules:
+        qtcore = types.ModuleType("PySide6.QtCore")
+        qtwidgets = types.ModuleType("PySide6.QtWidgets")
+
+        class FakeQDateTime:
+            @classmethod
+            def currentDateTime(cls):
+                return cls()
+
+            @classmethod
+            def fromString(cls, *args, **kwargs):
+                return cls()
+
+            def isValid(self):
+                return False
+
+            def addDays(self, days):
+                return self
+
+        class FakeQt:
+            UserRole = 256
+            Checked = 2
+            ISODate = 1
+
+        qtcore.QDateTime = FakeQDateTime
+        qtcore.Qt = FakeQt
+        qtwidgets.QFileDialog = object
+        qtwidgets.QListWidgetItem = object
+        qtwidgets.QMessageBox = object
+        pyside = types.ModuleType("PySide6")
+        pyside.QtCore = qtcore
+        pyside.QtWidgets = qtwidgets
+        monkeypatch.setitem(sys.modules, "PySide6", pyside)
+        monkeypatch.setitem(sys.modules, "PySide6.QtCore", qtcore)
+        monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", qtwidgets)
+
+    from app.ui.main_window_data import MainWindowDataMixin
+    import app.services.account_resolver as account_resolver
+    import app.services.background_window_sender as background_window_sender
+    import app.services.uia_wuquan_sender as uia_wuquan_sender
+    import app.services.ws_message_sender as ws_message_sender
+    import app.services.draw_result_store as draw_result_store
+    import app.services.history_fetchers as history_fetchers
+    import app.utils.pathing as pathing
+
+    prefs_path = tmp_path / "shared_preferences.json"
+    prefs_path.write_text(
+        json.dumps(
+            {
+                "flutter.AccountManager_AccountList": [
+                    json.dumps({"loginResultEntity": {"accid": "acc-1", "token": "sig-1"}})
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(account_resolver, "DEFAULT_SHARED_PREFS", prefs_path)
+    monkeypatch.setattr(pathing, "user_data_dir", lambda: tmp_path)
+
+    class FakeWsSender:
+        instances = []
+
+        def __init__(self, *args, **kwargs):
+            FakeWsSender.instances.append(self)
+
+        def startup(self):
+            return False
+
+    class FakeUiaSender:
+        def __init__(self, **kwargs):
+            pass
+
+        def startup(self):
+            return False
+
+    class FakeBackgroundSender:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            FakeBackgroundSender.instances.append(self)
+
+        def startup(self):
+            self.started = True
+            return True
+
+    class FakeFetcher:
+        pass
+
+    class FakeStore:
+        def __init__(self, db_path, fetcher):
+            pass
+
+        def ensure_data(self, site, min_count=20):
+            pass
+
+    monkeypatch.setattr(ws_message_sender, "WsMessageSender", FakeWsSender)
+    monkeypatch.setattr(uia_wuquan_sender, "UiaWuQuanMessageSender", FakeUiaSender)
+    monkeypatch.setattr(background_window_sender, "BackgroundWindowMessageSender", FakeBackgroundSender)
+    monkeypatch.setattr(history_fetchers, "HistoryFetcher", FakeFetcher)
+    monkeypatch.setattr(draw_result_store, "DrawResultStore", FakeStore)
+
+    class FakeService:
+        def __init__(self):
+            self.config = StrategyConfig(site="pc28", observation_window=10)
+            self.injector = None
+            self.started = False
+
+        def set_injector(self, injector):
+            self.injector = injector
+
+        def set_result_provider(self, provider):
+            self.provider = provider
+
+        def start(self):
+            self.started = True
+
+    class FakeWindow(MainWindowDataMixin):
+        pass
+
+    win = FakeWindow()
+    win.auto_bet_service = FakeService()
+    win.resolved_db = type("Resolved", (), {
+        "accid": "acc-1",
+        "im_appid": "123456",
+        "msg_db": tmp_path / "msg_0.db",
+    })()
+    win.auto_bet_panel = type("Panel", (), {"set_running": lambda self, value: None})()
+    win._auto_bet_timer = type("Timer", (), {"start": lambda self: None})()
+
+    win._on_auto_bet_start()
+
+    assert len(FakeWsSender.instances) == 1
+    assert len(FakeBackgroundSender.instances) == 1
+    assert FakeBackgroundSender.instances[0].started is True
+    assert win.auto_bet_service.injector is FakeBackgroundSender.instances[0]
+    assert win.auto_bet_service.started is True

@@ -81,7 +81,7 @@ class UiaWuQuanMessageSender:
         return self._hwnd
 
     def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool:
-        return self.inject_text(group_id, f"{play_type} {self._fmt_amount(amount)}")
+        return self.inject_text(group_id, f"{play_type}{self._fmt_amount(amount)}")
 
     def inject_text(self, target_id: str, text: str, *, is_group: bool = True) -> bool:
         if not is_group:

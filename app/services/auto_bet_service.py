@@ -35,6 +35,8 @@ class AutoBetService:
         self._max_log_lines = 500
         self._on_log_updated: callable | None = None
         self._last_bet_period = ""
+        self._bet_keys: set[tuple[str, str, str]] = set()
+        self._group_names: dict[str, str] = {}
         self._runtime_state = AutoBetRuntimeState()
         self._rounds: list[AutoBetRound] = []
 
@@ -72,6 +74,10 @@ class AutoBetService:
         with self._lock:
             self._result_provider = provider
 
+    def set_group_names(self, group_names: dict[str, str]) -> None:
+        with self._lock:
+            self._group_names = {str(k): str(v) for k, v in dict(group_names or {}).items() if str(k)}
+
     def set_log_callback(self, callback: callable | None) -> None:
         """Set callback(record: InjectRecord) for GUI log updates."""
         self._on_log_updated = callback
@@ -84,6 +90,7 @@ class AutoBetService:
         with self._lock:
             self._running = True
             self._last_bet_period = ""
+            self._bet_keys.clear()
         self._add_log(InjectRecord(
             ts=datetime.now(),
             group_name="",
@@ -138,10 +145,6 @@ class AutoBetService:
                 now=now,
             ):
                 return
-            if self._last_bet_period == current_period:
-                return
-            # Mark this period as processed under lock to prevent race
-            self._last_bet_period = current_period
             cfg = self._config
             injector = self._injector
             result_provider = self._result_provider
@@ -157,8 +160,19 @@ class AutoBetService:
         if not active_decisions:
             return
 
-        for decision in active_decisions:
-            self._execute(decision, injector)
+        with self._lock:
+            processed_groups = {group_id for s, p, group_id in self._bet_keys if s == site and p == current_period}
+        active_decisions = [decision for decision in active_decisions if decision.group_id not in processed_groups]
+        if not active_decisions:
+            return
+
+        for group_id, group_decisions in self._group_decisions(active_decisions).items():
+            self._execute_group(group_id, group_decisions, injector, site=site, period=current_period)
+
+        with self._lock:
+            for group_id in {decision.group_id for decision in active_decisions}:
+                self._bet_keys.add((site, current_period, group_id))
+            self._last_bet_period = current_period
         self._record_round(site, current_period, active_decisions)
 
     # ------------------------------------------------------------------
@@ -181,19 +195,25 @@ class AutoBetService:
 
         mode = self._effective_bet_mode(cfg)
         amount = self._current_bet_amount(cfg)
-        target_group = cfg.target_groups[0] if cfg.target_groups else ""
+        target_groups = list(cfg.target_groups or [])
+        if not target_groups:
+            return []
+
+        if cfg.strategy_type == "martingale":
+            return self._martingale_decisions(cfg, mode, amount, target_groups)
+
         if mode == "three_doors":
-            doors = [play for play in cfg.play_types if play in {"小单", "大双", "小双", "大单"}]
+            doors = [play for play in cfg.play_types if play in {"\u5c0f\u5355", "\u5927\u53cc", "\u5c0f\u53cc", "\u5927\u5355"}]
             if len(doors) != 3:
                 return []
             return [
-                BetDecision(True, play, amount, target_group, "三门下注")
+                BetDecision(True, play, amount, group_id, "\u4e09\u95e8\u4e0b\u6ce8")
+                for group_id in target_groups
                 for play in doors
             ]
 
         if result_provider is None:
             return []
-
         results = result_provider.get_recent_results(cfg.site, cfg.observation_window)
         if len(results) < cfg.trigger_threshold:
             return []
@@ -220,34 +240,113 @@ class AutoBetService:
         if opposite is None:
             return []
 
-        return [BetDecision(
-            should_bet=True,
-            play_type=opposite,
-            amount=amount,
-            group_id=target_group,
-            reason=f"连续{consecutive}期'{tail_result}'→反向'{opposite}'",
-        )]
+        return [
+            BetDecision(
+                should_bet=True,
+                play_type=opposite,
+                amount=amount,
+                group_id=group_id,
+                reason=f"\u8fde\u7eed{consecutive}\u671f'{tail_result}'\u2192\u53cd\u5411'{opposite}'",
+            )
+            for group_id in target_groups
+        ]
 
-    def _execute(self, decision: BetDecision, injector: BetMessageSender | None = None) -> None:
+
+    def _martingale_decisions(self, cfg: StrategyConfig, mode: str, amount: float, target_groups: list[str]) -> list[BetDecision]:
+        """Fixed martingale: bet selected play(s) every eligible round."""
+        plays = self._allowed_play_types_for_mode(cfg, mode)
+        if not plays:
+            return []
+        if mode == "three_doors" and len(plays) != 3:
+            return []
+        return [
+            BetDecision(True, play, amount, group_id, "\u56fa\u5b9a\u500d\u6295")
+            for group_id in target_groups
+            for play in plays
+        ]
+
+    @staticmethod
+    def _group_decisions(decisions: list[BetDecision]) -> dict[str, list[BetDecision]]:
+        grouped: dict[str, list[BetDecision]] = {}
+        for decision in decisions:
+            grouped.setdefault(decision.group_id, []).append(decision)
+        return grouped
+
+    def _execute_group(
+        self,
+        group_id: str,
+        decisions: list[BetDecision],
+        injector: BetMessageSender | None = None,
+        *,
+        site: str = "",
+        period: str = "",
+    ) -> None:
+        if not decisions:
+            return
+        if len(decisions) == 1 or injector is None or not hasattr(injector, "inject_text"):
+            for decision in decisions:
+                self._execute(decision, injector, site=site, period=period)
+            return
+
+        content = "".join(self._format_bet_text(decision.play_type, decision.amount) for decision in decisions)
+        success = bool(injector.inject_text(group_id, content, is_group=True))
+        self._add_log(InjectRecord(
+            ts=datetime.now(),
+            group_name=self._display_group_name(group_id),
+            play_type="/".join(decision.play_type for decision in decisions),
+            amount=sum(float(decision.amount) for decision in decisions),
+            content=content,
+            success=success,
+            error="" if success else "DB ????",
+            site=site,
+            period=period,
+            group_id=group_id,
+        ))
+
+    def _execute(self, decision: BetDecision, injector: BetMessageSender | None = None, *, site: str = "", period: str = "") -> None:
         """Send the bet through the configured message sender."""
         if injector is None:
             self._add_log(InjectRecord(
-                ts=datetime.now(), group_name=decision.group_id,
-                play_type=decision.play_type, amount=decision.amount,
-                content="", success=False, error="消息注入器未初始化",
+                ts=datetime.now(),
+                group_name=self._display_group_name(decision.group_id),
+                play_type=decision.play_type,
+                amount=decision.amount,
+                content="",
+                success=False,
+                error="?????????",
+                site=site,
+                period=period,
+                group_id=decision.group_id,
             ))
             return
 
         success = injector.inject_bet(decision.group_id, decision.play_type, decision.amount)
         self._add_log(InjectRecord(
             ts=datetime.now(),
-            group_name=decision.group_id,
+            group_name=self._display_group_name(decision.group_id),
             play_type=decision.play_type,
             amount=decision.amount,
-            content=f"{decision.play_type} {decision.amount}",
+            content=self._format_bet_text(decision.play_type, decision.amount),
             success=success,
-            error="" if success else "DB 注入失败",
+            error="" if success else "DB ????",
+            site=site,
+            period=period,
+            group_id=decision.group_id,
         ))
+
+
+    def _display_group_name(self, group_id: str) -> str:
+        group_id = str(group_id or "")
+        with self._lock:
+            return self._group_names.get(group_id, group_id)
+
+    @staticmethod
+    def _format_bet_text(play_type: str, amount: float) -> str:
+        return f"{play_type}{AutoBetService._format_amount(amount)}"
+
+    @staticmethod
+    def _format_amount(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
 
     # ------------------------------------------------------------------
     # Helpers

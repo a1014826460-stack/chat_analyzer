@@ -183,3 +183,6 @@ class InjectRecord:
     content: str
     success: bool
     error: str = ""
+    site: str = ""
+    period: str = ""
+    group_id: str = ""

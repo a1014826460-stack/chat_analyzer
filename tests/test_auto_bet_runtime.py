@@ -35,6 +35,58 @@ def test_strategy_config_persists_mode_martingale_and_odds():
     assert loaded.odds["大"] == 1.98
 
 
+def test_strategy_config_persists_martingale_strategy_type():
+    cfg = StrategyConfig(strategy_type="martingale", bet_mode="size", play_types=["\u5927"], martingale_sequence=[100, 200])
+
+    loaded = StrategyConfig.from_dict(cfg.to_dict())
+
+    assert loaded.strategy_type == "martingale"
+    assert loaded.bet_mode == "size"
+    assert loaded.play_types == ["\u5927"]
+    assert loaded.martingale_sequence == [100.0, 200.0]
+
+
+def test_martingale_strategy_bets_selected_play_every_round_without_trend_trigger():
+    svc = AutoBetService()
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="size",
+        play_types=["\u5927"],
+        target_groups=["207191791"],
+        martingale_sequence=[100, 200, 400],
+        trigger_threshold=99,
+    )
+    svc.apply_config(cfg)
+    svc._runtime_state.current_step = 1
+
+    decisions = svc._analyze_many(cfg, Provider(recent=[]))
+
+    assert decisions == [BetDecision(True, "\u5927", 200.0, "207191791", "\u56fa\u5b9a\u500d\u6295")]
+
+
+def test_martingale_strategy_bets_all_selected_doors_each_round():
+    svc = AutoBetService()
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="three_doors",
+        play_types=["\u5c0f\u5355", "\u5927\u53cc", "\u5c0f\u53cc"],
+        target_groups=["207191791"],
+        martingale_sequence=[100, 200, 400],
+    )
+    svc.apply_config(cfg)
+    svc._runtime_state.current_step = 2
+
+    decisions = svc._analyze_many(cfg, Provider(recent=[]))
+
+    assert decisions == [
+        BetDecision(True, "\u5c0f\u5355", 400.0, "207191791", "\u56fa\u5b9a\u500d\u6295"),
+        BetDecision(True, "\u5927\u53cc", 400.0, "207191791", "\u56fa\u5b9a\u500d\u6295"),
+        BetDecision(True, "\u5c0f\u53cc", 400.0, "207191791", "\u56fa\u5b9a\u500d\u6295"),
+    ]
+
+
 def test_three_doors_analyze_bets_selected_three_doors_with_current_step_amount():
     svc = AutoBetService()
     cfg = StrategyConfig(
@@ -214,3 +266,129 @@ def test_tick_after_period_end_minus_30_seconds_does_not_bet():
     )
 
     assert sender.sent == []
+
+
+
+def test_martingale_strategy_creates_decisions_for_all_target_groups():
+    svc = AutoBetService()
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="size",
+        play_types=["[0m"],
+        target_groups=["g1", "g2"],
+        martingale_sequence=[100],
+    )
+    cfg.play_types = ["?"]
+
+    decisions = svc._analyze_many(cfg, Provider(recent=[]))
+
+    assert [(d.group_id, d.play_type, d.amount) for d in decisions] == [
+        ("g1", "?", 100.0),
+        ("g2", "?", 100.0),
+    ]
+
+
+def test_tick_deduplicates_by_site_period_and_group_not_period_only():
+    svc = AutoBetService()
+    sender = Sender()
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="size",
+        play_types=["?"],
+        target_groups=["g1", "g2"],
+        martingale_sequence=[100],
+    )
+    svc.apply_config(cfg)
+    svc.set_injector(sender)
+    svc.start()
+
+    kwargs = dict(
+        countdown_sec=120,
+        period_start_time=datetime(2026, 7, 5, 12, 0, 0),
+        period_end_time=datetime(2026, 7, 5, 12, 3, 0),
+        now=datetime(2026, 7, 5, 12, 1, 0),
+    )
+    svc.tick("pc28", current_period="20260705001", **kwargs)
+    svc.tick("pc28", current_period="20260705001", **kwargs)
+
+    assert sender.sent == [("g1", "?", 100.0), ("g2", "?", 100.0)]
+
+
+def test_inject_log_records_site_period_and_group_name_when_available():
+    svc = AutoBetService()
+    sender = Sender()
+    svc.set_injector(sender)
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="size",
+        play_types=["?"],
+        target_groups=["g1"],
+        martingale_sequence=[100],
+    )
+    svc.apply_config(cfg)
+    svc.set_group_names({"g1": "???"})
+    svc.start()
+
+    svc.tick(
+        "pc28",
+        120,
+        "20260705001",
+        period_start_time=datetime(2026, 7, 5, 12, 0, 0),
+        period_end_time=datetime(2026, 7, 5, 12, 3, 0),
+        now=datetime(2026, 7, 5, 12, 1, 0),
+    )
+
+    record = [r for r in svc.get_logs() if r.play_type][-1]
+    assert record.group_name == "???"
+    assert record.site == "pc28"
+    assert record.period == "20260705001"
+    assert record.content == "?100"
+
+
+
+class TextSender:
+    def __init__(self):
+        self.sent_text = []
+
+    def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool:
+        raise AssertionError("combined betting should use inject_text")
+
+    def inject_text(self, target_id: str, text: str, *, is_group: bool = True) -> bool:
+        self.sent_text.append((target_id, text, is_group))
+        return True
+
+
+def test_tick_combines_multiple_play_types_into_one_message_per_group():
+    svc = AutoBetService()
+    sender = TextSender()
+    cfg = StrategyConfig(
+        strategy_type="martingale",
+        site="pc28",
+        bet_mode="size",
+        play_types=["\u5927", "\u5c0f"],
+        target_groups=["g1", "g2"],
+        martingale_sequence=[100],
+    )
+    svc.apply_config(cfg)
+    svc.set_group_names({"g1": "\u4e00\u7fa4", "g2": "\u4e00\u7fa4"})
+    svc.set_injector(sender)
+    svc.start()
+
+    svc.tick(
+        "pc28",
+        120,
+        "20260705001",
+        period_start_time=datetime(2026, 7, 5, 12, 0, 0),
+        period_end_time=datetime(2026, 7, 5, 12, 3, 0),
+        now=datetime(2026, 7, 5, 12, 1, 0),
+    )
+
+    assert sender.sent_text == [
+        ("g1", "\u5927100\u5c0f100", True),
+        ("g2", "\u5927100\u5c0f100", True),
+    ]
+    records = [r for r in svc.get_logs() if r.group_id in {"g1", "g2"}]
+    assert [(r.group_name, r.content) for r in records] == [("\u4e00\u7fa4", "\u5927100\u5c0f100"), ("\u4e00\u7fa4", "\u5927100\u5c0f100")]

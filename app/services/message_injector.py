@@ -82,7 +82,7 @@ class MessageInjector:
 
     def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool:
         """Send a betting message to a group. Returns True on success."""
-        content = f"{play_type} {self._fmt_amount(amount)}"
+        content = f"{play_type}{self._fmt_amount(amount)}"
         return self._send(group_id, 2, content)
 
     def inject_text(
