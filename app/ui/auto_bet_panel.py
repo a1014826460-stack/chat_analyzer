@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.models.auto_bet import DEFAULT_ODDS, AutoBetRuntimeState, InjectRecord, StrategyConfig
+from app.models.auto_bet import DEFAULT_ODDS, AutoBetRuntimeState, InjectRecord, PendingAiBet, StrategyConfig
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
 BET_STRATEGY_OPTIONS = [
     ("\u8d8b\u52bf\u53cd\u6253", "trend_following"),
     ("\u56fa\u5b9a\u500d\u6295", "martingale"),
+    ("AI\u4e0b\u6ce8", "ai"),
 ]
 
 
@@ -75,6 +76,8 @@ class AutoBetPanel(QGroupBox):
     config_changed = Signal(object)
     start_clicked = Signal()
     stop_clicked = Signal()
+    ai_confirm_clicked = Signal()
+    ai_skip_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("自动下注", parent)
@@ -161,6 +164,27 @@ class AutoBetPanel(QGroupBox):
             )
         )
 
+    def show_pending_ai_recommendation(self, pending: PendingAiBet | None) -> None:
+        if pending is None:
+            self._ai_pending_widget.setVisible(False)
+            self._ai_pending_key = None
+            return
+        self._ai_pending_key = (pending.site, pending.period)
+        self._ai_pending_label.setText(
+            "\u672c\u671f AI \u5efa\u8bae [{site} {period}]\uff1a{play}{amount}\n\u7406\u7531\uff1a{reason}".format(
+                site=pending.site,
+                period=pending.period,
+                play=pending.play_type,
+                amount=self._format_amount(pending.amount),
+                reason=pending.reason,
+            )
+        )
+        self._ai_pending_widget.setVisible(True)
+
+    @property
+    def pending_ai_key(self) -> tuple[str, str] | None:
+        return getattr(self, "_ai_pending_key", None)
+
     def get_config(self) -> StrategyConfig:
         """Build config from current UI state."""
         checked_groups: list[str] = []
@@ -189,6 +213,12 @@ class AutoBetPanel(QGroupBox):
             bet_mode=str(self._mode_combo.currentData() or "size"),
             martingale_sequence=self._parse_martingale_text(self._martingale_edit.text()),
             odds=self._odds_from_inputs(),
+            ai_provider=str(self._ai_provider_combo.currentData() or "openai_compatible"),
+            ai_base_url=self._ai_base_url_edit.text().strip(),
+            ai_model=self._ai_model_edit.text().strip(),
+            ai_api_key=self._ai_api_key_edit.text().strip(),
+            ai_history_count=self._ai_history_spin.value(),
+            ai_require_confirmation=self._ai_confirm_check.isChecked(),
         )
 
     def load_config(self, config: StrategyConfig) -> None:
@@ -213,6 +243,14 @@ class AutoBetPanel(QGroupBox):
             cb.setChecked(pt in config.play_types)
         for play, edit in self._odds_edits.items():
             edit.setText(str(config.odds.get(play, DEFAULT_ODDS.get(play, 1.0))))
+        idx = self._ai_provider_combo.findData(config.ai_provider)
+        if idx >= 0:
+            self._ai_provider_combo.setCurrentIndex(idx)
+        self._ai_base_url_edit.setText(config.ai_base_url)
+        self._ai_model_edit.setText(config.ai_model)
+        self._ai_api_key_edit.setText(config.ai_api_key)
+        self._ai_history_spin.setValue(config.ai_history_count)
+        self._ai_confirm_check.setChecked(config.ai_require_confirmation)
         self._sync_play_checkboxes_for_mode()
         self._sync_strategy_visibility()
 
@@ -253,14 +291,16 @@ class AutoBetPanel(QGroupBox):
         strategy_row.addWidget(self._help_btn)
         layout.addLayout(strategy_row)
 
-        mode_row = QHBoxLayout()
+        self._mode_row_widget = QWidget()
+        mode_row = QHBoxLayout(self._mode_row_widget)
+        mode_row.setContentsMargins(0, 0, 0, 0)
         mode_row.addWidget(QLabel("功能:"))
         self._mode_combo = QComboBox()
         for label, value in BET_MODE_OPTIONS:
             self._mode_combo.addItem(label, value)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self._mode_combo, 1)
-        layout.addLayout(mode_row)
+        layout.addWidget(self._mode_row_widget)
 
         # --- Row: site ---
         site_row = QHBoxLayout()
@@ -328,8 +368,50 @@ class AutoBetPanel(QGroupBox):
         martingale_row.addWidget(self._martingale_edit, 1)
         layout.addWidget(self._martingale_row_widget)
 
+        self._ai_settings_widget = QWidget()
+        ai_layout = QVBoxLayout(self._ai_settings_widget)
+        ai_layout.setContentsMargins(0, 0, 0, 0)
+        ai_provider_row = QHBoxLayout()
+        ai_provider_row.addWidget(QLabel("AI 类型:"))
+        self._ai_provider_combo = QComboBox()
+        self._ai_provider_combo.addItem("OpenAI 兼容", "openai_compatible")
+        self._ai_provider_combo.addItem("Anthropic", "anthropic")
+        self._ai_provider_combo.currentIndexChanged.connect(self._emit_config)
+        ai_provider_row.addWidget(self._ai_provider_combo, 1)
+        ai_layout.addLayout(ai_provider_row)
+        for label, attr, placeholder, secret in (
+            ("Base URL:", "_ai_base_url_edit", "https://api.example.com/v1", False),
+            ("模型:", "_ai_model_edit", "gpt-4.1-mini", False),
+            ("API Key:", "_ai_api_key_edit", "", True),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            edit = QLineEdit()
+            edit.setPlaceholderText(placeholder)
+            if secret:
+                edit.setEchoMode(QLineEdit.Password)
+            edit.textChanged.connect(self._emit_config)
+            setattr(self, attr, edit)
+            row.addWidget(edit, 1)
+            ai_layout.addLayout(row)
+        ai_history_row = QHBoxLayout()
+        ai_history_row.addWidget(QLabel("历史期数:"))
+        self._ai_history_spin = QSpinBox()
+        self._ai_history_spin.setRange(20, 200)
+        self._ai_history_spin.setValue(50)
+        self._ai_history_spin.valueChanged.connect(self._emit_config)
+        ai_history_row.addWidget(self._ai_history_spin)
+        self._ai_confirm_check = QCheckBox("每期下注前需确认")
+        self._ai_confirm_check.toggled.connect(self._emit_config)
+        ai_history_row.addWidget(self._ai_confirm_check)
+        ai_history_row.addStretch(1)
+        ai_layout.addLayout(ai_history_row)
+        layout.addWidget(self._ai_settings_widget)
+
         # --- Play types ---
-        play_row = QHBoxLayout()
+        self._play_row_widget = QWidget()
+        play_row = QHBoxLayout(self._play_row_widget)
+        play_row.setContentsMargins(0, 0, 0, 0)
         play_row.addWidget(QLabel("玩法:"))
         self._play_checkboxes: dict[str, QCheckBox] = {}
         for pt in PLAY_TYPE_OPTIONS:
@@ -339,7 +421,7 @@ class AutoBetPanel(QGroupBox):
             self._play_checkboxes[pt] = cb
             play_row.addWidget(cb)
         play_row.addStretch(1)
-        layout.addLayout(play_row)
+        layout.addWidget(self._play_row_widget)
 
         odds_box = QGroupBox("赔率设置（含本金）")
         odds_layout = QVBoxLayout(odds_box)
@@ -368,6 +450,24 @@ class AutoBetPanel(QGroupBox):
         lock_row.addWidget(QLabel("秒"))
         lock_row.addStretch(1)
         layout.addLayout(lock_row)
+
+        self._ai_pending_widget = QFrame()
+        ai_pending_layout = QVBoxLayout(self._ai_pending_widget)
+        ai_pending_layout.setContentsMargins(6, 6, 6, 6)
+        self._ai_pending_label = QLabel()
+        self._ai_pending_label.setWordWrap(True)
+        ai_pending_layout.addWidget(self._ai_pending_label)
+        ai_pending_actions = QHBoxLayout()
+        self._ai_confirm_btn = QPushButton("确认下注")
+        self._ai_confirm_btn.clicked.connect(self.ai_confirm_clicked.emit)
+        self._ai_skip_btn = QPushButton("跳过本期")
+        self._ai_skip_btn.clicked.connect(self.ai_skip_clicked.emit)
+        ai_pending_actions.addWidget(self._ai_confirm_btn)
+        ai_pending_actions.addWidget(self._ai_skip_btn)
+        ai_pending_actions.addStretch(1)
+        ai_pending_layout.addLayout(ai_pending_actions)
+        self._ai_pending_widget.setVisible(False)
+        layout.addWidget(self._ai_pending_widget)
 
         # --- Start/Stop buttons ---
         btn_row = QHBoxLayout()
@@ -453,9 +553,15 @@ class AutoBetPanel(QGroupBox):
     def _sync_strategy_visibility(self) -> None:
         strategy_type = str(self._strategy_combo.currentData() or "trend_following")
         is_martingale = strategy_type == "martingale"
+        is_ai = strategy_type == "ai"
         has_sequence = bool(self._parse_martingale_text(self._martingale_edit.text()))
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
+        self._ai_settings_widget.setVisible(is_ai)
+        self._mode_row_widget.setVisible(not is_ai)
+        self._play_row_widget.setVisible(not is_ai)
+        if not is_ai:
+            self.show_pending_ai_recommendation(None)
 
     @staticmethod
     def _parse_martingale_text(text: str) -> list[float]:

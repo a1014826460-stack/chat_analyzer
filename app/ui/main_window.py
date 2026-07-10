@@ -49,6 +49,8 @@ class MainWindow(
     _load_result_ready = Signal(object)
     _draw_infos_ready = Signal(object)
     _single_draw_info_ready = Signal(object)
+    _auto_bet_log_ready = Signal(object)
+    _ai_pending_ready = Signal(object)
     _update_check_ready = Signal(object)
     _update_download_ready = Signal(object)
 
@@ -127,6 +129,8 @@ class MainWindow(
         self._load_result_ready.connect(self._handle_load_result_ready)
         self._draw_infos_ready.connect(self._apply_draw_infos)
         self._single_draw_info_ready.connect(self._apply_single_draw_info)
+        self._auto_bet_log_ready.connect(self._handle_auto_bet_log_ready)
+        self._ai_pending_ready.connect(self._handle_ai_pending_ready)
         self._update_check_ready.connect(self._handle_update_check_ready)
         self._update_download_ready.connect(self._handle_update_download_ready)
         self._auto_bet_timer = QTimer(self)

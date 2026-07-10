@@ -3,6 +3,7 @@
 from app.models.auto_bet import AutoBetRuntimeState, BetDecision, DrawResult, StrategyConfig
 from app.services.auto_bet_service import AutoBetService
 from datetime import datetime
+import time
 
 
 class Provider:
@@ -392,3 +393,113 @@ def test_tick_combines_multiple_play_types_into_one_message_per_group():
     ]
     records = [r for r in svc.get_logs() if r.group_id in {"g1", "g2"}]
     assert [(r.group_name, r.content) for r in records] == [("\u4e00\u7fa4", "\u5927100\u5c0f100"), ("\u4e00\u7fa4", "\u5927100\u5c0f100")]
+
+
+class AiClient:
+    def __init__(self, play_type: str = "\u5927", reason: str = "\u6d4b\u8bd5\u5efa\u8bae") -> None:
+        self.play_type = play_type
+        self.reason = reason
+        self.calls = []
+
+    def recommend(self, config, results):
+        from app.services.ai_bet_client import AiRecommendation
+
+        self.calls.append((config.site, list(results)))
+        return AiRecommendation(play_type=self.play_type, reason=self.reason)
+
+
+def _wait_until(condition, timeout: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return condition()
+
+
+def _started_ai_service(*, require_confirmation: bool):
+    service = AutoBetService()
+    sender = Sender()
+    client = AiClient()
+    service.apply_config(StrategyConfig(
+        strategy_type="ai",
+        site="pc28",
+        target_groups=["g1", "g2"],
+        bet_amount=100,
+        ai_history_count=50,
+        ai_require_confirmation=require_confirmation,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(Provider(recent=[DrawResult("1", "pc28", "\u5927\u5355")]))
+    service.set_ai_client(client)
+    service.start()
+    return service, sender, client
+
+
+def _ai_tick(service, *, countdown: int = 120, now: datetime | None = None):
+    current = now or datetime(2026, 7, 10, 12, 1)
+    service.tick(
+        "pc28",
+        countdown,
+        "1001",
+        period_start_time=datetime(2026, 7, 10, 12, 0),
+        period_end_time=datetime(2026, 7, 10, 12, 3),
+        now=current,
+    )
+
+
+def test_ai_strategy_generates_one_pending_suggestion_per_site_period():
+    service, _sender, client = _started_ai_service(require_confirmation=True)
+
+    _ai_tick(service)
+    assert _wait_until(lambda: service.pending_ai_recommendation("pc28", "1001") is not None)
+    _ai_tick(service)
+
+    assert len(client.calls) == 1
+    pending = service.pending_ai_recommendation("pc28", "1001")
+    assert pending.play_type == "\u5927"
+    assert pending.amount == 100
+    assert pending.reason == "\u6d4b\u8bd5\u5efa\u8bae"
+
+
+def test_confirming_ai_suggestion_sends_same_bet_to_every_target_group():
+    service, sender, _client = _started_ai_service(require_confirmation=True)
+
+    _ai_tick(service)
+    assert _wait_until(lambda: service.pending_ai_recommendation("pc28", "1001") is not None)
+
+    assert service.confirm_ai_bet("pc28", "1001", within_bet_window=True) is True
+    assert sender.sent == [("g1", "\u5927", 100.0), ("g2", "\u5927", 100.0)]
+    assert service.pending_ai_recommendation("pc28", "1001") is None
+
+
+def test_skipping_ai_suggestion_keeps_the_period_from_sending():
+    service, sender, _client = _started_ai_service(require_confirmation=True)
+
+    _ai_tick(service)
+    assert _wait_until(lambda: service.pending_ai_recommendation("pc28", "1001") is not None)
+
+    assert service.skip_ai_bet("pc28", "1001") is True
+    assert sender.sent == []
+    assert service.pending_ai_recommendation("pc28", "1001") is None
+
+
+def test_ai_confirmation_timeout_skips_without_sending():
+    service, sender, _client = _started_ai_service(require_confirmation=True)
+
+    _ai_tick(service)
+    assert _wait_until(lambda: service.pending_ai_recommendation("pc28", "1001") is not None)
+    _ai_tick(service, countdown=10, now=datetime(2026, 7, 10, 12, 2, 31))
+
+    assert sender.sent == []
+    assert service.pending_ai_recommendation("pc28", "1001") is None
+
+
+def test_ai_strategy_auto_sends_after_one_valid_suggestion_when_confirmation_is_disabled():
+    service, sender, client = _started_ai_service(require_confirmation=False)
+
+    _ai_tick(service)
+
+    assert _wait_until(lambda: len(sender.sent) == 2)
+    assert sender.sent == [("g1", "\u5927", 100.0), ("g2", "\u5927", 100.0)]
+    assert len(client.calls) == 1

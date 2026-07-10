@@ -6,6 +6,7 @@ from app.ui.auto_bet_panel import BET_STRATEGY_OPTIONS, strategy_help_text
 def test_auto_bet_panel_exposes_martingale_strategy_option():
     assert ("\u8d8b\u52bf\u53cd\u6253", "trend_following") in BET_STRATEGY_OPTIONS
     assert ("\u56fa\u5b9a\u500d\u6295", "martingale") in BET_STRATEGY_OPTIONS
+    assert ("AI\u4e0b\u6ce8", "ai") in BET_STRATEGY_OPTIONS
 
 
 def test_strategy_help_text_explains_strategy_differences():
@@ -191,3 +192,53 @@ def test_auto_bet_panel_shows_target_group_lock_hint_while_running():
 
     panel.set_running(False)
     assert not panel._target_group_lock_hint.isVisibleTo(panel)
+
+
+def test_ai_strategy_config_exposes_provider_history_and_confirmation():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("ai"))
+    panel._ai_provider_combo.setCurrentIndex(panel._ai_provider_combo.findData("anthropic"))
+    panel._ai_base_url_edit.setText("https://api.example")
+    panel._ai_model_edit.setText("claude-test")
+    panel._ai_api_key_edit.setText("secret")
+    panel._ai_history_spin.setValue(80)
+    panel._ai_confirm_check.setChecked(True)
+
+    config = panel.get_config()
+
+    assert config.strategy_type == "ai"
+    assert config.ai_provider == "anthropic"
+    assert config.ai_base_url == "https://api.example"
+    assert config.ai_model == "claude-test"
+    assert config.ai_api_key == "secret"
+    assert config.ai_history_count == 80
+    assert config.ai_require_confirmation is True
+    assert panel._ai_settings_widget.isVisibleTo(panel)
+    assert not panel._mode_row_widget.isVisibleTo(panel)
+    assert not panel._play_row_widget.isVisibleTo(panel)
+
+
+def test_ai_pending_suggestion_displays_confirmation_actions():
+    from datetime import datetime
+    from PySide6.QtWidgets import QApplication
+    from app.models.auto_bet import PendingAiBet
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel.show_pending_ai_recommendation(PendingAiBet(
+        site="pc28",
+        period="1001",
+        play_type="\u5927\u5355",
+        amount=100,
+        reason="\u6d4b\u8bd5\u7406\u7531",
+        created_at=datetime(2026, 7, 10, 12, 0),
+    ))
+
+    assert panel._ai_pending_widget.isVisibleTo(panel)
+    assert "\u5927\u5355100" in panel._ai_pending_label.text()
+    assert "\u6d4b\u8bd5\u7406\u7531" in panel._ai_pending_label.text()

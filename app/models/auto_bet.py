@@ -28,6 +28,17 @@ class BetDecision:
     reason: str           # human-readable explanation for the run log
 
 
+@dataclass(frozen=True)
+class PendingAiBet:
+    """A validated AI suggestion awaiting optional user confirmation."""
+    site: str
+    period: str
+    play_type: str
+    amount: float
+    reason: str
+    created_at: datetime
+
+
 DEFAULT_ODDS: dict[str, float] = {
     "大": 1.98,
     "小": 1.98,
@@ -69,6 +80,12 @@ class StrategyConfig:
     bet_mode: str = "size"
     martingale_sequence: list[float] = field(default_factory=list)
     odds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ODDS))
+    ai_provider: str = "openai_compatible"
+    ai_base_url: str = ""
+    ai_model: str = ""
+    ai_api_key: str = ""
+    ai_history_count: int = 50
+    ai_require_confirmation: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -84,6 +101,12 @@ class StrategyConfig:
             "bet_mode": self.bet_mode,
             "martingale_sequence": self.martingale_sequence,
             "odds": self.odds,
+            "ai_provider": self.ai_provider,
+            "ai_base_url": self.ai_base_url,
+            "ai_model": self.ai_model,
+            "ai_api_key": self.ai_api_key,
+            "ai_history_count": self.ai_history_count,
+            "ai_require_confirmation": self.ai_require_confirmation,
         }
 
     @classmethod
@@ -103,6 +126,12 @@ class StrategyConfig:
             bet_mode=str(data.get("bet_mode", "size")),
             martingale_sequence=_ensure_float_list(data.get("martingale_sequence"), default=[]),
             odds=_ensure_odds(data.get("odds")),
+            ai_provider=_ensure_ai_provider(data.get("ai_provider")),
+            ai_base_url=str(data.get("ai_base_url", "") or "").strip(),
+            ai_model=str(data.get("ai_model", "") or "").strip(),
+            ai_api_key=str(data.get("ai_api_key", "") or "").strip(),
+            ai_history_count=_ensure_ai_history_count(data.get("ai_history_count")),
+            ai_require_confirmation=bool(data.get("ai_require_confirmation", False)),
         )
 
 
@@ -146,6 +175,18 @@ def _ensure_odds(value: object) -> dict[str, float]:
             if number > 0:
                 odds[name] = number
     return odds
+
+
+def _ensure_ai_provider(value: object) -> str:
+    provider = str(value or "openai_compatible").strip()
+    return provider if provider in {"openai_compatible", "anthropic"} else "openai_compatible"
+
+
+def _ensure_ai_history_count(value: object) -> int:
+    try:
+        return min(200, max(20, int(value)))
+    except (TypeError, ValueError):
+        return 50
 
 
 @dataclass

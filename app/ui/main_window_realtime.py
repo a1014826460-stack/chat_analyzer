@@ -214,6 +214,10 @@ class MainWindowRealtimeMixin:
             info.next_countdown = max(0, int((info.next_time - now).total_seconds()))
         elif info.next_countdown > 0:
             info.next_countdown -= 1
+        else:
+            # A zero countdown without an API-derived time anchor cannot safely
+            # identify a new period, so wait for a future successful refresh.
+            return
         if info.next_countdown > 0:
             return
         local_info = self._advance_site_locally(site, info, now)
@@ -229,8 +233,12 @@ class MainWindowRealtimeMixin:
 
     def _advance_site_locally(self, site: str, info: DrawInfo, now: datetime) -> DrawInfo:
         interval = info.interval_sec or _SITE_INTERVAL_SEC.get(site, 180)
-        start_time = info.next_time or now
-        current_period = info.next_period or self._increment_period_text(info.current_period, 1)
+        previous_boundary = info.next_time or now
+        elapsed_intervals = max(1, int((now - previous_boundary).total_seconds()) // interval + 1)
+        start_time = previous_boundary + timedelta(seconds=interval * (elapsed_intervals - 1))
+        current_period = self._increment_period_text(info.current_period, elapsed_intervals)
+        if not current_period:
+            current_period = info.next_period or self._increment_period_text(info.current_period, 1)
         next_time = start_time + timedelta(seconds=interval)
         return DrawInfo(
             current_period=current_period,

@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from PySide6.QtWidgets import QApplication, QLabel, QGridLayout, QWidget
 
 from app.models import DrawInfo
@@ -66,3 +68,49 @@ def test_refresh_active_site_info_syncs_auto_bet_panel_site(monkeypatch):
     window._refresh_active_site_info()
 
     assert window.auto_bet_panel.site == "macao"
+
+
+class ClockHarness(MainWindowRealtimeMixin):
+    def __init__(self) -> None:
+        self.applied: list[tuple[str, DrawInfo]] = []
+        self.calibrations: list[tuple[str, datetime]] = []
+
+    def _apply_single_draw_info(self, payload) -> None:
+        site, info, _error = payload
+        self.applied.append((site, info))
+
+    def _schedule_draw_calibration(self, site: str, due_at: datetime) -> None:
+        self.calibrations.append((site, due_at))
+
+
+def test_countdown_tick_does_not_advance_without_a_schedule_anchor():
+    window = ClockHarness()
+    info = DrawInfo(current_period="100", next_period="101", next_countdown=0)
+
+    window._advance_site_countdown("pc28", info, datetime(2026, 7, 10, 12, 0))
+
+    assert window.applied == []
+    assert window.calibrations == []
+
+
+def test_local_advance_catches_up_only_for_elapsed_intervals():
+    window = ClockHarness()
+    boundary = datetime(2026, 7, 10, 12, 0)
+    info = DrawInfo(
+        current_period="100",
+        next_period="101",
+        next_time=boundary,
+        interval_sec=210,
+        source="inferred",
+    )
+
+    advanced = window._advance_site_locally(
+        "pc28",
+        info,
+        boundary + timedelta(seconds=420),
+    )
+
+    assert advanced.current_period == "103"
+    assert advanced.next_period == "104"
+    assert advanced.start_time == boundary + timedelta(seconds=420)
+    assert advanced.next_time == boundary + timedelta(seconds=630)

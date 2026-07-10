@@ -768,6 +768,46 @@ class MainWindowDataMixin:
         if panel is not None and hasattr(panel, "update_runtime_state"):
             panel.update_runtime_state(service.runtime_state)
 
+    def _handle_auto_bet_log_ready(self, record: object) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "append_log"):
+            panel.append_log(record)
+
+    def _handle_ai_pending_ready(self, pending: object) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "show_pending_ai_recommendation"):
+            panel.show_pending_ai_recommendation(pending)
+
+    def _on_confirm_ai_bet(self) -> None:
+        service = getattr(self, "auto_bet_service", None)
+        panel = getattr(self, "auto_bet_panel", None)
+        if service is None or panel is None:
+            return
+        pending_key = getattr(panel, "pending_ai_key", None)
+        if not pending_key:
+            return
+        site, period = pending_key
+        info = getattr(self, "_draw_infos", {}).get(site)
+        countdown = int(getattr(info, "next_countdown", 0) or 0)
+        cfg = service.config
+        within_window = service._within_bet_window(
+            countdown,
+            cfg.lock_threshold_sec,
+            period_start_time=getattr(info, "start_time", None),
+            period_end_time=getattr(info, "next_time", None),
+        )
+        service.confirm_ai_bet(site, period, within_bet_window=within_window)
+        panel.update_runtime_state(service.runtime_state)
+
+    def _on_skip_ai_bet(self) -> None:
+        service = getattr(self, "auto_bet_service", None)
+        panel = getattr(self, "auto_bet_panel", None)
+        if service is None or panel is None:
+            return
+        pending_key = getattr(panel, "pending_ai_key", None)
+        if pending_key:
+            service.skip_ai_bet(*pending_key)
+
     def _on_auto_bet_config_changed(self, config: object) -> None:
         """Save auto bet config to settings."""
         service = getattr(self, "auto_bet_service", None)
@@ -864,7 +904,8 @@ class MainWindowDataMixin:
             fetcher=HistoryFetcher(),
         )
         svc_cfg = service.config
-        store.ensure_data(svc_cfg.site, min_count=svc_cfg.observation_window * 2)
+        history_count = svc_cfg.ai_history_count if svc_cfg.strategy_type == "ai" else svc_cfg.observation_window * 2
+        store.ensure_data(svc_cfg.site, min_count=history_count)
         service.set_result_provider(store)
 
         service.start()
@@ -910,7 +951,10 @@ class MainWindowDataMixin:
         panel.config_changed.connect(self._on_auto_bet_config_changed)
         panel.start_clicked.connect(self._on_auto_bet_start)
         panel.stop_clicked.connect(self._on_auto_bet_stop)
-        self.auto_bet_service.set_log_callback(panel.append_log)
+        panel.ai_confirm_clicked.connect(self._on_confirm_ai_bet)
+        panel.ai_skip_clicked.connect(self._on_skip_ai_bet)
+        self.auto_bet_service.set_log_callback(self._auto_bet_log_ready.emit)
+        self.auto_bet_service.set_ai_pending_callback(self._ai_pending_ready.emit)
 
         # Populate groups
         self._refresh_auto_bet_groups()
