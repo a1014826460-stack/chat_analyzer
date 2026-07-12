@@ -10,7 +10,7 @@ from app.ui.raw_chat_dialog import RawChatDialog
 from app.ui.summary_check_dialog import SummaryCheckDialog
 from app.ui.unresolved_receipt_dialog import UnresolvedReceiptDialog
 from app.utils.fetch_date import set_proxy_settings
-from app.utils.proxy import proxy_status_text
+from app.ui.proxy_settings_dialog import ProxySettingsDialog
 
 
 logger = logging.getLogger(__name__)
@@ -279,8 +279,10 @@ class MainWindowActionsMixin:
         QMessageBox.about(self, "关于", "StarTrace Chat Analyzer")
 
     def _open_proxy_settings(self) -> None:
-        logger.debug("Proxy settings viewed")
-        QMessageBox.information(self, "代理设置", proxy_status_text(self.settings))
+        logger.debug("Proxy settings opened")
+        dialog = ProxySettingsDialog(self.settings, self)
+        if dialog.exec() == dialog.Accepted:
+            self._apply_proxy_settings(*dialog.values())
 
     def _apply_proxy_settings(self, enabled: bool, http_proxy: str, https_proxy: str) -> None:
         self.settings["proxy_enabled"] = enabled

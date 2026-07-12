@@ -248,9 +248,14 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
 
     class FakeService:
         def __init__(self):
-            self.config = StrategyConfig(site="pc28", observation_window=10)
+            self.config = StrategyConfig(
+                strategy_type="ai",
+                site="pc28",
+                observation_window=10,
+            )
             self.injector = None
             self.provider = None
+            self.ai_client = None
             self.started = False
 
         def set_injector(self, injector):
@@ -258,6 +263,9 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
 
         def set_result_provider(self, provider):
             self.provider = provider
+
+        def set_ai_client(self, client):
+            self.ai_client = client
 
         def start(self):
             self.started = True
@@ -299,8 +307,10 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     store = FakeStore.instances[0]
     assert store.db_path == tmp_path / "draw_results.db"
     assert isinstance(store.fetcher, FakeFetcher)
-    assert store.ensure_calls == [("pc28", 20)]
+    assert store.ensure_calls == [("pc28", 50)]
     assert win.auto_bet_service.provider is store
+    from app.services.ai_bet_client import AiBetClient
+    assert isinstance(win.auto_bet_service.ai_client, AiBetClient)
     assert win._auto_bet_timer.started is True
 
 

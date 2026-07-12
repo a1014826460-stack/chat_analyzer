@@ -443,11 +443,24 @@ class AutoBetService:
             self.skip_ai_bet(site, period, "已到封盘阈值，自动跳过 AI 建议")
 
     def _send_ai_bet(self, pending: PendingAiBet, cfg: StrategyConfig, injector: BetMessageSender) -> bool:
+        with self._lock:
+            already_sent_groups = {
+                group_id
+                for site, period, group_id in self._bet_keys
+                if site == pending.site and period == pending.period
+            }
         decisions = [
             BetDecision(True, pending.play_type, pending.amount, group_id, f"AI：{pending.reason}")
             for group_id in cfg.target_groups
+            if group_id not in already_sent_groups
         ]
         if not decisions:
+            self._add_ai_status_log(
+                pending.site,
+                pending.period,
+                "AI 建议未发送：所有目标群组均已在本期下注",
+                success=True,
+            )
             return False
         for group_id, group_decisions in self._group_decisions(decisions).items():
             self._execute_group(group_id, group_decisions, injector, site=pending.site, period=pending.period)
@@ -458,9 +471,10 @@ class AutoBetService:
         return True
 
     def _add_ai_status_log(self, site: str, period: str, content: str, *, success: bool) -> None:
+        group_names = [self._display_group_name(group_id) for group_id in self._config.target_groups]
         self._add_log(InjectRecord(
             ts=datetime.now(),
-            group_name="",
+            group_name=", ".join(name for name in group_names if name),
             play_type="",
             amount=0,
             content=content,

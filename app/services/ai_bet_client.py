@@ -64,7 +64,7 @@ class AiBetClient:
                 },
                 {
                     "model": config.ai_model,
-                    "max_tokens": 300,
+                    "max_tokens": 4096,
                     "system": _SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_prompt}],
                 },
@@ -99,11 +99,22 @@ class AiBetClient:
             raise AiBetClientError("AI 返回不是 JSON 对象")
         if provider == "anthropic":
             content = payload.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
             if isinstance(content, list):
                 for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                    if isinstance(item, str) and item.strip():
+                        return item
+                    if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
                         return item["text"]
-            raise AiBetClientError("Anthropic 返回中没有文本内容")
+            block_types = [
+                str(item.get("type") or "unknown")
+                for item in content
+                if isinstance(item, dict)
+            ] if isinstance(content, list) else []
+            stop_reason = str(payload.get("stop_reason") or "unknown")
+            details = f"stop_reason={stop_reason}, content_blocks={','.join(block_types) or 'none'}"
+            raise AiBetClientError(f"Anthropic 返回中没有文本内容 ({details})")
         choices = payload.get("choices")
         if isinstance(choices, list) and choices:
             message = choices[0].get("message") if isinstance(choices[0], dict) else None

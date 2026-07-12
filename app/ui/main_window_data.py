@@ -894,6 +894,14 @@ class MainWindowDataMixin:
                     return
 
         service.set_injector(injector)
+        svc_cfg = service.config
+        if svc_cfg.strategy_type == "ai":
+            from app.services.ai_bet_client import AiBetClient
+
+            if hasattr(service, "set_ai_client"):
+                service.set_ai_client(AiBetClient())
+        elif hasattr(service, "set_ai_client"):
+            service.set_ai_client(None)
 
         from app.services.draw_result_store import DrawResultStore
         from app.services.history_fetchers import HistoryFetcher
@@ -903,7 +911,6 @@ class MainWindowDataMixin:
             db_path=Path(user_data_dir()) / "draw_results.db",
             fetcher=HistoryFetcher(),
         )
-        svc_cfg = service.config
         history_count = svc_cfg.ai_history_count if svc_cfg.strategy_type == "ai" else svc_cfg.observation_window * 2
         store.ensure_data(svc_cfg.site, min_count=history_count)
         service.set_result_provider(store)

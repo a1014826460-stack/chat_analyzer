@@ -503,3 +503,26 @@ def test_ai_strategy_auto_sends_after_one_valid_suggestion_when_confirmation_is_
     assert _wait_until(lambda: len(sender.sent) == 2)
     assert sender.sent == [("g1", "\u5927", 100.0), ("g2", "\u5927", 100.0)]
     assert len(client.calls) == 1
+
+
+def test_ai_strategy_does_not_repeat_a_group_already_bet_by_another_strategy():
+    service, sender, _client = _started_ai_service(require_confirmation=False)
+    service._bet_keys.add(("pc28", "1001", "g1"))
+
+    _ai_tick(service)
+
+    assert _wait_until(lambda: len(sender.sent) == 1)
+    assert sender.sent == [("g2", "\u5927", 100.0)]
+
+
+def test_ai_status_log_includes_site_period_and_target_group_names():
+    service, sender, _client = _started_ai_service(require_confirmation=False)
+    service.set_group_names({"g1": "\u7fa4A", "g2": "\u7fa4B"})
+
+    _ai_tick(service)
+
+    assert _wait_until(lambda: len(sender.sent) == 2)
+    log = [record for record in service.get_logs() if record.content.startswith("AI \u81ea\u52a8\u4e0b\u6ce8")][-1]
+    assert log.site == "pc28"
+    assert log.period == "1001"
+    assert log.group_name == "\u7fa4A, \u7fa4B"

@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -64,6 +66,92 @@ BET_MODE_OPTIONS = [
 ]
 
 
+class AiConfigDialog(QDialog):
+    """Keep API credentials out of the always-visible betting panel."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("AI 配置")
+        self.setModal(True)
+        self.resize(460, 230)
+        layout = QVBoxLayout(self)
+
+        provider_row = QHBoxLayout()
+        provider_row.addWidget(QLabel("AI 类型:"))
+        self._provider_combo = QComboBox()
+        self._provider_combo.addItem("OpenAI 兼容", "openai_compatible")
+        self._provider_combo.addItem("Anthropic", "anthropic")
+        provider_row.addWidget(self._provider_combo, 1)
+        layout.addLayout(provider_row)
+
+        for label, attr, placeholder, secret in (
+            ("Base URL:", "_base_url_edit", "https://api.example.com/v1", False),
+            ("模型:", "_model_edit", "gpt-4.1-mini", False),
+            ("API Key:", "_api_key_edit", "", True),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            edit = QLineEdit()
+            edit.setPlaceholderText(placeholder)
+            if secret:
+                edit.setEchoMode(QLineEdit.Password)
+            setattr(self, attr, edit)
+            row.addWidget(edit, 1)
+            if secret:
+                self._api_key_visibility_button = QPushButton("👁")
+                self._api_key_visibility_button.setCheckable(True)
+                self._api_key_visibility_button.setFixedWidth(38)
+                self._api_key_visibility_button.setToolTip("显示 API Key")
+                self._api_key_visibility_button.toggled.connect(self._toggle_api_key_visibility)
+                row.addWidget(self._api_key_visibility_button)
+            layout.addLayout(row)
+
+        history_row = QHBoxLayout()
+        history_row.addWidget(QLabel("历史期数:"))
+        self._history_spin = QSpinBox()
+        self._history_spin.setRange(20, 200)
+        self._history_spin.setValue(50)
+        history_row.addWidget(self._history_spin)
+        self._confirm_check = QCheckBox("每期下注前需确认")
+        history_row.addWidget(self._confirm_check)
+        history_row.addStretch(1)
+        layout.addLayout(history_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def load_config(self, config: StrategyConfig) -> None:
+        index = self._provider_combo.findData(config.ai_provider)
+        if index >= 0:
+            self._provider_combo.setCurrentIndex(index)
+        self._base_url_edit.setText(config.ai_base_url)
+        self._model_edit.setText(config.ai_model)
+        self._api_key_edit.setText(config.ai_api_key)
+        self._history_spin.setValue(config.ai_history_count)
+        self._confirm_check.setChecked(config.ai_require_confirmation)
+
+    def apply_to_config(self, config: StrategyConfig) -> None:
+        config.ai_provider = str(self._provider_combo.currentData() or "openai_compatible")
+        config.ai_base_url = self._base_url_edit.text().strip()
+        config.ai_model = self._model_edit.text().strip()
+        config.ai_api_key = self._api_key_edit.text().strip()
+        config.ai_history_count = self._history_spin.value()
+        config.ai_require_confirmation = self._confirm_check.isChecked()
+
+    def has_required_values(self) -> bool:
+        return bool(
+            self._base_url_edit.text().strip()
+            and self._model_edit.text().strip()
+            and self._api_key_edit.text().strip()
+        )
+
+    def _toggle_api_key_visibility(self, visible: bool) -> None:
+        self._api_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        self._api_key_visibility_button.setToolTip("隐藏 API Key" if visible else "显示 API Key")
+
+
 class AutoBetPanel(QGroupBox):
     """Auto-betting configuration and control panel.
 
@@ -85,6 +173,7 @@ class AutoBetPanel(QGroupBox):
         self._active_site = self._config.site
         self._group_names: dict[str, str] = {}
         self._running = False
+        self._ai_config_dialog = AiConfigDialog(self)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -109,7 +198,7 @@ class AutoBetPanel(QGroupBox):
         self._running = running
         self._start_btn.setEnabled(not running)
         self._stop_btn.setEnabled(running)
-        self._target_group_list.setEnabled(not running)
+        self._set_config_controls_enabled(not running)
         if hasattr(self, "_target_group_lock_hint"):
             self._target_group_lock_hint.setVisible(running)
         self._status_label.setText("● 运行中" if running else "○ 已停止")
@@ -132,7 +221,11 @@ class AutoBetPanel(QGroupBox):
             bet_text = record.content or f"{record.play_type}{self._format_amount(record.amount)}"
             line = f"{ts} {icon}{context} [{group_label}] \u4e0b\u6ce8\uff1a{bet_text}"
         else:
-            line = f"{ts} {icon} {record.content}"
+            context_parts = [value for value in (record.site, record.period) if value]
+            context = f" [{' '.join(context_parts)}]" if context_parts else ""
+            group_label = self._display_group_name(record)
+            group_context = f" [{group_label}]" if group_label else ""
+            line = f"{ts} {icon}{context}{group_context} {record.content}"
         if record.error:
             line += f"  ({record.error})"
         self._log_edit.append(line)
@@ -163,6 +256,23 @@ class AutoBetPanel(QGroupBox):
                 status=state.halt_reason if state.halted else ("运行中" if self._running else "已停止"),
             )
         )
+
+    def _set_config_controls_enabled(self, enabled: bool) -> None:
+        controls = [
+            self._strategy_combo,
+            self._target_group_list,
+            self._obs_window_spin,
+            self._trigger_spin,
+            self._amount_spin,
+            self._martingale_edit,
+            self._mode_combo,
+            self._lock_spin,
+            self._ai_config_button,
+        ]
+        controls.extend(self._play_checkboxes.values())
+        controls.extend(self._odds_edits.values())
+        for control in controls:
+            control.setEnabled(enabled)
 
     def show_pending_ai_recommendation(self, pending: PendingAiBet | None) -> None:
         if pending is None:
@@ -200,10 +310,10 @@ class AutoBetPanel(QGroupBox):
             if cb.isChecked():
                 checked_plays.append(pt)
 
-        return StrategyConfig(
+        config = StrategyConfig(
             strategy_type=str(self._strategy_combo.currentData() or "trend_following"),
             enabled=self._running,
-            site=(self._active_site or self._site_combo.currentText()).strip(),
+            site=self._active_site.strip(),
             target_groups=checked_groups,
             observation_window=self._obs_window_spin.value(),
             trigger_threshold=self._trigger_spin.value(),
@@ -213,13 +323,9 @@ class AutoBetPanel(QGroupBox):
             bet_mode=str(self._mode_combo.currentData() or "size"),
             martingale_sequence=self._parse_martingale_text(self._martingale_edit.text()),
             odds=self._odds_from_inputs(),
-            ai_provider=str(self._ai_provider_combo.currentData() or "openai_compatible"),
-            ai_base_url=self._ai_base_url_edit.text().strip(),
-            ai_model=self._ai_model_edit.text().strip(),
-            ai_api_key=self._ai_api_key_edit.text().strip(),
-            ai_history_count=self._ai_history_spin.value(),
-            ai_require_confirmation=self._ai_confirm_check.isChecked(),
         )
+        self._ai_config_dialog.apply_to_config(config)
+        return config
 
     def load_config(self, config: StrategyConfig) -> None:
         """Apply config to UI fields."""
@@ -228,9 +334,6 @@ class AutoBetPanel(QGroupBox):
         idx = self._strategy_combo.findData(config.strategy_type)
         if idx >= 0:
             self._strategy_combo.setCurrentIndex(idx)
-        idx = self._site_combo.findText(config.site)
-        if idx >= 0:
-            self._site_combo.setCurrentIndex(idx)
         self._obs_window_spin.setValue(config.observation_window)
         self._trigger_spin.setValue(config.trigger_threshold)
         self._amount_spin.setValue(config.bet_amount)
@@ -243,14 +346,7 @@ class AutoBetPanel(QGroupBox):
             cb.setChecked(pt in config.play_types)
         for play, edit in self._odds_edits.items():
             edit.setText(str(config.odds.get(play, DEFAULT_ODDS.get(play, 1.0))))
-        idx = self._ai_provider_combo.findData(config.ai_provider)
-        if idx >= 0:
-            self._ai_provider_combo.setCurrentIndex(idx)
-        self._ai_base_url_edit.setText(config.ai_base_url)
-        self._ai_model_edit.setText(config.ai_model)
-        self._ai_api_key_edit.setText(config.ai_api_key)
-        self._ai_history_spin.setValue(config.ai_history_count)
-        self._ai_confirm_check.setChecked(config.ai_require_confirmation)
+        self._ai_config_dialog.load_config(config)
         self._sync_play_checkboxes_for_mode()
         self._sync_strategy_visibility()
 
@@ -259,13 +355,10 @@ class AutoBetPanel(QGroupBox):
         value = str(site or "").strip()
         if not value:
             return
+        if self._running:
+            return
         changed = value != self._active_site
         self._active_site = value
-        if self._site_combo.findText(value) < 0:
-            self._site_combo.addItem(value)
-        self._site_combo.blockSignals(True)
-        self._site_combo.setCurrentText(value)
-        self._site_combo.blockSignals(False)
         if changed:
             self._emit_config()
 
@@ -301,17 +394,6 @@ class AutoBetPanel(QGroupBox):
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self._mode_combo, 1)
         layout.addWidget(self._mode_row_widget)
-
-        # --- Row: site ---
-        site_row = QHBoxLayout()
-        site_row.addWidget(QLabel("站点:"))
-        self._site_combo = QComboBox()
-        self._site_combo.addItems(SITE_OPTIONS)
-        self._site_combo.setEnabled(False)
-        self._site_combo.setToolTip("\u7ad9\u70b9\u8ddf\u968f\u5de6\u4fa7\u7ebf\u8def\u9009\u62e9\uff0c\u4e0d\u53ef\u5728\u81ea\u52a8\u4e0b\u6ce8\u4e2d\u5355\u72ec\u4fee\u6539\u3002")
-        self._site_combo.currentTextChanged.connect(self._emit_config)
-        site_row.addWidget(self._site_combo, 1)
-        layout.addLayout(site_row)
 
         # --- Target groups ---
         layout.addWidget(QLabel("目标群组:"))
@@ -368,45 +450,10 @@ class AutoBetPanel(QGroupBox):
         martingale_row.addWidget(self._martingale_edit, 1)
         layout.addWidget(self._martingale_row_widget)
 
-        self._ai_settings_widget = QWidget()
-        ai_layout = QVBoxLayout(self._ai_settings_widget)
-        ai_layout.setContentsMargins(0, 0, 0, 0)
-        ai_provider_row = QHBoxLayout()
-        ai_provider_row.addWidget(QLabel("AI 类型:"))
-        self._ai_provider_combo = QComboBox()
-        self._ai_provider_combo.addItem("OpenAI 兼容", "openai_compatible")
-        self._ai_provider_combo.addItem("Anthropic", "anthropic")
-        self._ai_provider_combo.currentIndexChanged.connect(self._emit_config)
-        ai_provider_row.addWidget(self._ai_provider_combo, 1)
-        ai_layout.addLayout(ai_provider_row)
-        for label, attr, placeholder, secret in (
-            ("Base URL:", "_ai_base_url_edit", "https://api.example.com/v1", False),
-            ("模型:", "_ai_model_edit", "gpt-4.1-mini", False),
-            ("API Key:", "_ai_api_key_edit", "", True),
-        ):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(label))
-            edit = QLineEdit()
-            edit.setPlaceholderText(placeholder)
-            if secret:
-                edit.setEchoMode(QLineEdit.Password)
-            edit.textChanged.connect(self._emit_config)
-            setattr(self, attr, edit)
-            row.addWidget(edit, 1)
-            ai_layout.addLayout(row)
-        ai_history_row = QHBoxLayout()
-        ai_history_row.addWidget(QLabel("历史期数:"))
-        self._ai_history_spin = QSpinBox()
-        self._ai_history_spin.setRange(20, 200)
-        self._ai_history_spin.setValue(50)
-        self._ai_history_spin.valueChanged.connect(self._emit_config)
-        ai_history_row.addWidget(self._ai_history_spin)
-        self._ai_confirm_check = QCheckBox("每期下注前需确认")
-        self._ai_confirm_check.toggled.connect(self._emit_config)
-        ai_history_row.addWidget(self._ai_confirm_check)
-        ai_history_row.addStretch(1)
-        ai_layout.addLayout(ai_history_row)
-        layout.addWidget(self._ai_settings_widget)
+        self._ai_config_button = QPushButton("AI 配置")
+        self._ai_config_button.setToolTip("配置 AI 类型、Base URL、模型、API Key 和确认方式")
+        self._ai_config_button.clicked.connect(self._open_ai_config_dialog)
+        layout.addWidget(self._ai_config_button)
 
         # --- Play types ---
         self._play_row_widget = QWidget()
@@ -505,6 +552,11 @@ class AutoBetPanel(QGroupBox):
     def _show_strategy_help(self) -> None:
         QMessageBox.information(self, "\u81ea\u52a8\u4e0b\u6ce8\u7b56\u7565\u8bf4\u660e", strategy_help_text())
 
+    def _open_ai_config_dialog(self) -> None:
+        self._ai_config_dialog.load_config(self.get_config())
+        if self._ai_config_dialog.exec() == QDialog.Accepted:
+            self._emit_config()
+
     def _emit_config(self) -> None:
         self.config_changed.emit(self.get_config())
 
@@ -521,6 +573,14 @@ class AutoBetPanel(QGroupBox):
         self._emit_config()
 
     def _on_start(self) -> None:
+        if (
+            str(self._strategy_combo.currentData() or "") == "ai"
+            and not self._ai_config_dialog.has_required_values()
+        ):
+            QMessageBox.information(self, "需要 AI 配置", "请先填写 AI 类型、Base URL、模型和 API Key。")
+            self._open_ai_config_dialog()
+            if not self._ai_config_dialog.has_required_values():
+                return
         self.set_running(True)
         self.start_clicked.emit()
 
@@ -557,7 +617,7 @@ class AutoBetPanel(QGroupBox):
         has_sequence = bool(self._parse_martingale_text(self._martingale_edit.text()))
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
-        self._ai_settings_widget.setVisible(is_ai)
+        self._ai_config_button.setVisible(is_ai)
         self._mode_row_widget.setVisible(not is_ai)
         self._play_row_widget.setVisible(not is_ai)
         if not is_ai:
