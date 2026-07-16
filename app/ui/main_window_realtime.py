@@ -18,6 +18,11 @@ CALIBRATION_MAX_RETRIES = 3
 
 
 class MainWindowRealtimeMixin:
+    @staticmethod
+    def _last_selected_site_from_settings(settings: dict[str, object]) -> str:
+        site = str(settings.get("last_selected_site", "") or "").strip()
+        return site if site in site_list() else ""
+
     def _refresh_site_cards(self) -> None:
         self._draw_infos = {
             site: self._draw_infos.get(site, DrawInfo(current_period="")) for site in site_list()
@@ -160,6 +165,9 @@ class MainWindowRealtimeMixin:
     def _select_site(self, site: str) -> None:
         logger.info("Switch site: %s", site)
         self._active_site = site
+        settings = getattr(self, "settings", None)
+        if isinstance(settings, dict):
+            settings["last_selected_site"] = site
         self._query_period_overrides_by_site = {}
         self._query_period_override = ""
         self._manual_period_override = False
@@ -173,6 +181,8 @@ class MainWindowRealtimeMixin:
         self._refresh_active_site_info()
         if hasattr(self, "_set_status"):
             self._set_status(f"已切换线路: {site_label(site)}", "info")
+        if hasattr(self, "_save_settings"):
+            self._save_settings()
         self._load_filtered_messages()
 
     def _refresh_active_site_info(self) -> None:

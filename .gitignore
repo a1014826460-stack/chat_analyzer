@@ -72,3 +72,4 @@ archive/
 
 # Temporary analysis & capture artifacts
 tmp_*
+.superpowers/

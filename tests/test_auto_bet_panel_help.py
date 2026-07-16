@@ -6,7 +6,8 @@ from app.ui.auto_bet_panel import BET_STRATEGY_OPTIONS, strategy_help_text
 def test_auto_bet_panel_exposes_martingale_strategy_option():
     assert ("\u8d8b\u52bf\u53cd\u6253", "trend_following") in BET_STRATEGY_OPTIONS
     assert ("\u56fa\u5b9a\u500d\u6295", "martingale") in BET_STRATEGY_OPTIONS
-    assert ("AI\u4e0b\u6ce8", "ai") in BET_STRATEGY_OPTIONS
+    assert ("\u5e73\u63a8", "flat") in BET_STRATEGY_OPTIONS
+    assert all(value != "ai" for _label, value in BET_STRATEGY_OPTIONS)
 
 
 def test_strategy_help_text_explains_strategy_differences():
@@ -195,30 +196,34 @@ def test_ai_strategy_config_exposes_provider_history_and_confirmation():
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
-    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("ai"))
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
     panel._ai_config_dialog._provider_combo.setCurrentIndex(panel._ai_config_dialog._provider_combo.findData("anthropic"))
     panel._ai_config_dialog._base_url_edit.setText("https://api.example")
     panel._ai_config_dialog._model_edit.setText("claude-test")
     panel._ai_config_dialog._api_key_edit.setText("secret")
     panel._ai_config_dialog._history_spin.setValue(80)
+    panel._ai_config_dialog._confidence_spin.setValue(70)
+    panel._ai_config_dialog._accuracy_window_spin.setValue(35)
     panel._ai_config_dialog._confirm_check.setChecked(True)
 
     config = panel.get_config()
     panel._ai_config_dialog.apply_to_config(config)
 
-    assert config.strategy_type == "ai"
+    assert config.strategy_type == "flat"
     assert config.ai_provider == "anthropic"
     assert config.ai_base_url == "https://api.example"
     assert config.ai_model == "claude-test"
     assert config.ai_api_key == "secret"
     assert config.ai_history_count == 80
+    assert config.ai_confidence_threshold == 70
+    assert config.ai_accuracy_window == 35
     assert config.ai_require_confirmation is True
     assert panel._ai_config_button.isVisibleTo(panel)
-    assert not panel._mode_row_widget.isVisibleTo(panel)
-    assert not panel._play_row_widget.isVisibleTo(panel)
+    assert panel._mode_row_widget.isVisibleTo(panel)
+    assert panel._play_row_widget.isVisibleTo(panel)
 
 
-def test_ai_config_button_is_visible_only_for_ai_strategy():
+def test_ai_config_button_is_visible_for_every_ai_constrained_strategy():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
@@ -226,9 +231,9 @@ def test_ai_config_button_is_visible_only_for_ai_strategy():
     panel = AutoBetPanel()
 
     panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("trend_following"))
-    assert not panel._ai_config_button.isVisibleTo(panel)
+    assert panel._ai_config_button.isVisibleTo(panel)
 
-    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("ai"))
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
     assert panel._ai_config_button.isVisibleTo(panel)
 
 
@@ -238,7 +243,7 @@ def test_auto_bet_panel_locks_all_configuration_controls_while_running():
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
-    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("ai"))
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
 
     panel.set_running(True)
 
@@ -270,11 +275,78 @@ def test_ai_pending_suggestion_displays_confirmation_actions():
         amount=100,
         reason="\u6d4b\u8bd5\u7406\u7531",
         created_at=datetime(2026, 7, 10, 12, 0),
+        confidence=78,
+        quant_rationale="近 20 期方向频率偏高",
     ))
 
     assert panel._ai_pending_widget.isVisibleTo(panel)
     assert "\u5927\u5355100" in panel._ai_pending_label.text()
     assert "\u6d4b\u8bd5\u7406\u7531" in panel._ai_pending_label.text()
+    assert "78/100" in panel._ai_pending_label.text()
+    assert "近 20 期方向频率偏高" in panel._ai_pending_label.text()
+
+
+def test_auto_bet_panel_displays_ai_accuracy_summary():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    panel.update_ai_statistics({
+        "settled_count": 10,
+        "overall": {"direction_accuracy": 0.7, "exact_accuracy": 0.4},
+        "short": {"window": 20, "count": 8, "direction_accuracy": 0.625, "exact_accuracy": 0.375},
+        "streak": {"result": "hit", "count": 3},
+    })
+
+    text = panel._ai_stats_label.text()
+    assert "总体方向 70.0%" in text
+    assert "总体精确 40.0%" in text
+    assert "近 20 条方向 62.5%" in text
+    assert "连中 3" in text
+
+
+def test_auto_bet_panel_labels_pending_and_settled_betting_statistics():
+    from PySide6.QtWidgets import QApplication
+    from app.models.auto_bet import AutoBetRuntimeState
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel.update_runtime_state(AutoBetRuntimeState(
+        pending_staked=20,
+        total_staked=40,
+        total_payout=79.2,
+        total_profit=39.2,
+    ))
+
+    text = panel._stats_label.text()
+    assert "待开奖下注: 20.00" in text
+    assert "已结算下注: 40.00" in text
+    assert "已结算盈亏: 39.20" in text
+
+
+def test_auto_bet_panel_formats_recent_ai_prediction_history():
+    from datetime import datetime
+    from app.services.ai_prediction_store import AiPredictionRecord
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    record = AiPredictionRecord(
+        site="pc28", period="1001", action="bet", play_type="大", confidence=78,
+        quant_rationale="方向频率偏高", reason="存在优势", model="model",
+        history_snapshot=[], quant_snapshot={}, sent=True, actual_result="大双",
+        direction_hit=True, exact_hit=False, status="settled",
+        created_at=datetime(2026, 7, 12, 12, 0), settled_at=datetime(2026, 7, 12, 12, 3),
+    )
+
+    text = AutoBetPanel.format_ai_history([record])
+
+    assert "[pc28 1001]" in text
+    assert "预测 大" in text
+    assert "置信度 78/100" in text
+    assert "实际 大双" in text
+    assert "方向命中 / 精确未中" in text
 
 
 def test_ai_status_log_shows_site_period_and_group_names():
@@ -314,3 +386,51 @@ def test_ai_api_key_is_hidden_by_default_and_eye_button_toggles_visibility():
     assert dialog._api_key_edit.echoMode() == QLineEdit.Normal
     dialog._api_key_visibility_button.click()
     assert dialog._api_key_edit.echoMode() == QLineEdit.Password
+
+
+def test_ai_config_dialog_requires_a_valid_provider_and_all_credential_fields():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    dialog = panel._ai_config_dialog
+    dialog._base_url_edit.setText("https://api.example")
+    dialog._model_edit.setText("model")
+    dialog._api_key_edit.setText("key")
+
+    assert dialog.has_required_values()
+
+    dialog._provider_combo.setCurrentIndex(-1)
+
+    assert not dialog.has_required_values()
+
+
+def test_ai_config_exposes_conflict_preference_and_risk_limits():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    dialog = panel._ai_config_dialog
+    dialog._prefer_ai_conflict_check.setChecked(True)
+    dialog._take_profit_spin.setValue(500)
+    dialog._stop_loss_spin.setValue(300)
+
+    config = panel.get_config()
+
+    assert config.ai_prefer_recommendation_on_conflict is True
+    assert config.take_profit_limit == 500
+    assert config.stop_loss_limit == 300
+    assert panel._play_label.text() == "推荐玩法:"
+
+
+def test_recommended_play_checkboxes_allow_all_eight_play_types():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._mode_combo.setCurrentIndex(panel._mode_combo.findData("size"))
+
+    assert all(check.isEnabled() for check in panel._play_checkboxes.values())

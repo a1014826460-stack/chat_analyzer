@@ -37,6 +37,10 @@ class PendingAiBet:
     amount: float
     reason: str
     created_at: datetime
+    confidence: int = 0
+    quant_rationale: str = ""
+    has_play_conflict: bool = False
+    recommended_plays: tuple[str, ...] = ()
 
 
 DEFAULT_ODDS: dict[str, float] = {
@@ -49,6 +53,11 @@ DEFAULT_ODDS: dict[str, float] = {
     "小双": 4.28,
     "大单": 4.28,
 }
+
+
+def allowed_play_types_for_config(config: "StrategyConfig") -> list[str]:
+    """Return the exact plays the user selected for AI recommendations."""
+    return [str(play).strip() for play in config.play_types if str(play).strip()]
 
 
 @runtime_checkable
@@ -86,6 +95,24 @@ class StrategyConfig:
     ai_api_key: str = ""
     ai_history_count: int = 50
     ai_require_confirmation: bool = False
+    ai_confidence_threshold: int = 45
+    ai_accuracy_window: int = 20
+    ai_prefer_recommendation_on_conflict: bool = False
+    take_profit_limit: float = 0.0
+    stop_loss_limit: float = 0.0
+
+    def missing_ai_fields(self) -> list[str]:
+        """Return the required AI settings that are absent or invalid."""
+        missing: list[str] = []
+        if self.ai_provider not in {"openai_compatible", "anthropic"}:
+            missing.append("AI 类型")
+        if not self.ai_base_url.strip():
+            missing.append("Base URL")
+        if not self.ai_model.strip():
+            missing.append("模型")
+        if not self.ai_api_key.strip():
+            missing.append("API Key")
+        return missing
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +134,11 @@ class StrategyConfig:
             "ai_api_key": self.ai_api_key,
             "ai_history_count": self.ai_history_count,
             "ai_require_confirmation": self.ai_require_confirmation,
+            "ai_confidence_threshold": self.ai_confidence_threshold,
+            "ai_accuracy_window": self.ai_accuracy_window,
+            "ai_prefer_recommendation_on_conflict": self.ai_prefer_recommendation_on_conflict,
+            "take_profit_limit": self.take_profit_limit,
+            "stop_loss_limit": self.stop_loss_limit,
         }
 
     @classmethod
@@ -114,7 +146,7 @@ class StrategyConfig:
         if not isinstance(data, dict):
             return cls()
         return cls(
-            strategy_type=str(data.get("strategy_type", "trend_following")),
+            strategy_type=_ensure_strategy_type(data.get("strategy_type")),
             enabled=bool(data.get("enabled", False)),
             site=str(data.get("site", "pc28")),
             target_groups=_ensure_str_list(data.get("target_groups")),
@@ -132,6 +164,11 @@ class StrategyConfig:
             ai_api_key=str(data.get("ai_api_key", "") or "").strip(),
             ai_history_count=_ensure_ai_history_count(data.get("ai_history_count")),
             ai_require_confirmation=bool(data.get("ai_require_confirmation", False)),
+            ai_confidence_threshold=_ensure_int_range(data.get("ai_confidence_threshold"), 45, 0, 100),
+            ai_accuracy_window=_ensure_int_range(data.get("ai_accuracy_window"), 20, 5, 100),
+            ai_prefer_recommendation_on_conflict=bool(data.get("ai_prefer_recommendation_on_conflict", False)),
+            take_profit_limit=_ensure_non_negative_float(data.get("take_profit_limit")),
+            stop_loss_limit=_ensure_non_negative_float(data.get("stop_loss_limit")),
         )
 
 
@@ -189,9 +226,31 @@ def _ensure_ai_history_count(value: object) -> int:
         return 50
 
 
+def _ensure_strategy_type(value: object) -> str:
+    strategy_type = str(value or "trend_following").strip()
+    if strategy_type == "ai":
+        return "flat"
+    return strategy_type if strategy_type in {"flat", "martingale", "trend_following"} else "trend_following"
+
+
+def _ensure_non_negative_float(value: object) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ensure_int_range(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        return min(maximum, max(minimum, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class AutoBetRuntimeState:
     current_step: int = 0
+    pending_staked: float = 0.0
     total_staked: float = 0.0
     total_payout: float = 0.0
     total_profit: float = 0.0

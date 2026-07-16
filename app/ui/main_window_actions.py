@@ -253,6 +253,7 @@ class MainWindowActionsMixin:
                 "fallback_db_path": self.manual_db_edit.text().strip(),
                 "lock_threshold_sec": self._lock_threshold_sec,
                 "query_period_overrides_by_site": query_period_overrides_by_site,
+                "last_selected_site": str(getattr(self, "_active_site", "") or "").strip(),
                 "query_period_override": "" if query_period_overrides_by_site else legacy_period_override,
                 "manual_period_override": False if query_period_overrides_by_site else legacy_manual_override,
                 "advanced_time_filter_enabled": advanced_time_enabled,
@@ -289,7 +290,16 @@ class MainWindowActionsMixin:
         self.settings["proxy_http"] = http_proxy
         self.settings["proxy_https"] = https_proxy
         set_proxy_settings(self.settings)
-        self._save_settings()
+        # 优先直接保存代理设置，不依赖 _save_settings 中的 UI 控件状态
+        try:
+            self.settings_service.save(self.settings)
+        except Exception:
+            logger.exception("直接保存代理设置失败")
+        # 同时尝试完整保存，确保其他设置也被更新
+        try:
+            self._save_settings()
+        except Exception:
+            logger.exception("_save_settings 调用失败，代理设置已独立保存")
 
     def _on_first_launch_complete(self) -> None:
         if not self._is_first_launch:

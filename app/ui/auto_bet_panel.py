@@ -35,7 +35,7 @@ SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
 BET_STRATEGY_OPTIONS = [
     ("\u8d8b\u52bf\u53cd\u6253", "trend_following"),
     ("\u56fa\u5b9a\u500d\u6295", "martingale"),
-    ("AI\u4e0b\u6ce8", "ai"),
+    ("\u5e73\u63a8", "flat"),
 ]
 
 
@@ -73,7 +73,7 @@ class AiConfigDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("AI 配置")
         self.setModal(True)
-        self.resize(460, 230)
+        self.resize(500, 380)
         layout = QVBoxLayout(self)
 
         provider_row = QHBoxLayout()
@@ -117,6 +117,41 @@ class AiConfigDialog(QDialog):
         history_row.addStretch(1)
         layout.addLayout(history_row)
 
+        quant_row = QHBoxLayout()
+        quant_row.addWidget(QLabel("最低置信度:"))
+        self._confidence_spin = QSpinBox()
+        self._confidence_spin.setRange(0, 100)
+        self._confidence_spin.setValue(45)
+        self._confidence_spin.setSuffix(" / 100")
+        quant_row.addWidget(self._confidence_spin)
+        quant_row.addWidget(QLabel("短期统计:"))
+        self._accuracy_window_spin = QSpinBox()
+        self._accuracy_window_spin.setRange(5, 100)
+        self._accuracy_window_spin.setValue(20)
+        self._accuracy_window_spin.setSuffix(" 条")
+        quant_row.addWidget(self._accuracy_window_spin)
+        quant_row.addStretch(1)
+        layout.addLayout(quant_row)
+
+        self._prefer_ai_conflict_check = QCheckBox("玩法冲突时不再询问，优先使用 AI 推荐玩法")
+        layout.addWidget(self._prefer_ai_conflict_check)
+
+        risk_row = QHBoxLayout()
+        risk_row.addWidget(QLabel("止盈线:"))
+        self._take_profit_spin = QDoubleSpinBox()
+        self._take_profit_spin.setRange(0.0, 9_999_999.0)
+        self._take_profit_spin.setDecimals(2)
+        self._take_profit_spin.setSpecialValueText("关闭")
+        risk_row.addWidget(self._take_profit_spin)
+        risk_row.addWidget(QLabel("止损线:"))
+        self._stop_loss_spin = QDoubleSpinBox()
+        self._stop_loss_spin.setRange(0.0, 9_999_999.0)
+        self._stop_loss_spin.setDecimals(2)
+        self._stop_loss_spin.setSpecialValueText("关闭")
+        risk_row.addWidget(self._stop_loss_spin)
+        risk_row.addStretch(1)
+        layout.addLayout(risk_row)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -131,6 +166,11 @@ class AiConfigDialog(QDialog):
         self._api_key_edit.setText(config.ai_api_key)
         self._history_spin.setValue(config.ai_history_count)
         self._confirm_check.setChecked(config.ai_require_confirmation)
+        self._confidence_spin.setValue(config.ai_confidence_threshold)
+        self._accuracy_window_spin.setValue(config.ai_accuracy_window)
+        self._prefer_ai_conflict_check.setChecked(config.ai_prefer_recommendation_on_conflict)
+        self._take_profit_spin.setValue(config.take_profit_limit)
+        self._stop_loss_spin.setValue(config.stop_loss_limit)
 
     def apply_to_config(self, config: StrategyConfig) -> None:
         config.ai_provider = str(self._provider_combo.currentData() or "openai_compatible")
@@ -139,13 +179,20 @@ class AiConfigDialog(QDialog):
         config.ai_api_key = self._api_key_edit.text().strip()
         config.ai_history_count = self._history_spin.value()
         config.ai_require_confirmation = self._confirm_check.isChecked()
+        config.ai_confidence_threshold = self._confidence_spin.value()
+        config.ai_accuracy_window = self._accuracy_window_spin.value()
+        config.ai_prefer_recommendation_on_conflict = self._prefer_ai_conflict_check.isChecked()
+        config.take_profit_limit = self._take_profit_spin.value()
+        config.stop_loss_limit = self._stop_loss_spin.value()
 
     def has_required_values(self) -> bool:
-        return bool(
-            self._base_url_edit.text().strip()
-            and self._model_edit.text().strip()
-            and self._api_key_edit.text().strip()
+        config = StrategyConfig(
+            ai_provider=str(self._provider_combo.currentData() or ""),
+            ai_base_url=self._base_url_edit.text(),
+            ai_model=self._model_edit.text(),
+            ai_api_key=self._api_key_edit.text(),
         )
+        return not config.missing_ai_fields()
 
     def _toggle_api_key_visibility(self, visible: bool) -> None:
         self._api_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
@@ -166,6 +213,7 @@ class AutoBetPanel(QGroupBox):
     stop_clicked = Signal()
     ai_confirm_clicked = Signal()
     ai_skip_clicked = Signal()
+    ai_history_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("自动下注", parent)
@@ -242,9 +290,10 @@ class AutoBetPanel(QGroupBox):
     def update_runtime_state(self, state: AutoBetRuntimeState) -> None:
         """Refresh practical win/loss statistics."""
         self._stats_label.setText(
-            "总下注: {staked:.2f} | 总派彩: {payout:.2f} | 总盈亏: {profit:.2f}\n"
+            "待开奖下注: {pending:.2f} | 已结算下注: {staked:.2f} | 已结算派彩: {payout:.2f} | 已结算盈亏: {profit:.2f}\n"
             "当前倍投档: {step} | 当前连输: {losses} | 已结算: {rounds} | 命中: {wins} | 未中: {loses}\n"
             "状态: {status}".format(
+                pending=state.pending_staked,
                 staked=state.total_staked,
                 payout=state.total_payout,
                 profit=state.total_profit,
@@ -256,6 +305,62 @@ class AutoBetPanel(QGroupBox):
                 status=state.halt_reason if state.halted else ("运行中" if self._running else "已停止"),
             )
         )
+
+    def update_ai_statistics(self, summary: dict) -> None:
+        overall = summary.get("overall", {})
+        short = summary.get("short", {})
+        streak = summary.get("streak", {})
+        streak_name = "连中" if streak.get("result") == "hit" else (
+            "连错" if streak.get("result") == "miss" else "无连续记录"
+        )
+        self._ai_stats_label.setText(
+            "AI 已结算 {settled} | 总体方向 {overall_direction:.1%} | 总体精确 {overall_exact:.1%}\n"
+            "近 {window} 条方向 {short_direction:.1%} | 近 {window} 条精确 {short_exact:.1%} | {streak_name} {streak_count}".format(
+                settled=int(summary.get("settled_count", 0)),
+                overall_direction=float(overall.get("direction_accuracy", 0.0)),
+                overall_exact=float(overall.get("exact_accuracy", 0.0)),
+                window=int(short.get("window", 20)),
+                short_direction=float(short.get("direction_accuracy", 0.0)),
+                short_exact=float(short.get("exact_accuracy", 0.0)),
+                streak_name=streak_name,
+                streak_count=int(streak.get("count", 0)),
+            )
+        )
+
+    @staticmethod
+    def format_ai_history(records: list) -> str:
+        if not records:
+            return "暂无 AI 预测记录。"
+        lines = []
+        for record in records:
+            action = "预测 " + record.play_type if record.action == "bet" else "跳过本期"
+            actual = record.actual_result or "待开奖"
+            if record.actual_result:
+                direction = "方向命中" if record.direction_hit else "方向未中"
+                exact = "精确命中" if record.exact_hit else "精确未中"
+                outcome = f"{direction} / {exact}"
+            else:
+                outcome = record.status
+            lines.append(
+                f"{record.created_at:%Y-%m-%d %H:%M:%S} [{record.site} {record.period}] "
+                f"{action} | 置信度 {record.confidence}/100 | 实际 {actual} | {outcome}\n"
+                f"量化：{record.quant_rationale or '-'}；结论：{record.reason or '-'}"
+            )
+        return "\n\n".join(lines)
+
+    def show_ai_history(self, records: list) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("AI 预测历史")
+        dialog.resize(720, 480)
+        layout = QVBoxLayout(dialog)
+        content = QTextEdit()
+        content.setReadOnly(True)
+        content.setPlainText(self.format_ai_history(records))
+        layout.addWidget(content)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _set_config_controls_enabled(self, enabled: bool) -> None:
         controls = [
@@ -277,23 +382,36 @@ class AutoBetPanel(QGroupBox):
     def show_pending_ai_recommendation(self, pending: PendingAiBet | None) -> None:
         if pending is None:
             self._ai_pending_widget.setVisible(False)
+            self._ai_prefer_conflict_check.setVisible(False)
             self._ai_pending_key = None
             return
         self._ai_pending_key = (pending.site, pending.period)
         self._ai_pending_label.setText(
-            "\u672c\u671f AI \u5efa\u8bae [{site} {period}]\uff1a{play}{amount}\n\u7406\u7531\uff1a{reason}".format(
+            "\u672c\u671f AI \u5efa\u8bae [{site} {period}]\uff1a{play}{amount}\n"
+            "置信度：{confidence}/100\n{conflict}量化依据：{quant}\n\u7406\u7531\uff1a{reason}".format(
                 site=pending.site,
                 period=pending.period,
                 play=pending.play_type,
                 amount=self._format_amount(pending.amount),
                 reason=pending.reason,
+                confidence=pending.confidence,
+                conflict=(
+                    f"⚠ 与推荐玩法 {', '.join(pending.recommended_plays) or '无'} 冲突，请选择是否使用 AI 建议。\n"
+                    if pending.has_play_conflict else ""
+                ),
+                quant=pending.quant_rationale,
             )
         )
         self._ai_pending_widget.setVisible(True)
+        self._ai_prefer_conflict_check.setVisible(pending.has_play_conflict)
 
     @property
     def pending_ai_key(self) -> tuple[str, str] | None:
         return getattr(self, "_ai_pending_key", None)
+
+    @property
+    def prefer_ai_for_pending_conflict(self) -> bool:
+        return self._ai_prefer_conflict_check.isVisible() and self._ai_prefer_conflict_check.isChecked()
 
     def get_config(self) -> StrategyConfig:
         """Build config from current UI state."""
@@ -347,7 +465,6 @@ class AutoBetPanel(QGroupBox):
         for play, edit in self._odds_edits.items():
             edit.setText(str(config.odds.get(play, DEFAULT_ODDS.get(play, 1.0))))
         self._ai_config_dialog.load_config(config)
-        self._sync_play_checkboxes_for_mode()
         self._sync_strategy_visibility()
 
     def set_active_site(self, site: str) -> None:
@@ -459,7 +576,8 @@ class AutoBetPanel(QGroupBox):
         self._play_row_widget = QWidget()
         play_row = QHBoxLayout(self._play_row_widget)
         play_row.setContentsMargins(0, 0, 0, 0)
-        play_row.addWidget(QLabel("玩法:"))
+        self._play_label = QLabel("推荐玩法:")
+        play_row.addWidget(self._play_label)
         self._play_checkboxes: dict[str, QCheckBox] = {}
         for pt in PLAY_TYPE_OPTIONS:
             cb = QCheckBox(pt)
@@ -513,6 +631,9 @@ class AutoBetPanel(QGroupBox):
         ai_pending_actions.addWidget(self._ai_skip_btn)
         ai_pending_actions.addStretch(1)
         ai_pending_layout.addLayout(ai_pending_actions)
+        self._ai_prefer_conflict_check = QCheckBox("今后不再询问，优先使用 AI 推荐玩法")
+        self._ai_prefer_conflict_check.setVisible(False)
+        ai_pending_layout.addWidget(self._ai_prefer_conflict_check)
         self._ai_pending_widget.setVisible(False)
         layout.addWidget(self._ai_pending_widget)
 
@@ -532,9 +653,19 @@ class AutoBetPanel(QGroupBox):
         layout.addLayout(btn_row)
 
         layout.addWidget(QLabel("实战统计:"))
-        self._stats_label = QLabel("总下注: 0.00 | 总派彩: 0.00 | 总盈亏: 0.00\n当前倍投档: 1 | 当前连输: 0 | 已结算: 0 | 命中: 0 | 未中: 0\n状态: 已停止")
+        self._stats_label = QLabel("待开奖下注: 0.00 | 已结算下注: 0.00 | 已结算派彩: 0.00 | 已结算盈亏: 0.00\n当前倍投档: 1 | 当前连输: 0 | 已结算: 0 | 命中: 0 | 未中: 0\n状态: 已停止")
         self._stats_label.setWordWrap(True)
         layout.addWidget(self._stats_label)
+
+        self._ai_stats_label = QLabel(
+            "AI 已结算 0 | 总体方向 0.0% | 总体精确 0.0%\n"
+            "近 20 条方向 0.0% | 近 20 条精确 0.0% | 无连续记录 0"
+        )
+        self._ai_stats_label.setWordWrap(True)
+        layout.addWidget(self._ai_stats_label)
+        self._ai_history_button = QPushButton("查看 AI 预测历史")
+        self._ai_history_button.clicked.connect(self.ai_history_clicked.emit)
+        layout.addWidget(self._ai_history_button)
 
         # --- Run log ---
         layout.addWidget(QLabel("运行日志:"))
@@ -569,17 +700,15 @@ class AutoBetPanel(QGroupBox):
         self._emit_config()
 
     def _on_mode_changed(self) -> None:
-        self._sync_play_checkboxes_for_mode()
         self._emit_config()
 
     def _on_start(self) -> None:
-        if (
-            str(self._strategy_combo.currentData() or "") == "ai"
-            and not self._ai_config_dialog.has_required_values()
-        ):
-            QMessageBox.information(self, "需要 AI 配置", "请先填写 AI 类型、Base URL、模型和 API Key。")
+        missing_fields = self.get_config().missing_ai_fields()
+        if missing_fields:
+            QMessageBox.information(self, "需要 AI 配置", f"请先填写：{'、'.join(missing_fields)}。")
             self._open_ai_config_dialog()
-            if not self._ai_config_dialog.has_required_values():
+            missing_fields = self.get_config().missing_ai_fields()
+            if missing_fields:
                 return
         self.set_running(True)
         self.start_clicked.emit()
@@ -588,40 +717,15 @@ class AutoBetPanel(QGroupBox):
         self.set_running(False)
         self.stop_clicked.emit()
 
-    def _sync_play_checkboxes_for_mode(self) -> None:
-        mode = str(self._mode_combo.currentData() or "size")
-        allowed = {
-            "size": {"大", "小"},
-            "parity": {"单", "双"},
-            "small_odd_big_even": {"小单", "大双"},
-            "small_even_big_odd": {"小双", "大单"},
-            "three_doors": {"小单", "大双", "小双", "大单"},
-        }.get(mode, set(PLAY_TYPE_OPTIONS))
-        defaults = {
-            "size": {"大", "小"},
-            "parity": {"单", "双"},
-            "small_odd_big_even": {"小单", "大双"},
-            "small_even_big_odd": {"小双", "大单"},
-            "three_doors": {"小单", "大双", "小双"},
-        }.get(mode, allowed)
-        for play, cb in self._play_checkboxes.items():
-            cb.blockSignals(True)
-            cb.setEnabled(play in allowed)
-            cb.setChecked(play in defaults if play in allowed else False)
-            cb.blockSignals(False)
-
     def _sync_strategy_visibility(self) -> None:
         strategy_type = str(self._strategy_combo.currentData() or "trend_following")
         is_martingale = strategy_type == "martingale"
-        is_ai = strategy_type == "ai"
         has_sequence = bool(self._parse_martingale_text(self._martingale_edit.text()))
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
-        self._ai_config_button.setVisible(is_ai)
-        self._mode_row_widget.setVisible(not is_ai)
-        self._play_row_widget.setVisible(not is_ai)
-        if not is_ai:
-            self.show_pending_ai_recommendation(None)
+        self._ai_config_button.setVisible(True)
+        self._mode_row_widget.setVisible(True)
+        self._play_row_widget.setVisible(True)
 
     @staticmethod
     def _parse_martingale_text(text: str) -> list[float]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -61,27 +62,22 @@ def _build_command(admin: bool, clean: bool) -> list[str]:
     ]
     if clean:
         command.append("--clean")
-    # Ensure the auto-generated embedded-keys module is included.
-    embedded_keys = ROOT / "app" / "_embedded_keys.py"
-    if embedded_keys.exists():
-        command.extend(["--hidden-import", "app._embedded_keys"])
     if ICON_PATH.exists():
         command.extend(["--icon", str(ICON_PATH)])
     command.append(str(APP_ENTRY))
     return command
 
 
-def _ensure_license_keys() -> None:
+def _ensure_license_keys(*, admin: bool) -> None:
     """Read license key files and inject them directly into build_config.py.
 
     Environment variables set via os.environ are NOT visible at runtime
     inside a PyInstaller exe (os.getenv runs at *runtime*, not build time).
     Instead, we directly patch build_config.py to contain the key literals.
     """
-    key_files = {
-        "public": ROOT / "keys" / "license_public.pem",
-        "private": ROOT / "keys" / "license_private.pem",
-    }
+    key_files = {"public": ROOT / "keys" / "license_public.pem"}
+    if admin:
+        key_files["private"] = ROOT / "keys" / "license_private.pem"
     keys: dict[str, str] = {}
     for kind, key_path in key_files.items():
         env_var = f"STARTRACE_LICENSE_{kind.upper()}_KEY_PEM"
@@ -98,16 +94,41 @@ def _ensure_license_keys() -> None:
     # Patch build_config.py to embed the key content as string literals.
     config_path = ROOT / "app" / "build_config.py"
     original = config_path.read_text("utf-8")
+    private_key = keys.get("private", "") if admin else ""
     patched = original.replace(
         '_BUILD_PUBLIC_KEY = ""',
         f'_BUILD_PUBLIC_KEY = """{keys.get("public", "")}"""',
     ).replace(
         '_BUILD_PRIVATE_KEY = ""',
-        f'_BUILD_PRIVATE_KEY = """{keys.get("private", "")}"""',
+        f'_BUILD_PRIVATE_KEY = """{private_key}"""',
     )
     if patched != original:
         config_path.write_text(patched, encoding="utf-8")
         print(f"  Injected license keys into {config_path}")
+
+
+def _embed_release_metadata() -> None:
+    """Embed build-time version metadata so the frozen app needs no environment."""
+    config_path = ROOT / "app" / "build_config.py"
+    original = config_path.read_text("utf-8")
+    version = os.environ.get("STARTRACE_VERSION", build_config.APP_VERSION).strip()
+    build_id = os.environ.get("STARTRACE_BUILD_ID", build_config.BUILD_ID).strip()
+    patched = re.sub(
+        r'^APP_VERSION = os\.getenv\("STARTRACE_VERSION", "[^"]*"\)$',
+        f'APP_VERSION = "{version}"',
+        original,
+        flags=re.MULTILINE,
+    )
+    patched = re.sub(
+        r'^BUILD_ID = os\.getenv\("STARTRACE_BUILD_ID", "[^"]*"\)$',
+        f'BUILD_ID = "{build_id}"',
+        patched,
+        flags=re.MULTILINE,
+    )
+    if patched == original:
+        raise RuntimeError("Unable to embed release version metadata into build_config.py")
+    config_path.write_text(patched, encoding="utf-8")
+    print(f"  Embedded release metadata: version={version}, build_id={build_id}")
 
 
 def _restore_build_config(original: str) -> None:
@@ -119,7 +140,8 @@ def main() -> int:
     args = _parse_args()
     config_path = ROOT / "app" / "build_config.py"
     original_config = config_path.read_text("utf-8")
-    _ensure_license_keys()
+    _ensure_license_keys(admin=args.admin)
+    _embed_release_metadata()
     command = _build_command(admin=args.admin, clean=args.clean)
     print("Running:", " ".join(command))
     try:

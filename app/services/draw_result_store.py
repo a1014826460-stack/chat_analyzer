@@ -42,6 +42,15 @@ class DrawResultStore(DrawResultProvider):
     def ensure_data(self, site: str, min_count: int = 20) -> None:
         self._ensure_site(site, min_count)
 
+    def refresh_recent_results(self, site: str, count: int = 50) -> int:
+        """Always fetch the latest remote window and merge it into the cache."""
+        try:
+            fetched = self._fetcher.fetch(site, count=max(1, int(count)))
+        except Exception as exc:
+            logger.warning("Failed to refresh draw result cache for %s: %s", site, exc)
+            return 0
+        return self.insert_results(site, fetched) if fetched else 0
+
     def get_recent_results(self, site: str, count: int) -> list[DrawResult]:
         self._ensure_site(site, count * 2)
         with self._lock:

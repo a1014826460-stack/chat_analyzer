@@ -35,6 +35,7 @@ class SettingsService:
                 "query_period_override": "",
                 "manual_period_override": False,
                 "query_period_overrides_by_site": {},
+                "last_selected_site": "",
                 "advanced_time_filter_enabled": False,
                 "advanced_time_start": "",
                 "advanced_time_end": "",

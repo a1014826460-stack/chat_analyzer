@@ -87,6 +87,31 @@ def test_draw_result_store_ensure_data_fetches_once_per_site(tmp_path: Path):
     assert len(store.get_recent_results("pc28", 25)) == 20
 
 
+def test_draw_result_store_explicit_refresh_fetches_even_when_cache_is_already_ensured(tmp_path: Path):
+    fake = FakeFetcher([DrawResult(site="pc28", period="1001", result="大单")])
+    store = DrawResultStore(tmp_path / "draw_results.db", fetcher=fake)
+    store.ensure_data("pc28", min_count=20)
+    fake.results = [DrawResult(site="pc28", period="1002", result="小双")]
+
+    refreshed = store.refresh_recent_results("pc28", count=50)
+
+    assert fake.calls == [("pc28", 20), ("pc28", 50)]
+    assert refreshed == 1
+    assert store.get_result("pc28", "1002") == DrawResult(site="pc28", period="1002", result="小双")
+
+
+def test_draw_result_store_refresh_keeps_local_cache_when_remote_fetch_fails(tmp_path: Path):
+    class FailingFetcher(FakeFetcher):
+        def fetch(self, site: str, count: int) -> list[DrawResult]:
+            raise RuntimeError("network down")
+
+    store = DrawResultStore(tmp_path / "draw_results.db", fetcher=FailingFetcher())
+    store.insert_results("pc28", [DrawResult(site="pc28", period="1001", result="大单")])
+
+    assert store.refresh_recent_results("pc28", 50) == 0
+    assert store.get_result("pc28", "1001") is not None
+
+
 def test_auto_bet_opposite_play_handles_composite_labels():
     plays = ["大双", "小单", "大单", "小双"]
     assert AutoBetService._opposite_play("大双", plays) == "小单"
@@ -173,6 +198,7 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     import app.services.message_injector as message_injector
     import app.services.ws_message_sender as ws_message_sender
     import app.services.draw_result_store as draw_result_store
+    import app.services.ai_prediction_store as ai_prediction_store
     import app.services.history_fetchers as history_fetchers
     import app.utils.pathing as pathing
 
@@ -240,22 +266,34 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
         def ensure_data(self, site, min_count=20):
             self.ensure_calls.append((site, min_count))
 
+    class FakePredictionStore:
+        instances = []
+
+        def __init__(self, db_path):
+            self.db_path = Path(db_path)
+            FakePredictionStore.instances.append(self)
+
     monkeypatch.setattr(message_injector, "MessageInjector", ForbiddenInjector)
     monkeypatch.setattr(ws_message_sender, "WsMessageSender", FakeWsSender)
     monkeypatch.setattr(background_window_sender, "BackgroundWindowMessageSender", FakeBackgroundSender)
     monkeypatch.setattr(history_fetchers, "HistoryFetcher", FakeFetcher)
     monkeypatch.setattr(draw_result_store, "DrawResultStore", FakeStore)
+    monkeypatch.setattr(ai_prediction_store, "AiPredictionStore", FakePredictionStore)
 
     class FakeService:
         def __init__(self):
             self.config = StrategyConfig(
-                strategy_type="ai",
+                strategy_type="flat",
                 site="pc28",
                 observation_window=10,
+                ai_base_url="https://ai.example",
+                ai_model="model",
+                ai_api_key="key",
             )
             self.injector = None
             self.provider = None
             self.ai_client = None
+            self.prediction_store = None
             self.started = False
 
         def set_injector(self, injector):
@@ -266,6 +304,9 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
 
         def set_ai_client(self, client):
             self.ai_client = client
+
+        def set_ai_prediction_store(self, store):
+            self.prediction_store = store
 
         def start(self):
             self.started = True
@@ -309,6 +350,9 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     assert isinstance(store.fetcher, FakeFetcher)
     assert store.ensure_calls == [("pc28", 50)]
     assert win.auto_bet_service.provider is store
+    assert len(FakePredictionStore.instances) == 1
+    assert FakePredictionStore.instances[0].db_path == tmp_path / "ai_predictions.db"
+    assert win.auto_bet_service.prediction_store is FakePredictionStore.instances[0]
     from app.services.ai_bet_client import AiBetClient
     assert isinstance(win.auto_bet_service.ai_client, AiBetClient)
     assert win._auto_bet_timer.started is True
@@ -425,7 +469,13 @@ def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(m
 
     class FakeService:
         def __init__(self):
-            self.config = StrategyConfig(site="pc28", observation_window=10)
+            self.config = StrategyConfig(
+                site="pc28",
+                observation_window=10,
+                ai_base_url="https://ai.example",
+                ai_model="model",
+                ai_api_key="key",
+            )
             self.injector = None
             self.started = False
 
@@ -458,3 +508,37 @@ def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(m
     assert FakeBackgroundSender.instances[0].started is True
     assert win.auto_bet_service.injector is FakeBackgroundSender.instances[0]
     assert win.auto_bet_service.started is True
+
+
+def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sender(monkeypatch, tmp_path: Path):
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    class FakeService:
+        def __init__(self):
+            self.config = StrategyConfig(site="pc28", ai_base_url="", ai_model="", ai_api_key="")
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    class FakePanel:
+        def __init__(self):
+            self.running = True
+
+        def set_running(self, value):
+            self.running = value
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "app.ui.main_window_data.QMessageBox.information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    window = type("Window", (MainWindowDataMixin,), {})()
+    window.auto_bet_service = FakeService()
+    window.auto_bet_panel = FakePanel()
+
+    window._on_auto_bet_start()
+
+    assert window.auto_bet_service.started is False
+    assert window.auto_bet_panel.running is False
+    assert messages == ["请先填写：Base URL、模型、API Key。"]

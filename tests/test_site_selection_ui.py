@@ -9,6 +9,15 @@ from app.models import DrawInfo
 from app.ui.main_window_realtime import MainWindowRealtimeMixin
 
 
+def test_main_window_restores_only_a_known_last_selected_site(monkeypatch):
+    from app.ui.main_window import MainWindow
+
+    monkeypatch.setattr("app.ui.main_window.site_list", lambda: ["pc28", "macao"])
+
+    assert MainWindow._last_selected_site_from_settings({"last_selected_site": "macao"}) == "macao"
+    assert MainWindow._last_selected_site_from_settings({"last_selected_site": "unknown"}) == ""
+
+
 class DummyRealtimeWindow(QWidget, MainWindowRealtimeMixin):
     def __init__(self) -> None:
         super().__init__()
@@ -68,6 +77,45 @@ def test_refresh_active_site_info_syncs_auto_bet_panel_site(monkeypatch):
     window._refresh_active_site_info()
 
     assert window.auto_bet_panel.site == "macao"
+
+
+def test_select_site_persists_the_last_selected_site(monkeypatch):
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr("app.ui.main_window_realtime.site_label", lambda site: site)
+
+    saved: list[dict[str, str]] = []
+    window = DummyRealtimeWindow()
+    window.settings = {}
+    window._query_period_overrides_by_site = {}
+    window._query_period_override = ""
+    window._manual_period_override = False
+    window._stats_locked = False
+    window._awaiting_next_period = False
+    window._last_message_cursor = {}
+    window.lock_status_label = QLabel()
+    window.auto_refresh_label = QLabel()
+    window.active_site_label = QLabel()
+    window.active_period_label = QLabel()
+    window.next_period_label = QLabel()
+    window.countdown_label = QLabel()
+    window.current_visual_rows = []
+    window.chart_window = SimpleNamespace(set_status=lambda *args: None, set_status_seconds=lambda *args: None)
+    window._format_countdown = lambda value: "00:00"
+    window._set_status = lambda *args: None
+    window._load_filtered_messages = lambda: None
+    window._sync_chart_status = lambda: None
+    window._save_settings = lambda: saved.append(dict(window.settings))
+    window._current_period_override = lambda: ""
+    window._has_manual_period_override = lambda: False
+    window._default_query_period = lambda info: ""
+    window._sync_period_input_from_site = lambda info: None
+
+    MainWindowRealtimeMixin._select_site(window, "pc28")
+
+    assert window.settings["last_selected_site"] == "pc28"
+    assert saved == [{"last_selected_site": "pc28"}]
 
 
 class ClockHarness(MainWindowRealtimeMixin):

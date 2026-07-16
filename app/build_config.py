@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 
 APP_NAME = "StarTrace"
@@ -16,10 +18,22 @@ CDN_BASE_URL = os.getenv("STARTRACE_CDN_BASE_URL", "").rstrip("/")
 _BUILD_PUBLIC_KEY = ""
 _BUILD_PRIVATE_KEY = ""
 
+
+def _development_key(name: str) -> str:
+    """Load local signing keys for source-only development and admin use."""
+    if getattr(sys, "frozen", False):
+        return ""
+    path = Path(__file__).resolve().parents[1] / "keys" / name
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 _epl = os.getenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", "").strip()
-LICENSE_PUBLIC_KEY_PEM = _epl if _epl else _BUILD_PUBLIC_KEY.strip()
+LICENSE_PUBLIC_KEY_PEM = _epl or _BUILD_PUBLIC_KEY.strip() or _development_key("license_public.pem")
 _epp = os.getenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", "").strip()
-LICENSE_PRIVATE_KEY_PEM = _epp if _epp else _BUILD_PRIVATE_KEY.strip()
+LICENSE_PRIVATE_KEY_PEM = _epp or _BUILD_PRIVATE_KEY.strip() or _development_key("license_private.pem")
 UPDATE_PUBLIC_KEY_PEM = os.getenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", "").strip()
 UPDATE_PRIVATE_KEY_PEM = os.getenv("STARTRACE_UPDATE_PRIVATE_KEY_PEM", "").strip()
 

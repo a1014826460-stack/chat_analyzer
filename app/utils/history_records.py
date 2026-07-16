@@ -24,6 +24,14 @@ _MONTH_DAY_FORMATS = {"%m-%d %H:%M:%S"}
 _RESULT_RE = re.compile(r"(?P<a>\d+)\s*\+\s*(?P<b>\d+)\s*\+\s*(?P<c>\d+)(?:\s*=\s*(?P<sum>\d+))?")
 
 
+def apply_saved_proxy_settings() -> None:
+    """Use the same persisted proxy settings as the line-selection requests."""
+    from app.services.settings_service import SettingsService
+    from app.utils.fetch_date import set_proxy_settings
+
+    set_proxy_settings(SettingsService().load())
+
+
 def site_list() -> list[str]:
     return list(_SITES)
 
@@ -379,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=20)
     args = parser.parse_args(argv)
+    apply_saved_proxy_settings()
 
     payload: object
     if args.site == "all":

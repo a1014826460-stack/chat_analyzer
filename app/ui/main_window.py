@@ -31,7 +31,7 @@ from app.ui.main_window_data import MainWindowDataMixin
 from app.ui.main_window_layout import MainWindowLayoutMixin
 from app.ui.main_window_realtime import MainWindowRealtimeMixin
 from app.ui.main_window_theme import LOCK_THRESHOLD_DEFAULT_SEC, THEME
-from app.utils.fetch_date import set_proxy_settings
+from app.utils.fetch_date import set_proxy_settings, site_list
 from app.utils.pathing import resource_path
 
 
@@ -95,7 +95,7 @@ class MainWindow(
         self.message_page = 0
         self.messages_per_page = 50
         self._draw_infos = {}
-        self._active_site = ""
+        self._active_site = self._last_selected_site_from_settings(self.settings)
         self._stats_locked = False
         self._lock_threshold_sec = int(self.settings.get("lock_threshold_sec", LOCK_THRESHOLD_DEFAULT_SEC))
         self._site_card_widgets: dict[str, dict[str, QLabel]] = {}
@@ -189,6 +189,11 @@ class MainWindow(
 
         self._activate_and_launch()
         QTimer.singleShot(1500, self._check_for_updates_async)
+
+    @staticmethod
+    def _last_selected_site_from_settings(settings: dict[str, Any]) -> str:
+        site = str(settings.get("last_selected_site", "") or "").strip()
+        return site if site in site_list() else ""
 
     def _activate_and_launch(self) -> None:
         if not self._assert_activated():

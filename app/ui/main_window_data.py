@@ -764,9 +764,18 @@ class MainWindowDataMixin:
             period_start_time=getattr(info, "start_time", None),
             period_end_time=getattr(info, "next_time", None),
         )
+        if service.runtime_state.halted:
+            self._on_auto_bet_risk_halted(service.runtime_state.halt_reason)
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "update_runtime_state"):
             panel.update_runtime_state(service.runtime_state)
+        if panel is not None and hasattr(panel, "update_ai_statistics"):
+            store = getattr(service, "_ai_prediction_store", None)
+            if store is not None:
+                cfg = service.config
+                panel.update_ai_statistics(
+                    store.accuracy_summary(cfg.site, cfg.ai_accuracy_window)
+                )
 
     def _handle_auto_bet_log_ready(self, record: object) -> None:
         panel = getattr(self, "auto_bet_panel", None)
@@ -787,6 +796,11 @@ class MainWindowDataMixin:
         if not pending_key:
             return
         site, period = pending_key
+        if getattr(panel, "prefer_ai_for_pending_conflict", False):
+            config = service.config
+            if not config.ai_prefer_recommendation_on_conflict:
+                config.ai_prefer_recommendation_on_conflict = True
+                self._on_auto_bet_config_changed(config)
         info = getattr(self, "_draw_infos", {}).get(site)
         countdown = int(getattr(info, "next_countdown", 0) or 0)
         cfg = service.config
@@ -808,6 +822,15 @@ class MainWindowDataMixin:
         if pending_key:
             service.skip_ai_bet(*pending_key)
 
+    def _on_show_ai_history(self) -> None:
+        service = getattr(self, "auto_bet_service", None)
+        panel = getattr(self, "auto_bet_panel", None)
+        store = getattr(service, "_ai_prediction_store", None) if service is not None else None
+        if panel is None or store is None or not hasattr(panel, "show_ai_history"):
+            return
+        cfg = service.config
+        panel.show_ai_history(store.recent_records(cfg.site, 100))
+
     def _on_auto_bet_config_changed(self, config: object) -> None:
         """Save auto bet config to settings."""
         service = getattr(self, "auto_bet_service", None)
@@ -823,6 +846,13 @@ class MainWindowDataMixin:
         """Start the auto bet engine."""
         service = getattr(self, "auto_bet_service", None)
         if service is None:
+            return
+        missing_ai_fields = service.config.missing_ai_fields()
+        if missing_ai_fields:
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None:
+                panel.set_running(False)
+            QMessageBox.information(self, "需要 AI 配置", f"请先填写：{'、'.join(missing_ai_fields)}。")
             return
         resolved_db = getattr(self, "resolved_db", None)
         if resolved_db is None:
@@ -895,7 +925,7 @@ class MainWindowDataMixin:
 
         service.set_injector(injector)
         svc_cfg = service.config
-        if svc_cfg.strategy_type == "ai":
+        if svc_cfg.strategy_type in {"flat", "martingale", "trend_following", "ai"}:
             from app.services.ai_bet_client import AiBetClient
 
             if hasattr(service, "set_ai_client"):
@@ -904,6 +934,7 @@ class MainWindowDataMixin:
             service.set_ai_client(None)
 
         from app.services.draw_result_store import DrawResultStore
+        from app.services.ai_prediction_store import AiPredictionStore
         from app.services.history_fetchers import HistoryFetcher
         from app.utils.pathing import user_data_dir
 
@@ -911,14 +942,23 @@ class MainWindowDataMixin:
             db_path=Path(user_data_dir()) / "draw_results.db",
             fetcher=HistoryFetcher(),
         )
-        history_count = svc_cfg.ai_history_count if svc_cfg.strategy_type == "ai" else svc_cfg.observation_window * 2
+        history_count = svc_cfg.ai_history_count
         store.ensure_data(svc_cfg.site, min_count=history_count)
         service.set_result_provider(store)
+        if hasattr(service, "set_ai_prediction_store"):
+            prediction_store = AiPredictionStore(Path(user_data_dir()) / "ai_predictions.db")
+            service.set_ai_prediction_store(prediction_store)
 
         service.start()
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "update_runtime_state"):
             panel.update_runtime_state(service.runtime_state)
+        if panel is not None and hasattr(panel, "update_ai_statistics"):
+            prediction_store = getattr(service, "_ai_prediction_store", None)
+            if prediction_store is not None:
+                panel.update_ai_statistics(
+                    prediction_store.accuracy_summary(svc_cfg.site, svc_cfg.ai_accuracy_window)
+                )
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
             timer.start()
@@ -944,6 +984,35 @@ class MainWindowDataMixin:
         if timer is not None:
             timer.stop()
 
+    def _on_auto_bet_risk_halted(self, reason: str) -> None:
+        """Stop scheduler and sender after a configured risk boundary is reached."""
+        service = getattr(self, "auto_bet_service", None)
+        if service is None or not service.is_running:
+            return
+        service.stop()
+        injector = getattr(service, "_injector", None)
+        if injector is not None:
+            try:
+                injector.shutdown()
+            except Exception as exc:
+                logger.debug("Risk-limit injector shutdown error: %s", exc)
+            service.set_injector(None)
+        timer = getattr(self, "_auto_bet_timer", None)
+        if timer is not None:
+            timer.stop()
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None:
+            if hasattr(panel, "set_running"):
+                panel.set_running(False)
+            if hasattr(panel, "append_log"):
+                from app.models.auto_bet import InjectRecord
+                from datetime import datetime
+
+                panel.append_log(InjectRecord(
+                    ts=datetime.now(), group_name="", play_type="", amount=0,
+                    content=reason, success=True,
+                ))
+
     def _connect_auto_bet_panel(self) -> None:
         """Wire auto bet panel signals and load saved config.
         Called after panel is created in layout and DB is resolved."""
@@ -960,6 +1029,7 @@ class MainWindowDataMixin:
         panel.stop_clicked.connect(self._on_auto_bet_stop)
         panel.ai_confirm_clicked.connect(self._on_confirm_ai_bet)
         panel.ai_skip_clicked.connect(self._on_skip_ai_bet)
+        panel.ai_history_clicked.connect(self._on_show_ai_history)
         self.auto_bet_service.set_log_callback(self._auto_bet_log_ready.emit)
         self.auto_bet_service.set_ai_pending_callback(self._ai_pending_ready.emit)
 

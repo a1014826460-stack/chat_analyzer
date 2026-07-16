@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from app.utils.history_records import parse_australia_history_html, parse_history_records
+from app.utils.history_records import apply_saved_proxy_settings, parse_australia_history_html, parse_history_records
 
 
 def test_parse_pc28_history_skips_unopened_rows_and_normalizes_records():
@@ -110,3 +110,29 @@ def test_parse_australia_history_html_ignores_non_draw_tables():
     assert records[0]["period"] == "202607030317"
     assert records[0]["numbers"] == [4, 2, 3]
     assert records[0]["sum"] == 9
+
+
+def test_history_records_applies_the_saved_application_proxy(monkeypatch):
+    captured = {}
+
+    class SettingsService:
+        def load(self):
+            return {
+                "proxy_enabled": True,
+                "proxy_http": "http://127.0.0.1:7890",
+                "proxy_https": "http://127.0.0.1:7891",
+            }
+
+    monkeypatch.setattr("app.services.settings_service.SettingsService", SettingsService)
+    monkeypatch.setattr(
+        "app.utils.fetch_date.set_proxy_settings",
+        lambda settings: captured.update(settings),
+    )
+
+    apply_saved_proxy_settings()
+
+    assert captured == {
+        "proxy_enabled": True,
+        "proxy_http": "http://127.0.0.1:7890",
+        "proxy_https": "http://127.0.0.1:7891",
+    }

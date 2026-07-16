@@ -4,9 +4,9 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
-from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, PendingAiBet, StrategyConfig
+from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, PendingAiBet, StrategyConfig, allowed_play_types_for_config
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,13 @@ class BetMessageSender(Protocol):
 
 
 class AiRecommendationClient(Protocol):
-    def recommend(self, config: StrategyConfig, results: list) -> object: ...
+    def recommend(
+        self,
+        config: StrategyConfig,
+        results: list,
+        quant_context: dict[str, Any] | None = None,
+        performance_context: dict[str, Any] | None = None,
+    ) -> object: ...
 
 
 class AutoBetService:
@@ -45,10 +51,12 @@ class AutoBetService:
         self._runtime_state = AutoBetRuntimeState()
         self._rounds: list[AutoBetRound] = []
         self._ai_client: AiRecommendationClient | None = None
+        self._ai_prediction_store = None
         self._ai_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-bet")
         self._ai_attempted_keys: set[tuple[str, str]] = set()
         self._ai_pending: dict[tuple[str, str], PendingAiBet] = {}
         self._ai_skipped_keys: set[tuple[str, str]] = set()
+        self._ai_waiting_keys: set[tuple[str, str]] = set()
         self._on_ai_pending_updated: Callable[[PendingAiBet | None], None] | None = None
 
     # ------------------------------------------------------------------
@@ -77,6 +85,11 @@ class AutoBetService:
                 ai_api_key=self._config.ai_api_key,
                 ai_history_count=self._config.ai_history_count,
                 ai_require_confirmation=self._config.ai_require_confirmation,
+                ai_confidence_threshold=self._config.ai_confidence_threshold,
+                ai_accuracy_window=self._config.ai_accuracy_window,
+                ai_prefer_recommendation_on_conflict=self._config.ai_prefer_recommendation_on_conflict,
+                take_profit_limit=self._config.take_profit_limit,
+                stop_loss_limit=self._config.stop_loss_limit,
             )
 
     def apply_config(self, config: StrategyConfig) -> None:
@@ -94,6 +107,10 @@ class AutoBetService:
     def set_ai_client(self, client: AiRecommendationClient | None) -> None:
         with self._lock:
             self._ai_client = client
+
+    def set_ai_prediction_store(self, store) -> None:
+        with self._lock:
+            self._ai_prediction_store = store
 
     def set_ai_pending_callback(self, callback: Callable[[PendingAiBet | None], None] | None) -> None:
         self._on_ai_pending_updated = callback
@@ -113,11 +130,14 @@ class AutoBetService:
     def start(self) -> None:
         with self._lock:
             self._running = True
+            self._runtime_state = AutoBetRuntimeState()
+            self._rounds = []
             self._last_bet_period = ""
             self._bet_keys.clear()
             self._ai_attempted_keys.clear()
             self._ai_pending.clear()
             self._ai_skipped_keys.clear()
+            self._ai_waiting_keys.clear()
         self._add_log(InjectRecord(
             ts=datetime.now(),
             group_name="",
@@ -185,9 +205,13 @@ class AutoBetService:
         self._expire_ai_pending(site, current_period, countdown_sec, cfg.lock_threshold_sec, within_bet_window)
 
         if not within_bet_window:
+            if cfg.strategy_type in {"flat", "martingale", "trend_following", "ai"} and current_period:
+                self._log_ai_waiting_for_window(site, current_period, countdown_sec)
             return
 
-        if cfg.strategy_type == "ai":
+        if cfg.strategy_type in {"flat", "martingale", "trend_following", "ai"}:
+            if not self._ai_strategy_is_eligible(site, current_period, cfg, result_provider):
+                return
             self._process_ai_period(site, current_period, cfg, injector, result_provider)
             return
 
@@ -217,6 +241,40 @@ class AutoBetService:
     # ------------------------------------------------------------------
     # Strategy: Trend Following
     # ------------------------------------------------------------------
+
+    def _ai_strategy_is_eligible(
+        self,
+        site: str,
+        period: str,
+        cfg: StrategyConfig,
+        result_provider: DrawResultProvider | None,
+    ) -> bool:
+        if cfg.strategy_type != "trend_following":
+            return True
+        if result_provider is None:
+            self._add_ai_status_log(site, period, "趋势条件未满足：没有历史开奖记录", success=False)
+            return False
+        results = result_provider.get_recent_results(site, cfg.observation_window)
+        if len(results) < cfg.trigger_threshold:
+            self._add_ai_status_log(site, period, "趋势条件未满足：历史样本不足", success=True)
+            return False
+        mode = self._effective_bet_mode(cfg)
+        ordered = sorted(results, key=lambda result: result.period)[-cfg.observation_window:]
+        tail_result = self._result_for_mode(ordered[-1].result, mode)
+        consecutive = 0
+        for result in reversed(ordered):
+            if self._result_for_mode(result.result, mode) != tail_result:
+                break
+            consecutive += 1
+        if consecutive >= cfg.trigger_threshold:
+            return True
+        self._add_ai_status_log(
+            site,
+            period,
+            f"趋势条件未满足：最近 {tail_result} 连续 {consecutive} 期，阈值 {cfg.trigger_threshold} 期",
+            success=True,
+        )
+        return False
 
     def _analyze(self, cfg: StrategyConfig, result_provider: DrawResultProvider | None = None) -> BetDecision:
         """Run the trend-following strategy."""
@@ -334,58 +392,173 @@ class AutoBetService:
             return
 
         try:
+            refresh = getattr(result_provider, "refresh_recent_results", None)
+            if callable(refresh):
+                refreshed = refresh(site, cfg.ai_history_count)
+                if not refreshed:
+                    self._add_ai_status_log(
+                        site, period,
+                        "最新开奖记录刷新失败或无新增数据，本期使用本地缓存分析",
+                        success=False,
+                    )
+            self._settle_ai_predictions(result_provider, site)
+            self.settle_pending_rounds(result_provider)
             results = result_provider.get_recent_results(site, cfg.ai_history_count)
         except Exception as exc:
             with self._lock:
                 self._ai_skipped_keys.add(key)
+            self._record_ai_failure(site, period, cfg, f"读取 AI 历史开奖失败: {exc}")
             self._add_ai_status_log(site, period, f"读取 AI 历史开奖失败: {exc}", success=False)
             return
         if not results:
             with self._lock:
                 self._ai_skipped_keys.add(key)
+            self._record_ai_failure(site, period, cfg, "没有可用于 AI 分析的历史开奖记录")
             self._add_ai_status_log(site, period, "没有可用于 AI 分析的历史开奖记录", success=False)
             return
 
-        future = self._ai_executor.submit(client.recommend, cfg, results)
+        from app.services.ai_quant_analysis import build_quant_context
+
+        quant_context = build_quant_context(results)
+        store = self._ai_prediction_store
+        performance_context = (
+            store.performance_context(site, cfg.ai_accuracy_window)
+            if store is not None else {}
+        )
+        history_snapshot = [
+            {"period": str(result.period), "result": str(result.result)}
+            for result in results
+        ]
+        self._add_ai_status_log(site, period, "AI 正在分析（超时 60 秒）", success=True)
+        future = self._ai_executor.submit(
+            client.recommend, cfg, results, quant_context, performance_context
+        )
         future.add_done_callback(
-            lambda done, s=site, p=period, c=cfg, sender=injector: self._handle_ai_recommendation(s, p, c, sender, done)
+            lambda done, s=site, p=period, c=cfg, sender=injector, h=history_snapshot, q=quant_context:
+                self._handle_ai_recommendation(s, p, c, sender, done, h, q)
         )
 
-    def _handle_ai_recommendation(self, site: str, period: str, cfg: StrategyConfig, injector: BetMessageSender, future) -> None:
+    def _log_ai_waiting_for_window(self, site: str, period: str, countdown_sec: int) -> None:
+        key = (site, period)
+        with self._lock:
+            if key in self._ai_waiting_keys:
+                return
+            self._ai_waiting_keys.add(key)
+        self._add_ai_status_log(
+            site,
+            period,
+            f"AI 等待下注时窗：当前倒计时 {max(0, int(countdown_sec))} 秒",
+            success=True,
+        )
+
+    def _handle_ai_recommendation(
+        self,
+        site: str,
+        period: str,
+        cfg: StrategyConfig,
+        injector: BetMessageSender,
+        future,
+        history_snapshot: list[dict[str, str]],
+        quant_snapshot: dict[str, Any],
+    ) -> None:
         key = (site, period)
         try:
             recommendation = future.result()
+            action = str(getattr(recommendation, "action", "") or "").strip().lower()
             play_type = str(getattr(recommendation, "play_type", "") or "").strip()
             reason = str(getattr(recommendation, "reason", "") or "").strip()
+            quant_rationale = str(getattr(recommendation, "quant_rationale", "") or "").strip()
+            confidence = int(getattr(recommendation, "confidence", 0))
             from app.services.ai_bet_client import VALID_PLAY_TYPES
 
-            if play_type not in VALID_PLAY_TYPES or not reason:
-                raise ValueError("AI 建议缺少合法玩法或理由")
+            if action not in {"bet", "skip"} or not reason or not quant_rationale:
+                raise ValueError("AI 建议缺少合法动作、量化依据或理由")
+            if action == "bet" and play_type not in VALID_PLAY_TYPES:
+                raise ValueError("AI 建议缺少合法玩法")
+            if action == "bet" and play_type not in allowed_play_types_for_config(cfg):
+                allowed_text = "、".join(allowed_play_types_for_config(cfg)) or "无"
+                raise ValueError(f"AI 建议玩法不在当前允许玩法：{play_type}（允许：{allowed_text}）")
         except Exception as exc:
             with self._lock:
                 self._ai_skipped_keys.add(key)
+            self._record_ai_failure(site, period, cfg, str(exc), history_snapshot, quant_snapshot)
             self._add_ai_status_log(site, period, f"AI 建议失败: {exc}", success=False)
             return
+
+        status = "ai_skip" if action == "skip" else (
+            "low_confidence" if confidence < cfg.ai_confidence_threshold else "recommended"
+        )
+        store = self._ai_prediction_store
+        if store is not None:
+            store.record_prediction(
+                site=site,
+                period=period,
+                action=action,
+                play_type=play_type,
+                confidence=confidence,
+                quant_rationale=quant_rationale,
+                reason=reason,
+                model=cfg.ai_model,
+                history_snapshot=history_snapshot,
+                quant_snapshot=quant_snapshot,
+                status=status,
+            )
+        if status != "recommended":
+            with self._lock:
+                self._ai_skipped_keys.add(key)
+            if status == "ai_skip":
+                message = f"AI 跳过本期（置信度 {confidence}/100）：{quant_rationale}；{reason}"
+            else:
+                message = (
+                    f"AI 置信度 {confidence}/100 低于阈值 {cfg.ai_confidence_threshold}/100，"
+                    f"跳过本期：{quant_rationale}；{reason}"
+                )
+            self._add_ai_status_log(site, period, message, success=True)
+            return
+
+        with self._lock:
+            if not self._running or key in self._ai_skipped_keys:
+                if store is not None:
+                    store.update_status(site, period, "stopped")
+                return
 
         pending = PendingAiBet(
             site=site,
             period=period,
             play_type=play_type,
-            amount=self._current_bet_amount(cfg),
+            amount=self._ai_bet_amount(cfg),
             reason=reason,
             created_at=datetime.now(),
+            confidence=confidence,
+            quant_rationale=quant_rationale,
+            has_play_conflict=not self._is_ai_play_compatible(play_type, cfg.play_types),
+            recommended_plays=tuple(cfg.play_types),
         )
-        if cfg.ai_require_confirmation:
+        if cfg.ai_require_confirmation or pending.has_play_conflict and not cfg.ai_prefer_recommendation_on_conflict:
             with self._lock:
                 if not self._running or key in self._ai_skipped_keys:
                     return
-                self._ai_pending[key] = pending
-            self._add_ai_status_log(site, period, f"AI 建议：{play_type}{self._format_amount(pending.amount)}；{reason}", success=True)
+            self._ai_pending[key] = pending
+            conflict_text = (
+                f"；与推荐玩法 {', '.join(pending.recommended_plays) or '无'} 冲突，请确认"
+                if pending.has_play_conflict else ""
+            )
+            self._add_ai_status_log(
+                site, period,
+                f"AI 建议：{play_type}{self._format_amount(pending.amount)}；"
+                f"置信度 {confidence}/100；{quant_rationale}；{reason}{conflict_text}",
+                success=True,
+            )
             self._notify_ai_pending(pending, visible=True)
             return
 
         if self._send_ai_bet(pending, cfg, injector):
-            self._add_ai_status_log(site, period, f"AI 自动下注：{play_type}{self._format_amount(pending.amount)}；{reason}", success=True)
+            self._add_ai_status_log(
+                site, period,
+                f"AI 自动下注：{play_type}{self._format_amount(pending.amount)}；"
+                f"置信度 {confidence}/100；{quant_rationale}；{reason}",
+                success=True,
+            )
 
     def pending_ai_recommendation(self, site: str, period: str) -> PendingAiBet | None:
         with self._lock:
@@ -406,6 +579,8 @@ class AutoBetService:
                 expired = False
         self._notify_ai_pending(pending, visible=False)
         if expired:
+            if self._ai_prediction_store is not None:
+                self._ai_prediction_store.update_status(site, period, "expired")
             self._add_ai_status_log(site, period, "AI 建议已过封盘时间，跳过本期", success=False)
             return False
         sent = self._send_ai_bet(pending, cfg, injector)
@@ -424,6 +599,8 @@ class AutoBetService:
             if pending is None:
                 return False
             self._ai_skipped_keys.add(key)
+        if self._ai_prediction_store is not None:
+            self._ai_prediction_store.update_status(site, period, "user_skip")
         self._notify_ai_pending(pending, visible=False)
         self._add_ai_status_log(site, period, reason, success=True)
         return True
@@ -462,13 +639,57 @@ class AutoBetService:
                 success=True,
             )
             return False
+        sent_decisions: list[BetDecision] = []
         for group_id, group_decisions in self._group_decisions(decisions).items():
-            self._execute_group(group_id, group_decisions, injector, site=pending.site, period=pending.period)
+            if self._execute_group(group_id, group_decisions, injector, site=pending.site, period=pending.period):
+                sent_decisions.extend(group_decisions)
         with self._lock:
-            for decision in decisions:
+            for decision in sent_decisions:
                 self._bet_keys.add((pending.site, pending.period, decision.group_id))
-        self._record_round(pending.site, pending.period, decisions)
-        return True
+        if sent_decisions:
+            self._record_round(pending.site, pending.period, sent_decisions)
+            if self._ai_prediction_store is not None:
+                self._ai_prediction_store.mark_sent(pending.site, pending.period)
+            return True
+        if self._ai_prediction_store is not None:
+            self._ai_prediction_store.update_status(pending.site, pending.period, "send_failed")
+        return False
+
+    def _settle_ai_predictions(self, result_provider: DrawResultProvider, site: str) -> int:
+        store = self._ai_prediction_store
+        if store is None:
+            return 0
+        settled = 0
+        for prediction in store.pending_sent_records(site):
+            result = result_provider.get_result(prediction.site, prediction.period)
+            if result is None:
+                continue
+            if store.settle(prediction.site, prediction.period, result.result):
+                settled += 1
+        return settled
+
+    def _record_ai_failure(
+        self,
+        site: str,
+        period: str,
+        cfg: StrategyConfig,
+        reason: str,
+        history_snapshot: list[dict[str, str]] | None = None,
+        quant_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        store = self._ai_prediction_store
+        if store is None:
+            return
+        store.record_prediction(
+            site=site,
+            period=period,
+            action="error",
+            reason=reason,
+            model=cfg.ai_model,
+            history_snapshot=history_snapshot,
+            quant_snapshot=quant_snapshot,
+            status="failed",
+        )
 
     def _add_ai_status_log(self, site: str, period: str, content: str, *, success: bool) -> None:
         group_names = [self._display_group_name(group_id) for group_id in self._config.target_groups]
@@ -507,13 +728,14 @@ class AutoBetService:
         *,
         site: str = "",
         period: str = "",
-    ) -> None:
+    ) -> bool:
         if not decisions:
-            return
+            return False
         if len(decisions) == 1 or injector is None or not hasattr(injector, "inject_text"):
-            for decision in decisions:
+            return all(
                 self._execute(decision, injector, site=site, period=period)
-            return
+                for decision in decisions
+            )
 
         content = "".join(self._format_bet_text(decision.play_type, decision.amount) for decision in decisions)
         success = bool(injector.inject_text(group_id, content, is_group=True))
@@ -529,8 +751,9 @@ class AutoBetService:
             period=period,
             group_id=group_id,
         ))
+        return success
 
-    def _execute(self, decision: BetDecision, injector: BetMessageSender | None = None, *, site: str = "", period: str = "") -> None:
+    def _execute(self, decision: BetDecision, injector: BetMessageSender | None = None, *, site: str = "", period: str = "") -> bool:
         """Send the bet through the configured message sender."""
         if injector is None:
             self._add_log(InjectRecord(
@@ -545,7 +768,7 @@ class AutoBetService:
                 period=period,
                 group_id=decision.group_id,
             ))
-            return
+            return False
 
         success = injector.inject_bet(decision.group_id, decision.play_type, decision.amount)
         self._add_log(InjectRecord(
@@ -560,6 +783,7 @@ class AutoBetService:
             period=period,
             group_id=decision.group_id,
         ))
+        return bool(success)
 
 
     def _display_group_name(self, group_id: str) -> str:
@@ -648,7 +872,10 @@ class AutoBetService:
     def _record_round(self, site: str, period: str, bets: list[BetDecision]) -> None:
         if not period or not bets:
             return
-        self._rounds.append(AutoBetRound(period=period, site=site, bets=list(bets)))
+        round_info = AutoBetRound(period=period, site=site, bets=list(bets))
+        with self._lock:
+            self._rounds.append(round_info)
+            self._runtime_state.pending_staked += sum(float(bet.amount) for bet in bets)
 
     def _settle_round(self, round_info: AutoBetRound, result: str, cfg: StrategyConfig) -> None:
         if round_info.settled:
@@ -667,6 +894,7 @@ class AutoBetService:
 
         with self._lock:
             state = self._runtime_state
+            state.pending_staked = max(0.0, state.pending_staked - staked)
             state.total_staked += staked
             state.total_payout += payout
             state.total_profit += profit
@@ -674,23 +902,56 @@ class AutoBetService:
             if profit > 0:
                 state.win_rounds += 1
                 state.consecutive_losses = 0
-                state.current_step = 0
+                if cfg.strategy_type == "martingale":
+                    state.current_step = 0
             else:
                 state.lose_rounds += 1
                 state.consecutive_losses += 1
-                if state.current_step >= len(cfg.martingale_sequence) - 1:
-                    state.halted = True
-                    state.halt_reason = "倍投已到最后一档，等待人工处理"
-                else:
-                    state.current_step += 1
+                if cfg.strategy_type == "martingale":
+                    sequence = cfg.martingale_sequence or [cfg.bet_amount]
+                    if state.current_step >= len(sequence) - 1:
+                        state.halted = True
+                        state.halt_reason = "倍投已到最后一档，等待人工处理"
+                    else:
+                        state.current_step += 1
+            self._apply_risk_limits(state, cfg)
+
+    @staticmethod
+    def _apply_risk_limits(state: AutoBetRuntimeState, cfg: StrategyConfig) -> None:
+        if cfg.take_profit_limit > 0 and state.total_profit >= cfg.take_profit_limit:
+            state.halted = True
+            state.halt_reason = (
+                f"已触发止盈线 {cfg.take_profit_limit:.2f}，当前净盈亏 {state.total_profit:.2f}"
+            )
+        elif cfg.stop_loss_limit > 0 and state.total_profit <= -cfg.stop_loss_limit:
+            state.halted = True
+            state.halt_reason = (
+                f"已触发止损线 {cfg.stop_loss_limit:.2f}，当前净盈亏 {state.total_profit:.2f}"
+            )
 
     def _current_bet_amount(self, cfg: StrategyConfig) -> float:
         sequence = cfg.martingale_sequence or [cfg.bet_amount]
         index = min(max(self._runtime_state.current_step, 0), len(sequence) - 1)
         return float(sequence[index])
 
+    def _ai_bet_amount(self, cfg: StrategyConfig) -> float:
+        if cfg.strategy_type != "martingale":
+            return float(cfg.bet_amount)
+        return self._current_bet_amount(cfg)
+
+    @staticmethod
+    def _is_ai_play_compatible(play_type: str, recommended_plays: list[str]) -> bool:
+        selected = {str(play).strip() for play in recommended_plays if str(play).strip()}
+        if not selected:
+            return True
+        play = str(play_type).strip()
+        if play in selected:
+            return True
+        return len(play) == 2 and all(component in selected for component in play)
+
     def _allowed_play_types_for_mode(self, cfg: StrategyConfig, mode: str | None = None) -> list[str]:
-        mode = mode or self._effective_bet_mode(cfg)
+        if mode is None or mode == cfg.bet_mode:
+            return allowed_play_types_for_config(cfg)
         mode_allowed = {
             "size": {"大", "小"},
             "parity": {"单", "双"},
