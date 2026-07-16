@@ -127,8 +127,15 @@ class AutoBetService:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self) -> bool:
         with self._lock:
+            # Direct service callers using a real AI client receive the same
+            # credential guard as the UI; test/dry-run clients remain usable.
+            from app.services.ai_bet_client import AiBetClient
+
+            if isinstance(self._ai_client, AiBetClient) and self._config.start_validation_errors():
+                self._running = False
+                return False
             self._running = True
             self._runtime_state = AutoBetRuntimeState()
             self._rounds = []
@@ -146,6 +153,7 @@ class AutoBetService:
             content="策略引擎已启动",
             success=True,
         ))
+        return True
 
     def stop(self) -> None:
         with self._lock:
@@ -531,10 +539,10 @@ class AutoBetService:
             created_at=datetime.now(),
             confidence=confidence,
             quant_rationale=quant_rationale,
-            has_play_conflict=not self._is_ai_play_compatible(play_type, cfg.play_types),
+            has_play_conflict=False,
             recommended_plays=tuple(cfg.play_types),
         )
-        if cfg.ai_require_confirmation or pending.has_play_conflict and not cfg.ai_prefer_recommendation_on_conflict:
+        if cfg.ai_require_confirmation:
             with self._lock:
                 if not self._running or key in self._ai_skipped_keys:
                     return
@@ -938,16 +946,6 @@ class AutoBetService:
         if cfg.strategy_type != "martingale":
             return float(cfg.bet_amount)
         return self._current_bet_amount(cfg)
-
-    @staticmethod
-    def _is_ai_play_compatible(play_type: str, recommended_plays: list[str]) -> bool:
-        selected = {str(play).strip() for play in recommended_plays if str(play).strip()}
-        if not selected:
-            return True
-        play = str(play_type).strip()
-        if play in selected:
-            return True
-        return len(play) == 2 and all(component in selected for component in play)
 
     def _allowed_play_types_for_mode(self, cfg: StrategyConfig, mode: str | None = None) -> list[str]:
         if mode is None or mode == cfg.bet_mode:

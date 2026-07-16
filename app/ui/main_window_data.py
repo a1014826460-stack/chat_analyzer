@@ -796,11 +796,6 @@ class MainWindowDataMixin:
         if not pending_key:
             return
         site, period = pending_key
-        if getattr(panel, "prefer_ai_for_pending_conflict", False):
-            config = service.config
-            if not config.ai_prefer_recommendation_on_conflict:
-                config.ai_prefer_recommendation_on_conflict = True
-                self._on_auto_bet_config_changed(config)
         info = getattr(self, "_draw_infos", {}).get(site)
         countdown = int(getattr(info, "next_countdown", 0) or 0)
         cfg = service.config
@@ -847,12 +842,12 @@ class MainWindowDataMixin:
         service = getattr(self, "auto_bet_service", None)
         if service is None:
             return
-        missing_ai_fields = service.config.missing_ai_fields()
-        if missing_ai_fields:
+        validation_errors = service.config.start_validation_errors()
+        if validation_errors:
             panel = getattr(self, "auto_bet_panel", None)
             if panel is not None:
                 panel.set_running(False)
-            QMessageBox.information(self, "需要 AI 配置", f"请先填写：{'、'.join(missing_ai_fields)}。")
+            QMessageBox.warning(self, "无法启动自动下注", "\n".join(validation_errors))
             return
         resolved_db = getattr(self, "resolved_db", None)
         if resolved_db is None:
@@ -949,7 +944,11 @@ class MainWindowDataMixin:
             prediction_store = AiPredictionStore(Path(user_data_dir()) / "ai_predictions.db")
             service.set_ai_prediction_store(prediction_store)
 
-        service.start()
+        started = service.start()
+        if started is False:
+            if panel is not None:
+                panel.set_running(False)
+            return
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "update_runtime_state"):
             panel.update_runtime_state(service.runtime_state)
@@ -1065,6 +1064,14 @@ class MainWindowDataMixin:
                 if gname:
                     groups.append((gid or gname, gname))
         panel.set_available_groups(groups)
+        config = panel.get_config()
+        available_ids = {group_id for group_id, _group_name in groups}
+        filtered_ids = [group_id for group_id in config.target_groups if group_id in available_ids]
         service = getattr(self, "auto_bet_service", None)
+        service_config = getattr(service, "config", None)
+        if filtered_ids != config.target_groups or getattr(service_config, "target_groups", None) != filtered_ids:
+            config.target_groups = filtered_ids
+            panel.load_config(config)
+            self._on_auto_bet_config_changed(config)
         if service is not None and hasattr(service, "set_group_names"):
             service.set_group_names({group_id: group_name for group_id, group_name in groups})

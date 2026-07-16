@@ -285,6 +285,7 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
             self.config = StrategyConfig(
                 strategy_type="flat",
                 site="pc28",
+                target_groups=["g1"],
                 observation_window=10,
                 ai_base_url="https://ai.example",
                 ai_model="model",
@@ -471,6 +472,7 @@ def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(m
         def __init__(self):
             self.config = StrategyConfig(
                 site="pc28",
+                target_groups=["g1"],
                 observation_window=10,
                 ai_base_url="https://ai.example",
                 ai_model="model",
@@ -512,10 +514,48 @@ def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(m
 
 def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sender(monkeypatch, tmp_path: Path):
     from app.ui.main_window_data import MainWindowDataMixin
+    import app.ui.main_window_data as main_window_data
+
+    monkeypatch.setattr(
+        main_window_data,
+        "QMessageBox",
+        type("MessageBox", (), {"warning": staticmethod(lambda _parent, _title, message: messages.append(message))}),
+    )
 
     class FakeService:
         def __init__(self):
-            self.config = StrategyConfig(site="pc28", ai_base_url="", ai_model="", ai_api_key="")
+            self.config = StrategyConfig(site="pc28", target_groups=["g1"], ai_base_url="", ai_model="", ai_api_key="")
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    class FakePanel:
+        def __init__(self):
+            self.running = True
+
+        def set_running(self, value):
+            self.running = value
+
+    messages: list[str] = []
+    window = type("Window", (MainWindowDataMixin,), {})()
+    window.auto_bet_service = FakeService()
+    window.auto_bet_panel = FakePanel()
+
+    window._on_auto_bet_start()
+
+    assert window.auto_bet_service.started is False
+    assert window.auto_bet_panel.running is False
+    assert messages == ["Base URL\n模型\nAPI Key"]
+
+
+def test_auto_bet_start_rejects_missing_target_group_before_creating_a_sender(monkeypatch):
+    from app.ui.main_window_data import MainWindowDataMixin
+    import app.ui.main_window_data as main_window_data
+
+    class FakeService:
+        def __init__(self):
+            self.config = StrategyConfig(target_groups=[], ai_api_key="key")
             self.started = False
 
         def start(self):
@@ -530,8 +570,9 @@ def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sende
 
     messages: list[str] = []
     monkeypatch.setattr(
-        "app.ui.main_window_data.QMessageBox.information",
-        lambda _parent, _title, message: messages.append(message),
+        main_window_data,
+        "QMessageBox",
+        type("MessageBox", (), {"warning": staticmethod(lambda _parent, _title, message: messages.append(message))}),
     )
     window = type("Window", (MainWindowDataMixin,), {})()
     window.auto_bet_service = FakeService()
@@ -541,4 +582,31 @@ def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sende
 
     assert window.auto_bet_service.started is False
     assert window.auto_bet_panel.running is False
-    assert messages == ["请先填写：Base URL、模型、API Key。"]
+    assert messages == ["请至少选择一个目标群组"]
+
+
+def test_refresh_auto_bet_groups_removes_missing_saved_target_groups():
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem
+    from app.models.auto_bet import StrategyConfig
+    from app.services.auto_bet_service import AutoBetService
+    from app.ui.auto_bet_panel import AutoBetPanel
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    app = QApplication.instance() or QApplication([])
+    window = type("Window", (MainWindowDataMixin,), {})()
+    window.auto_bet_panel = AutoBetPanel()
+    window.auto_bet_panel.load_config(StrategyConfig(target_groups=["gone", "g1"]))
+    window.auto_bet_service = AutoBetService()
+    window.settings = {}
+    window.settings_service = type("Settings", (), {"save": lambda _self, _settings: None})()
+    window.group_list = QListWidget()
+    item = QListWidgetItem("群一")
+    item.setData(Qt.UserRole, "g1")
+    window.group_list.addItem(item)
+
+    window._refresh_auto_bet_groups()
+
+    assert window.auto_bet_panel.get_config().target_groups == ["g1"]
+    assert window.auto_bet_service.config.target_groups == ["g1"]
+    assert window.settings["auto_bet"]["target_groups"] == ["g1"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import math
 from typing import Protocol, runtime_checkable
 
 
@@ -54,6 +55,12 @@ DEFAULT_ODDS: dict[str, float] = {
     "大单": 4.28,
 }
 
+DEFAULT_AI_PROVIDER = "anthropic"
+DEFAULT_AI_BASE_URL = "https://api.deepseek.com/anthropic"
+DEFAULT_AI_MODEL = "deepseek-v4-pro"
+MIN_LOCK_THRESHOLD_SEC = 20
+MAX_LOCK_THRESHOLD_SEC = 60
+
 
 def allowed_play_types_for_config(config: "StrategyConfig") -> list[str]:
     """Return the exact plays the user selected for AI recommendations."""
@@ -85,13 +92,13 @@ class StrategyConfig:
     trigger_threshold: int = 3
     bet_amount: float = 10.0
     play_types: list[str] = field(default_factory=lambda: ["大", "小"])
-    lock_threshold_sec: int = 15  # stop betting N seconds before draw cutoff
+    lock_threshold_sec: int = MIN_LOCK_THRESHOLD_SEC  # stop betting N seconds before draw cutoff
     bet_mode: str = "size"
     martingale_sequence: list[float] = field(default_factory=list)
     odds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ODDS))
-    ai_provider: str = "openai_compatible"
-    ai_base_url: str = ""
-    ai_model: str = ""
+    ai_provider: str = DEFAULT_AI_PROVIDER
+    ai_base_url: str = DEFAULT_AI_BASE_URL
+    ai_model: str = DEFAULT_AI_MODEL
     ai_api_key: str = ""
     ai_history_count: int = 50
     ai_require_confirmation: bool = False
@@ -113,6 +120,31 @@ class StrategyConfig:
         if not self.ai_api_key.strip():
             missing.append("API Key")
         return missing
+
+    def start_validation_errors(self, *, require_execution_targets: bool = True) -> list[str]:
+        """Return configuration problems that block a requested start action."""
+        errors: list[str] = []
+        if require_execution_targets and not self.target_groups:
+            errors.append("请至少选择一个目标群组")
+        if not self.play_types:
+            errors.append("请至少选择一个推荐玩法")
+        if not self.has_all_valid_odds():
+            errors.append("请填写全部玩法的有效赔率")
+        errors.extend(self.missing_ai_fields())
+        if require_execution_targets and self.strategy_type == "martingale" and not self.martingale_sequence:
+            errors.append("请填写有效的倍投序列")
+        return errors
+
+    def has_all_valid_odds(self) -> bool:
+        """All supported plays require a finite, positive configured odd."""
+        for play in DEFAULT_ODDS:
+            try:
+                value = float(self.odds.get(play))
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(value) or value <= 0:
+                return False
+        return True
 
     def to_dict(self) -> dict:
         return {
@@ -154,13 +186,13 @@ class StrategyConfig:
             trigger_threshold=int(data.get("trigger_threshold", 3)),
             bet_amount=float(data.get("bet_amount", 10.0)),
             play_types=_ensure_str_list(data.get("play_types", ["大", "小"])),
-            lock_threshold_sec=int(data.get("lock_threshold_sec", 15)),
+            lock_threshold_sec=_ensure_lock_threshold_sec(data.get("lock_threshold_sec")),
             bet_mode=str(data.get("bet_mode", "size")),
             martingale_sequence=_ensure_float_list(data.get("martingale_sequence"), default=[]),
             odds=_ensure_odds(data.get("odds")),
             ai_provider=_ensure_ai_provider(data.get("ai_provider")),
-            ai_base_url=str(data.get("ai_base_url", "") or "").strip(),
-            ai_model=str(data.get("ai_model", "") or "").strip(),
+            ai_base_url=str(data.get("ai_base_url", DEFAULT_AI_BASE_URL) or "").strip(),
+            ai_model=str(data.get("ai_model", DEFAULT_AI_MODEL) or "").strip(),
             ai_api_key=str(data.get("ai_api_key", "") or "").strip(),
             ai_history_count=_ensure_ai_history_count(data.get("ai_history_count")),
             ai_require_confirmation=bool(data.get("ai_require_confirmation", False)),
@@ -215,8 +247,15 @@ def _ensure_odds(value: object) -> dict[str, float]:
 
 
 def _ensure_ai_provider(value: object) -> str:
-    provider = str(value or "openai_compatible").strip()
-    return provider if provider in {"openai_compatible", "anthropic"} else "openai_compatible"
+    provider = str(value or DEFAULT_AI_PROVIDER).strip()
+    return provider if provider in {"openai_compatible", "anthropic"} else DEFAULT_AI_PROVIDER
+
+
+def _ensure_lock_threshold_sec(value: object) -> int:
+    try:
+        return min(MAX_LOCK_THRESHOLD_SEC, max(MIN_LOCK_THRESHOLD_SEC, int(value)))
+    except (TypeError, ValueError):
+        return MIN_LOCK_THRESHOLD_SEC
 
 
 def _ensure_ai_history_count(value: object) -> int:

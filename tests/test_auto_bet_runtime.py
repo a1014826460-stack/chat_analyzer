@@ -36,6 +36,47 @@ def test_strategy_config_persists_mode_martingale_and_odds():
     assert loaded.odds["大"] == 1.98
 
 
+def test_strategy_config_defaults_to_deepseek_anthropic_and_clamps_lock_threshold():
+    config = StrategyConfig.from_dict({"lock_threshold_sec": 5})
+
+    assert config.ai_provider == "anthropic"
+    assert config.ai_base_url == "https://api.deepseek.com/anthropic"
+    assert config.ai_model == "deepseek-v4-pro"
+    assert config.lock_threshold_sec == 20
+    assert StrategyConfig.from_dict({"lock_threshold_sec": 90}).lock_threshold_sec == 60
+
+
+def test_strategy_config_reports_all_automatic_bet_start_validation_errors():
+    config = StrategyConfig(
+        target_groups=[],
+        play_types=[],
+        odds={"大": 0},
+        ai_base_url="",
+        ai_model="",
+        ai_api_key="",
+    )
+
+    assert config.start_validation_errors() == [
+        "请至少选择一个目标群组",
+        "请至少选择一个推荐玩法",
+        "请填写全部玩法的有效赔率",
+        "Base URL",
+        "模型",
+        "API Key",
+    ]
+
+
+def test_auto_bet_service_does_not_start_with_invalid_configuration():
+    from app.services.ai_bet_client import AiBetClient
+
+    service = AutoBetService()
+    service.apply_config(StrategyConfig(target_groups=["g1"], ai_api_key=""))
+    service.set_ai_client(AiBetClient())
+
+    assert service.start() is False
+    assert service.is_running is False
+
+
 def test_strategy_config_persists_martingale_strategy_type():
     cfg = StrategyConfig(strategy_type="martingale", bet_mode="size", play_types=["\u5927"], martingale_sequence=[100, 200])
 

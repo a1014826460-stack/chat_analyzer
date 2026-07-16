@@ -406,20 +406,19 @@ def test_ai_config_dialog_requires_a_valid_provider_and_all_credential_fields():
     assert not dialog.has_required_values()
 
 
-def test_ai_config_exposes_conflict_preference_and_risk_limits():
+def test_ai_config_exposes_risk_limits_without_a_conflict_preference_override():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
     dialog = panel._ai_config_dialog
-    dialog._prefer_ai_conflict_check.setChecked(True)
     dialog._take_profit_spin.setValue(500)
     dialog._stop_loss_spin.setValue(300)
 
     config = panel.get_config()
 
-    assert config.ai_prefer_recommendation_on_conflict is True
+    assert config.ai_prefer_recommendation_on_conflict is False
     assert config.take_profit_limit == 500
     assert config.stop_loss_limit == 300
     assert panel._play_label.text() == "推荐玩法:"
@@ -434,3 +433,111 @@ def test_recommended_play_checkboxes_allow_all_eight_play_types():
     panel._mode_combo.setCurrentIndex(panel._mode_combo.findData("size"))
 
     assert all(check.isEnabled() for check in panel._play_checkboxes.values())
+
+
+def test_play_preset_replaces_checked_plays_with_its_corresponding_pair():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._mode_combo.setCurrentIndex(panel._mode_combo.findData("parity"))
+
+    assert panel.get_config().play_types == ["单", "双"]
+
+
+def test_three_door_preset_replaces_checked_plays_with_the_first_three_doors():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._mode_combo.setCurrentIndex(panel._mode_combo.findData("three_doors"))
+
+    assert panel.get_config().play_types == ["小单", "大双", "小双"]
+
+
+def test_auto_bet_panel_uses_deepseek_anthropic_ai_defaults():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    dialog = panel._ai_config_dialog
+
+    assert dialog._provider_combo.currentData() == "anthropic"
+    assert dialog._base_url_edit.text() == "https://api.deepseek.com/anthropic"
+    assert dialog._model_edit.text() == "deepseek-v4-pro"
+
+
+def test_auto_bet_panel_shows_trend_controls_only_for_trend_strategy():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
+    assert not panel._trend_parameters_widget.isVisibleTo(panel)
+
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("trend_following"))
+    assert panel._trend_parameters_widget.isVisibleTo(panel)
+
+
+def test_auto_bet_panel_target_select_all_and_clear_preserve_checked_ids():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel.set_available_groups([("g1", "群一"), ("g2", "群二")])
+
+    panel._select_all_target_groups()
+    assert panel.get_config().target_groups == ["g1", "g2"]
+
+    panel._clear_target_groups()
+    assert panel.get_config().target_groups == []
+
+
+def test_auto_bet_panel_play_controls_use_two_rows_of_four_columns():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    assert panel._play_grid.rowCount() == 2
+    assert panel._play_grid.columnCount() == 4
+
+
+def test_auto_bet_panel_lock_threshold_is_limited_to_twenty_to_sixty_seconds():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    assert panel._lock_spin.minimum() == 20
+    assert panel._lock_spin.maximum() == 60
+
+
+def test_auto_bet_panel_does_not_emit_start_for_empty_groups_or_invalid_odds(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    started = []
+    messages = []
+    panel.start_clicked.connect(lambda: started.append(True))
+    monkeypatch.setattr(
+        "app.ui.auto_bet_panel.QMessageBox.warning",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    panel._odds_edits["大"].setText("")
+
+    panel._on_start()
+
+    assert started == []
+    assert messages == [
+        "请至少选择一个目标群组\n请填写全部玩法的有效赔率\nAPI Key"
+    ]
