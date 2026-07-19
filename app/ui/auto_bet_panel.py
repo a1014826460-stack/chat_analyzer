@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QMessageBox,
+    QSizePolicy,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -63,7 +64,7 @@ def strategy_help_text() -> str:
         "   \u5982\u679c\u6700\u540e\u4e00\u6863\u4ecd\u7136\u5931\u8d25\uff0c\u7b56\u7565\u4f1a\u6682\u505c\uff0c\u7b49\u5f85\u4eba\u5de5\u5904\u7406\u3002\n\n"
         "3. \u529f\u80fd/\u73a9\u6cd5\u533a\u522b\n"
         "   \u5927\u5c0f\u3001\u5355\u53cc\uff1a\u9009\u62e9\u5176\u4e2d\u4e00\u4e2a\u6216\u591a\u4e2a\u65b9\u5411\u3002\n"
-        "   \u4e09\u95e8\uff1a\u901a\u5e38\u9009\u62e9 3 \u4e2a\u95e8\uff0c\u6bcf\u671f\u540c\u65f6\u53d1\u9001 3 \u6761\u4e0b\u6ce8\u3002\n"
+        "   \u4e09\u95e8\uff1a\u57fa\u4e8e\u6700\u8fd1\u5386\u53f2\u9891\u7387\uff0c\u81ea\u52a8\u6392\u9664\u5927\u5355\u3001\u5927\u53cc\u3001\u5c0f\u5355\u3001\u5c0f\u53cc\u4e2d\u51fa\u73b0\u6b21\u6570\u6700\u4f4e\u7684\u4e00\u95e8\uff0c\u518d\u4e0b\u6ce8\u5176\u4f59 3 \u95e8\u3002\n"
         "   \u4e0b\u6ce8\u53ea\u4f1a\u5728\u5f53\u671f\u5f00\u59cb 30 \u79d2\u540e\u5230\u5c01\u76d8\u524d\u7684\u65f6\u95f4\u7a97\u53e3\u5185\u6267\u884c\u3002"
     )
 
@@ -80,7 +81,7 @@ PLAY_PRESET_TYPES: dict[str, tuple[str, ...]] = {
     "parity": ("单", "双"),
     "small_odd_big_even": ("小单", "大双"),
     "small_even_big_odd": ("小双", "大单"),
-    "three_doors": ("小单", "大双", "小双"),
+    "three_doors": ("小单", "大双", "小双", "大单"),
 }
 
 
@@ -180,8 +181,8 @@ class AiConfigDialog(QDialog):
         index = self._provider_combo.findData(config.ai_provider)
         if index >= 0:
             self._provider_combo.setCurrentIndex(index)
-        self._base_url_edit.setText(config.ai_base_url)
-        self._model_edit.setText(config.ai_model)
+        self._base_url_edit.setText(config.ai_base_url or DEFAULT_AI_BASE_URL)
+        self._model_edit.setText(config.ai_model or DEFAULT_AI_MODEL)
         self._api_key_edit.setText(config.ai_api_key)
         self._history_spin.setValue(config.ai_history_count)
         self._confirm_check.setChecked(config.ai_require_confirmation)
@@ -271,6 +272,7 @@ class AutoBetPanel(QGroupBox):
         self._status_label.setStyleSheet(
             "color: #4caf50; font-weight: bold;" if running else "color: #9e9e9e;"
         )
+        self._sync_strategy_visibility()
 
     def append_log(self, record: InjectRecord) -> None:
         """Append a line to the run log."""
@@ -316,14 +318,18 @@ class AutoBetPanel(QGroupBox):
             ("已结算派彩", f"{state.total_payout:.2f}", "#2f5f85"),
             ("已结算盈亏", f"{state.total_profit:+.2f}", profit_color),
             ("命中率", f"{win_rate:.1%} ({state.win_rounds}/{state.total_rounds})", "#5f6b73"),
+            ("最大连中", str(state.max_consecutive_wins), "#198754"),
+            ("最大连输", str(state.max_consecutive_losses), "#c0392b"),
+            ("当前连中", str(state.consecutive_wins), "#198754"),
+            ("当前连输", str(state.consecutive_losses), "#c0392b"),
+            ("当前倍投档", str(state.current_step + 1), "#6f42c1"),
+            ("已结算", str(state.total_rounds), "#2f5f85"),
+            ("命中", str(state.win_rounds), "#198754"),
+            ("未中", str(state.lose_rounds), "#c0392b"),
             ("策略状态", status, "#c0392b" if state.halted else "#198754" if self._running else "#5f6b73"),
         )
         for label, (heading, text, text_color) in zip(self._runtime_stat_labels, values, strict=True):
             label.setText(f"<small>{heading}</small><br><b style='color:{text_color}'>{text}</b>")
-        self._stats_detail_label.setText(
-            f"当前倍投档: {state.current_step + 1} | 当前连输: {state.consecutive_losses} | "
-            f"已结算: {state.total_rounds} | 命中: {state.win_rounds} | 未中: {state.lose_rounds}"
-        )
         self._stats_label.setText(
             "待开奖下注: {pending:.2f} | 已结算下注: {staked:.2f} | 已结算派彩: {payout:.2f} | 已结算盈亏: {profit:.2f}".format(
                 pending=state.pending_staked,
@@ -331,6 +337,41 @@ class AutoBetPanel(QGroupBox):
                 payout=state.total_payout,
                 profit=state.total_profit,
             )
+        )
+        self._update_martingale_peak(state)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        if hasattr(self, "_runtime_stats_grid"):
+            self._relayout_runtime_stat_cards()
+        super().resizeEvent(event)
+
+    def _relayout_runtime_stat_cards(self) -> None:
+        """Arrange statistic cards according to the available panel width."""
+        # The panel width changes before child layouts receive their final geometry.
+        width = self.width()
+        columns = 4 if width >= 720 else 3 if width >= 540 else 2
+        if columns == self._runtime_stat_columns:
+            return
+
+        self._runtime_stat_columns = columns
+        while self._runtime_stats_grid.count():
+            self._runtime_stats_grid.takeAt(0)
+        for index, label in enumerate(self._runtime_stat_labels):
+            self._runtime_stats_grid.addWidget(label, index // columns, index % columns)
+
+        rows = (len(self._runtime_stat_labels) + columns - 1) // columns
+        self._runtime_stats_box.setMinimumHeight(rows * 58 + 42)
+
+    def _update_martingale_peak(self, state: AutoBetRuntimeState) -> None:
+        if state.martingale_peak_amount <= 0:
+            self._martingale_peak_label.setText("本次运行尚未发送固定倍投下注。")
+            return
+        timestamp = state.martingale_peak_at.strftime("%Y-%m-%d %H:%M:%S") if state.martingale_peak_at else "-"
+        self._martingale_peak_label.setText(
+            f"最高实际下注：第 {state.martingale_peak_step + 1} 档 / "
+            f"{self._format_amount(state.martingale_peak_amount)}\n"
+            f"首次达到时间：{timestamp} | 站点：{state.martingale_peak_site or '-'} | "
+            f"期数：{state.martingale_peak_period or '-'}"
         )
 
     def update_ai_statistics(self, summary: dict) -> None:
@@ -340,19 +381,32 @@ class AutoBetPanel(QGroupBox):
         streak_name = "连中" if streak.get("result") == "hit" else (
             "连错" if streak.get("result") == "miss" else "无连续记录"
         )
-        self._ai_stats_label.setText(
-            "AI 已结算 {settled} | 总体方向 {overall_direction:.1%} | 总体精确 {overall_exact:.1%}\n"
-            "近 {window} 条方向 {short_direction:.1%} | 近 {window} 条精确 {short_exact:.1%} | {streak_name} {streak_count}".format(
-                settled=int(summary.get("settled_count", 0)),
-                overall_direction=float(overall.get("direction_accuracy", 0.0)),
-                overall_exact=float(overall.get("exact_accuracy", 0.0)),
-                window=int(short.get("window", 20)),
-                short_direction=float(short.get("direction_accuracy", 0.0)),
-                short_exact=float(short.get("exact_accuracy", 0.0)),
-                streak_name=streak_name,
-                streak_count=int(streak.get("count", 0)),
-            )
+        settled_count = int(summary.get("settled_count", 0))
+        short_count = int(short.get("count", 0))
+        values = (
+            ("AI 已结算", str(settled_count), "#2f5f85"),
+            ("总体方向命中", self._format_accuracy(overall, "direction", settled_count), "#198754"),
+            ("总体精确命中", self._format_accuracy(overall, "exact", settled_count), "#2f5f85"),
+            (
+                f"近 {int(short.get('window', 20))} 条方向",
+                self._format_accuracy(short, "direction", short_count),
+                "#198754",
+            ),
+            (
+                f"近 {int(short.get('window', 20))} 条精确",
+                self._format_accuracy(short, "exact", short_count),
+                "#2f5f85",
+            ),
+            (streak_name, str(int(streak.get("count", 0))), "#198754" if streak_name == "连中" else "#c0392b"),
         )
+        for label, (heading, text, text_color) in zip(self._ai_stat_labels, values, strict=True):
+            label.setText(f"<small>{heading}</small><br><b style='color:{text_color}'>{text}</b>")
+
+    @staticmethod
+    def _format_accuracy(summary: dict, kind: str, count: int) -> str:
+        hits = int(summary.get(f"{kind}_hits", round(float(summary.get(f"{kind}_accuracy", 0.0)) * count)))
+        accuracy = float(summary.get(f"{kind}_accuracy", 0.0))
+        return f"{accuracy:.1%} ({hits}/{count})"
 
     @staticmethod
     def format_ai_history(records: list) -> str:
@@ -689,32 +743,59 @@ class AutoBetPanel(QGroupBox):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        stats_box = QGroupBox("实战统计")
-        stats_layout = QVBoxLayout(stats_box)
-        stats_grid = QGridLayout()
+        self._runtime_stats_box = QGroupBox("实战统计")
+        self._runtime_stats_box.setMinimumHeight(150)
+        stats_layout = QVBoxLayout(self._runtime_stats_box)
+        stats_layout.setContentsMargins(10, 14, 10, 10)
+        self._runtime_stats_grid = QGridLayout()
+        self._runtime_stats_grid.setContentsMargins(0, 0, 0, 0)
+        self._runtime_stats_grid.setHorizontalSpacing(8)
+        self._runtime_stats_grid.setVerticalSpacing(8)
+        self._runtime_stat_columns = -1
         self._runtime_stat_labels: list[QLabel] = []
+        for _ in range(14):
+            label = QLabel()
+            label.setMinimumWidth(104)
+            label.setMinimumHeight(50)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            label.setStyleSheet(
+                "background: #f7f9fb; border: 1px solid #dbe3ea; "
+                "border-radius: 6px; padding: 6px 8px;"
+            )
+            label.setTextFormat(Qt.RichText)
+            self._runtime_stat_labels.append(label)
+        stats_layout.addLayout(self._runtime_stats_grid)
+        # Retained for compatibility; the values now have dedicated statistic cards.
+        self._stats_detail_label = QLabel()
+        self._stats_detail_label.setVisible(False)
+        stats_layout.addWidget(self._stats_detail_label)
+        self._stats_label = QLabel("待开奖下注: 0.00 | 已结算下注: 0.00 | 已结算派彩: 0.00 | 已结算盈亏: 0.00")
+        self._stats_label.setVisible(False)
+        stats_layout.addWidget(self._stats_label)
+        layout.addWidget(self._runtime_stats_box)
+        self._relayout_runtime_stat_cards()
+
+        ai_stats_box = QGroupBox("AI 已结算统计")
+        ai_stats_layout = QGridLayout(ai_stats_box)
+        self._ai_stat_labels: list[QLabel] = []
         for index in range(6):
             label = QLabel()
             label.setMinimumWidth(116)
             label.setStyleSheet("background: #f7f9fb; border: 1px solid #dbe3ea; border-radius: 6px; padding: 6px;")
             label.setTextFormat(Qt.RichText)
-            self._runtime_stat_labels.append(label)
-            stats_grid.addWidget(label, index // 3, index % 3)
-        stats_layout.addLayout(stats_grid)
-        self._stats_detail_label = QLabel("当前倍投档: 1 | 当前连输: 0 | 已结算: 0 | 命中: 0 | 未中: 0")
-        self._stats_detail_label.setWordWrap(True)
-        stats_layout.addWidget(self._stats_detail_label)
-        self._stats_label = QLabel("待开奖下注: 0.00 | 已结算下注: 0.00 | 已结算派彩: 0.00 | 已结算盈亏: 0.00")
-        self._stats_label.setVisible(False)
-        stats_layout.addWidget(self._stats_label)
-        layout.addWidget(stats_box)
+            self._ai_stat_labels.append(label)
+            ai_stats_layout.addWidget(label, index // 3, index % 3)
+        layout.addWidget(ai_stats_box)
+        self.update_ai_statistics({})
 
-        self._ai_stats_label = QLabel(
-            "AI 已结算 0 | 总体方向 0.0% | 总体精确 0.0%\n"
-            "近 20 条方向 0.0% | 近 20 条精确 0.0% | 无连续记录 0"
-        )
-        self._ai_stats_label.setWordWrap(True)
-        layout.addWidget(self._ai_stats_label)
+        self._martingale_peak_box = QGroupBox("本次固定倍投峰值")
+        martingale_peak_layout = QVBoxLayout(self._martingale_peak_box)
+        self._martingale_peak_label = QLabel("本次运行尚未发送固定倍投下注。")
+        self._martingale_peak_label.setWordWrap(True)
+        martingale_peak_layout.addWidget(self._martingale_peak_label)
+        self._martingale_peak_box.setVisible(False)
+        layout.addWidget(self._martingale_peak_box)
+
         self._ai_history_button = QPushButton("查看 AI 预测历史")
         self._ai_history_button.clicked.connect(self.ai_history_clicked.emit)
         layout.addWidget(self._ai_history_button)
@@ -792,6 +873,7 @@ class AutoBetPanel(QGroupBox):
         self._trend_parameters_widget.setVisible(strategy_type == "trend_following")
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
+        self._martingale_peak_box.setVisible(is_martingale)
         self._ai_config_button.setVisible(True)
         self._mode_row_widget.setVisible(True)
         self._play_row_widget.setVisible(True)

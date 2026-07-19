@@ -1,8 +1,8 @@
 # StarTrace user release config.
 # Admin usually only edits these two values.
 
-$Version = "1.99.3"
-$Notes = "1.99.3 更新：新增 AI 量化下注反馈、站点选择记忆与 AI 配置校验，优化弱信号下注频率"
+$Version = "1.99.7"
+$Notes = "1.99.7 更新：实战统计卡片自适应布局，补充当前连中、连输、倍投档与结算明细"
 
 # Usually unchanged unless server, path, or domain changes.
 $Channel = "user"

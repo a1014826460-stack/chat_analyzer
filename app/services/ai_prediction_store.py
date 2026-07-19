@@ -32,6 +32,23 @@ CREATE TABLE IF NOT EXISTS ai_predictions (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_predictions_site_created
     ON ai_predictions(site, created_at DESC);
+CREATE TABLE IF NOT EXISTS auto_bet_sent_groups (
+    site               TEXT NOT NULL,
+    period             TEXT NOT NULL,
+    group_id           TEXT NOT NULL,
+    sent_at            TEXT NOT NULL,
+    PRIMARY KEY (site, period, group_id)
+);
+CREATE TABLE IF NOT EXISTS auto_bet_pending_rounds (
+    site               TEXT NOT NULL,
+    period             TEXT NOT NULL,
+    bets               TEXT NOT NULL,
+    strategy_type      TEXT NOT NULL,
+    martingale_step    INTEGER NOT NULL,
+    odds               TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    PRIMARY KEY (site, period)
+);
 """
 
 
@@ -54,6 +71,16 @@ class AiPredictionRecord:
     status: str
     created_at: datetime
     settled_at: datetime | None
+
+
+@dataclass(frozen=True)
+class AutoBetPendingRoundRecord:
+    site: str
+    period: str
+    bets: list[dict[str, Any]]
+    strategy_type: str
+    martingale_step: int
+    odds: dict[str, float]
 
 
 class AiPredictionStore:
@@ -107,6 +134,90 @@ class AiPredictionStore:
             cursor = con.execute(
                 "UPDATE ai_predictions SET sent = 1, status = 'sent' WHERE site = ? AND period = ?",
                 (site, period),
+            )
+            return cursor.rowcount > 0
+
+    def sent_group_ids(self, site: str, period: str) -> set[str]:
+        """Return group ids that already received a bet for this draw."""
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT group_id FROM auto_bet_sent_groups WHERE site = ? AND period = ?",
+                (str(site), str(period)),
+            ).fetchall()
+        return {str(row[0]) for row in rows if str(row[0])}
+
+    def all_sent_group_keys(self) -> set[tuple[str, str, str]]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT site, period, group_id FROM auto_bet_sent_groups"
+            ).fetchall()
+        return {(str(site), str(period), str(group_id)) for site, period, group_id in rows}
+
+    def record_sent_groups(self, site: str, period: str, group_ids: list[str] | set[str]) -> None:
+        """Persist successful sends to prevent a restart from resending the same draw."""
+        values = [
+            (str(site), str(period), str(group_id), datetime.now().isoformat())
+            for group_id in group_ids
+            if str(group_id)
+        ]
+        if not values:
+            return
+        with self._connect() as con:
+            con.executemany(
+                "INSERT OR IGNORE INTO auto_bet_sent_groups (site, period, group_id, sent_at) "
+                "VALUES (?, ?, ?, ?)",
+                values,
+            )
+
+    def record_pending_round(
+        self,
+        *,
+        site: str,
+        period: str,
+        bets: list[dict[str, Any]],
+        strategy_type: str,
+        martingale_step: int,
+        odds: dict[str, float],
+    ) -> None:
+        with self._connect() as con:
+            con.execute(
+                "INSERT INTO auto_bet_pending_rounds "
+                "(site, period, bets, strategy_type, martingale_step, odds, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(site, period) DO UPDATE SET "
+                "bets=excluded.bets, strategy_type=excluded.strategy_type, "
+                "martingale_step=excluded.martingale_step, odds=excluded.odds",
+                (
+                    str(site), str(period), json.dumps(bets, ensure_ascii=False), str(strategy_type),
+                    max(0, int(martingale_step)), json.dumps(odds, ensure_ascii=False), datetime.now().isoformat(),
+                ),
+            )
+
+    def pending_round_records(self) -> list[AutoBetPendingRoundRecord]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT site, period, bets, strategy_type, martingale_step, odds "
+                "FROM auto_bet_pending_rounds ORDER BY created_at ASC"
+            ).fetchall()
+        records: list[AutoBetPendingRoundRecord] = []
+        for site, period, bets, strategy_type, martingale_step, odds in rows:
+            raw_bets = _json_value(bets, [])
+            raw_odds = _json_value(odds, {})
+            records.append(AutoBetPendingRoundRecord(
+                site=str(site),
+                period=str(period),
+                bets=list(raw_bets) if isinstance(raw_bets, list) else [],
+                strategy_type=str(strategy_type),
+                martingale_step=max(0, int(martingale_step)),
+            odds=_float_mapping(raw_odds),
+            ))
+        return records
+
+    def settle_pending_round(self, site: str, period: str) -> bool:
+        with self._connect() as con:
+            cursor = con.execute(
+                "DELETE FROM auto_bet_pending_rounds WHERE site = ? AND period = ?",
+                (str(site), str(period)),
             )
             return cursor.rowcount > 0
 
@@ -287,6 +398,18 @@ def _json_value(raw: Any, default: Any) -> Any:
         return json.loads(str(raw))
     except (TypeError, json.JSONDecodeError):
         return default
+
+
+def _float_mapping(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    values: dict[str, float] = {}
+    for key, raw in value.items():
+        try:
+            values[str(key)] = float(raw)
+        except (TypeError, ValueError):
+            continue
+    return values
 
 
 def _to_db_bool(value: bool | None) -> int | None:

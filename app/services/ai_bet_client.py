@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from app.models.auto_bet import DrawResult, StrategyConfig, allowed_play_types_for_config
@@ -37,9 +41,19 @@ class AiRecommendation:
 
 
 class AiBetClient:
-    def __init__(self, opener: Callable[..., Any] | None = None, timeout_sec: int = 60) -> None:
+    _MAX_RETRIES = 2
+
+    def __init__(
+        self,
+        opener: Callable[..., Any] | None = None,
+        timeout_sec: int = 60,
+        retry_delay_sec: float = 1.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         self._opener = opener or urlopen
         self._timeout_sec = timeout_sec
+        self._retry_delay_sec = max(0.0, float(retry_delay_sec))
+        self._sleeper = sleeper or time.sleep
 
     def recommend(
         self,
@@ -47,6 +61,7 @@ class AiBetClient:
         results: list[DrawResult],
         quant_context: dict[str, Any] | None = None,
         performance_context: dict[str, Any] | None = None,
+        retry_notifier: Callable[[int, int, str], None] | None = None,
     ) -> AiRecommendation:
         url, headers, payload = self._build_request(config, results, quant_context, performance_context)
         request = Request(
@@ -56,8 +71,7 @@ class AiBetClient:
             method="POST",
         )
         try:
-            with self._opener(request, timeout=self._timeout_sec) as response:
-                raw_response = response.read().decode("utf-8")
+            raw_response = self._request_with_retry(request, retry_notifier).decode("utf-8")
             response_payload = json.loads(raw_response)
         except Exception as exc:
             raise AiBetClientError(f"AI 请求失败: {exc}") from exc
@@ -65,6 +79,43 @@ class AiBetClient:
             self._response_text(config.ai_provider, response_payload),
             allowed_play_types_for_config(config),
         )
+
+    def _request_with_retry(
+        self,
+        request: Request,
+        retry_notifier: Callable[[int, int, str], None] | None,
+    ) -> bytes:
+        for retry_index in range(self._MAX_RETRIES + 1):
+            try:
+                with self._opener(request, timeout=self._timeout_sec) as response:
+                    return response.read()
+            except Exception as exc:
+                if not self._is_transient_network_error(exc) or retry_index >= self._MAX_RETRIES:
+                    raise
+                attempt = retry_index + 1
+                if retry_notifier is not None:
+                    retry_notifier(attempt, self._MAX_RETRIES, self._error_summary(exc))
+                delay = self._retry_delay_sec * attempt
+                if delay > 0:
+                    self._sleeper(delay)
+        raise RuntimeError("AI 请求重试流程意外结束")
+
+    @staticmethod
+    def _is_transient_network_error(exc: Exception) -> bool:
+        if isinstance(exc, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionResetError, ConnectionAbortedError)):
+            return True
+        if isinstance(exc, URLError):
+            reason = exc.reason
+            return isinstance(
+                reason,
+                (ssl.SSLError, socket.timeout, TimeoutError, ConnectionResetError, ConnectionAbortedError),
+            )
+        return False
+
+    @staticmethod
+    def _error_summary(exc: Exception) -> str:
+        text = str(exc).strip().replace("\r", " ").replace("\n", " ")
+        return text or exc.__class__.__name__
 
     def _build_request(
         self,

@@ -4,10 +4,10 @@ rem 该文件会被 build.bat / build_user.bat / build_admin.bat 自动读取
 rem 对应更新私钥文件路径：keys\update_private.pem
 
 rem 发布版本号
-set "STARTRACE_VERSION=1.99.3"
+set "STARTRACE_VERSION=1.99.7"
 
 rem 构建编号，可按日期或批次递增
-set "STARTRACE_BUILD_ID=startrace_202607150001"
+set "STARTRACE_BUILD_ID=startrace_202607170003"
 
 rem 在线更新地址根域名
 set "STARTRACE_CDN_BASE_URL=https://www.twsaimahui.com"

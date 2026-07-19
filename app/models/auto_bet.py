@@ -191,8 +191,8 @@ class StrategyConfig:
             martingale_sequence=_ensure_float_list(data.get("martingale_sequence"), default=[]),
             odds=_ensure_odds(data.get("odds")),
             ai_provider=_ensure_ai_provider(data.get("ai_provider")),
-            ai_base_url=str(data.get("ai_base_url", DEFAULT_AI_BASE_URL) or "").strip(),
-            ai_model=str(data.get("ai_model", DEFAULT_AI_MODEL) or "").strip(),
+            ai_base_url=_ensure_nonempty_text(data.get("ai_base_url"), DEFAULT_AI_BASE_URL),
+            ai_model=_ensure_nonempty_text(data.get("ai_model"), DEFAULT_AI_MODEL),
             ai_api_key=str(data.get("ai_api_key", "") or "").strip(),
             ai_history_count=_ensure_ai_history_count(data.get("ai_history_count")),
             ai_require_confirmation=bool(data.get("ai_require_confirmation", False)),
@@ -251,6 +251,11 @@ def _ensure_ai_provider(value: object) -> str:
     return provider if provider in {"openai_compatible", "anthropic"} else DEFAULT_AI_PROVIDER
 
 
+def _ensure_nonempty_text(value: object, default: str) -> str:
+    text = str(value or "").strip()
+    return text or default
+
+
 def _ensure_lock_threshold_sec(value: object) -> int:
     try:
         return min(MAX_LOCK_THRESHOLD_SEC, max(MIN_LOCK_THRESHOLD_SEC, int(value)))
@@ -296,7 +301,15 @@ class AutoBetRuntimeState:
     total_rounds: int = 0
     win_rounds: int = 0
     lose_rounds: int = 0
+    consecutive_wins: int = 0
     consecutive_losses: int = 0
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
+    martingale_peak_step: int = 0
+    martingale_peak_amount: float = 0.0
+    martingale_peak_site: str = ""
+    martingale_peak_period: str = ""
+    martingale_peak_at: datetime | None = None
     halted: bool = False
     halt_reason: str = ""
 
@@ -306,6 +319,9 @@ class AutoBetRound:
     period: str
     site: str
     bets: list[BetDecision]
+    strategy_type: str = ""
+    martingale_step: int = 0
+    odds: dict[str, float] = field(default_factory=dict)
     settled: bool = False
     result: str = ""
     payout: float = 0.0

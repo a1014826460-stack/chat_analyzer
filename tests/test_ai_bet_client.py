@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import ssl
+from urllib.error import URLError
 
 import pytest
 
@@ -248,3 +250,50 @@ def test_ai_prompt_includes_the_selected_strategy_and_recommended_plays():
     assert '"策略": "趋势反打"' in prompt
     assert '"严格允许玩法": ["大", "单"]' in prompt
     assert '"连续阈值": 3' in prompt
+
+
+def test_ai_client_retries_transient_tls_eof_then_returns_recommendation():
+    from app.services.ai_bet_client import AiBetClient
+
+    calls = 0
+    retries = []
+
+    def fake_opener(request, timeout):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise URLError(ssl.SSLEOFError("EOF occurred in violation of protocol"))
+        return FakeResponse({"choices": [{"message": {"content": (
+            '{"action":"bet","play_type":"大","confidence":70,'
+            '"quant_rationale":"测试","reason":"测试"}'
+        )}}]})
+
+    recommendation = AiBetClient(opener=fake_opener, retry_delay_sec=0).recommend(
+        _config(play_types=["大"]),
+        [DrawResult(period="1", site="pc28", result="小单")],
+        retry_notifier=lambda attempt, maximum, error: retries.append((attempt, maximum, error)),
+    )
+
+    assert calls == 3
+    assert [(attempt, maximum) for attempt, maximum, _error in retries] == [(1, 2), (2, 2)]
+    assert all("EOF" in error for _attempt, _maximum, error in retries)
+    assert recommendation.play_type == "大"
+
+
+def test_ai_client_does_not_retry_non_network_errors():
+    from app.services.ai_bet_client import AiBetClient, AiBetClientError
+
+    calls = 0
+
+    def fake_opener(request, timeout):
+        nonlocal calls
+        calls += 1
+        raise ValueError("invalid request")
+
+    with pytest.raises(AiBetClientError, match="AI 请求失败"):
+        AiBetClient(opener=fake_opener, retry_delay_sec=0).recommend(
+            _config(),
+            [DrawResult(period="1", site="pc28", result="小单")],
+        )
+
+    assert calls == 1

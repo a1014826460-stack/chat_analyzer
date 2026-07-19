@@ -9,6 +9,34 @@ from app.services.draw_result_store import DrawResultStore
 from app.services.history_fetchers import HistoryFetcher, normalize_result_label
 
 
+def test_auto_bet_tick_uses_next_period_as_the_betting_target():
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.models.auto_bet import AutoBetRuntimeState, StrategyConfig
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = []
+    service = SimpleNamespace(
+        is_running=True,
+        runtime_state=AutoBetRuntimeState(),
+        config=StrategyConfig(site="pc28"),
+        tick=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    window = SimpleNamespace(
+        auto_bet_service=service,
+        auto_bet_panel=None,
+        _active_site="pc28",
+        _draw_infos={
+            "pc28": DrawInfo(current_period="3458210", next_period="3458211", next_countdown=120)
+        },
+    )
+
+    MainWindowDataMixin._on_auto_bet_tick(window)
+
+    assert calls[0][0][2] == "3458211"
+
+
 class FakeFetcher:
     def __init__(self, results: list[DrawResult] | None = None) -> None:
         self.results = results or []

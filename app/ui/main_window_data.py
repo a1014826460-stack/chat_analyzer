@@ -755,12 +755,12 @@ class MainWindowDataMixin:
         info = draw_infos.get(active_site) if isinstance(draw_infos, dict) else None
         if info is None:
             return
-        current_period = info.current_period or ""
+        target_period = info.next_period or ""
         countdown = info.next_countdown or 0
         service.tick(
             active_site,
             countdown,
-            current_period,
+            target_period,
             period_start_time=getattr(info, "start_time", None),
             period_end_time=getattr(info, "next_time", None),
         )

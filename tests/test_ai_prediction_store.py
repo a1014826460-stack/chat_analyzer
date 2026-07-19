@@ -34,6 +34,16 @@ def test_prediction_store_persists_json_and_updates_status(tmp_path):
     assert record.quant_snapshot == {"sample_size": 20}
 
 
+def test_prediction_store_persists_sent_groups_by_site_period_and_group(tmp_path):
+    store = AiPredictionStore(tmp_path / "predictions.db")
+
+    store.record_sent_groups("pc28", "100", ["g1", "g2", "g1"])
+
+    assert store.sent_group_ids("pc28", "100") == {"g1", "g2"}
+    assert store.sent_group_ids("pc28", "101") == set()
+    assert store.all_sent_group_keys() == {("pc28", "100", "g1"), ("pc28", "100", "g2")}
+
+
 def test_prediction_store_settles_sent_bets_and_calculates_dual_accuracy(tmp_path):
     store = AiPredictionStore(tmp_path / "predictions.db")
     _record(store, "100", "大")

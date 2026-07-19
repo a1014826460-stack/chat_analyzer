@@ -154,25 +154,73 @@ def test_martingale_strategy_bets_all_selected_doors_each_round():
     ]
 
 
-def test_three_doors_analyze_bets_selected_three_doors_with_current_step_amount():
+def test_three_doors_uses_history_to_choose_three_doors_with_current_step_amount():
     svc = AutoBetService()
     cfg = StrategyConfig(
         site="pc28",
         bet_mode="three_doors",
-        play_types=["小单", "大双", "小双"],
         martingale_sequence=[100, 200, 400],
         target_groups=["207191791"],
     )
     svc.apply_config(cfg)
     svc._runtime_state.current_step = 1
 
-    decisions = svc._analyze_many(cfg, Provider())
+    decisions = svc._analyze_many(cfg, Provider(recent=[
+        DrawResult("1", "pc28", "小单"),
+        DrawResult("2", "pc28", "大双"),
+        DrawResult("3", "pc28", "大单"),
+    ]))
 
     assert decisions == [
-        BetDecision(True, "小单", 200.0, "207191791", "三门下注"),
-        BetDecision(True, "大双", 200.0, "207191791", "三门下注"),
-        BetDecision(True, "小双", 200.0, "207191791", "三门下注"),
+        BetDecision(True, "小单", 200.0, "207191791", "三门历史频率排除小双(0次)"),
+        BetDecision(True, "大双", 200.0, "207191791", "三门历史频率排除小双(0次)"),
+        BetDecision(True, "大单", 200.0, "207191791", "三门历史频率排除小双(0次)"),
     ]
+
+
+def test_three_doors_excludes_the_least_frequent_composite_result():
+    svc = AutoBetService()
+    cfg = StrategyConfig(
+        site="pc28",
+        bet_mode="three_doors",
+        target_groups=["207191791"],
+        ai_history_count=20,
+    )
+    provider = Provider(recent=[
+        DrawResult("1", "pc28", "大单"),
+        DrawResult("2", "pc28", "大单"),
+        DrawResult("3", "pc28", "大双"),
+        DrawResult("4", "pc28", "小单"),
+    ])
+
+    decisions = svc._analyze_many(cfg, provider)
+
+    assert [decision.play_type for decision in decisions] == ["小单", "大双", "大单"]
+    assert all("排除小双(0次)" in decision.reason for decision in decisions)
+
+
+def test_three_doors_uses_fixed_order_to_break_frequency_ties():
+    svc = AutoBetService()
+    cfg = StrategyConfig(site="pc28", bet_mode="three_doors", target_groups=["g1"])
+    provider = Provider(recent=[
+        DrawResult("1", "pc28", "大单"),
+        DrawResult("2", "pc28", "大双"),
+        DrawResult("3", "pc28", "小单"),
+        DrawResult("4", "pc28", "小双"),
+    ])
+
+    decisions = svc._analyze_many(cfg, provider)
+
+    assert [decision.play_type for decision in decisions] == ["大双", "小双", "大单"]
+    assert all("排除小单(1次)" in decision.reason for decision in decisions)
+
+
+def test_three_doors_skips_without_a_recognized_composite_history_result():
+    svc = AutoBetService()
+    cfg = StrategyConfig(site="pc28", bet_mode="three_doors", target_groups=["g1"])
+    provider = Provider(recent=[DrawResult("1", "pc28", "未知")])
+
+    assert svc._analyze_many(cfg, provider) == []
 
 
 def test_two_door_mode_uses_current_step_amount_and_selected_allowed_play():
@@ -231,7 +279,7 @@ def test_settle_winning_round_resets_martingale_and_updates_profit():
     assert state.halted is False
 
 
-def test_settle_losing_last_martingale_step_halts_until_manual_reset():
+def test_settle_losing_last_martingale_step_returns_to_first_step():
     svc = AutoBetService()
     cfg = StrategyConfig(
         strategy_type="martingale",
@@ -247,14 +295,63 @@ def test_settle_losing_last_martingale_step_halts_until_manual_reset():
     state = svc.runtime_state
 
     assert settled == 1
-    assert state.current_step == 1
+    assert state.current_step == 0
     assert state.total_staked == 200
     assert state.total_payout == 0
     assert state.total_profit == -200
     assert state.lose_rounds == 1
     assert state.consecutive_losses == 1
-    assert state.halted is True
-    assert "最后一档" in state.halt_reason
+    assert state.halted is False
+
+
+def test_runtime_state_tracks_current_and_maximum_win_loss_streaks():
+    svc = AutoBetService()
+    svc.apply_config(StrategyConfig(site="pc28", odds={"大": 2.0}))
+    results = [("1001", "大单"), ("1002", "大双"), ("1003", "小单"), ("1004", "小双")]
+
+    for period, outcome in results:
+        svc._record_round("pc28", period, [BetDecision(True, "大", 10, "g1", "test")])
+        assert svc.settle_pending_rounds(Provider(by_period={period: DrawResult(period, "pc28", outcome)})) == 1
+
+    state = svc.runtime_state
+    assert state.consecutive_wins == 0
+    assert state.consecutive_losses == 2
+    assert state.max_consecutive_wins == 2
+    assert state.max_consecutive_losses == 2
+    assert state.halt_reason == ""
+
+
+def test_settle_round_waits_for_a_result_matching_its_site_and_period():
+    svc = AutoBetService()
+    svc.apply_config(StrategyConfig(site="pc28", odds={"大": 2.0}))
+    svc._record_round("pc28", "1006", [BetDecision(True, "大", 10, "g1", "test")])
+
+    settled = svc.settle_pending_rounds(Provider(by_period={
+        "1006": DrawResult("1005", "macao", "大单"),
+    }))
+
+    state = svc.runtime_state
+    assert settled == 0
+    assert state.pending_staked == 10
+    assert state.total_rounds == 0
+    assert any("开奖结果不匹配" in record.content for record in svc.get_logs())
+
+
+def test_settlement_log_includes_site_period_result_and_martingale_step_change():
+    svc = AutoBetService()
+    svc.apply_config(StrategyConfig(
+        strategy_type="martingale", site="pc28", martingale_sequence=[10, 20], odds={"大": 2.0},
+    ))
+    svc._record_round("pc28", "1007", [BetDecision(True, "大", 10, "g1", "test")])
+
+    assert svc.settle_pending_rounds(Provider(by_period={"1007": DrawResult("1007", "pc28", "大单")})) == 1
+
+    record = [record for record in svc.get_logs() if record.content.startswith("结算：")][-1]
+    assert record.site == "pc28"
+    assert record.period == "1007"
+    assert "实际 大单" in record.content
+    assert "大10=命中" in record.content
+    assert "倍投档位 1→1" in record.content
 
 
 def test_flat_ai_loss_does_not_advance_or_halt_the_martingale_sequence():
@@ -421,6 +518,67 @@ def test_martingale_strategy_creates_decisions_for_all_target_groups():
     ]
 
 
+def test_tick_places_dynamic_three_doors_without_calling_ai_and_excludes_target_history():
+    service = AutoBetService()
+    sender = Sender()
+    client = AiClient()
+    service.apply_config(StrategyConfig(
+        strategy_type="flat", site="pc28", bet_mode="three_doors", target_groups=["g1"],
+        ai_history_count=20,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(Provider(recent=[
+        DrawResult("998", "pc28", "小单"),
+        DrawResult("999", "pc28", "大双"),
+        DrawResult("1000", "pc28", "大单"),
+        DrawResult("1001", "pc28", "小双"),
+    ]))
+    service.set_ai_client(client)
+    service.start()
+
+    _ai_tick(service)
+
+    assert sender.sent == [("g1", "小单", 10.0), ("g1", "大双", 10.0), ("g1", "大单", 10.0)]
+    assert client.calls == []
+
+
+def test_dynamic_three_doors_refreshes_history_then_logs_settlement_for_the_bet_period():
+    class RefreshingProvider(Provider):
+        def __init__(self):
+            super().__init__(recent=[
+                DrawResult("998", "pc28", "小单"),
+                DrawResult("999", "pc28", "大双"),
+                DrawResult("1000", "pc28", "大单"),
+            ])
+            self.refresh_calls = []
+
+        def refresh_recent_results(self, site: str, count: int):
+            self.refresh_calls.append((site, count))
+            if not any(result.period == "1001" for result in self.recent):
+                self.recent.append(DrawResult("1001", "pc28", "小双"))
+            self.by_period["1001"] = DrawResult("1001", "pc28", "小双")
+            return 1
+
+    service = AutoBetService()
+    sender = Sender()
+    provider = RefreshingProvider()
+    service.apply_config(StrategyConfig(
+        strategy_type="flat", site="pc28", bet_mode="three_doors", target_groups=["g1"],
+        ai_history_count=20,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(provider)
+    service.start()
+
+    _ai_tick(service)
+    service.tick("pc28", 120, "1002")
+
+    assert provider.refresh_calls == [("pc28", 21), ("pc28", 21)]
+    settlement = [record for record in service.get_logs() if record.period == "1001" and record.content.startswith("结算：")]
+    assert len(settlement) == 1
+    assert "实际 小双" in settlement[0].content
+
+
 def test_tick_deduplicates_by_site_period_and_group_not_period_only():
     svc = AutoBetService()
     sender = Sender()
@@ -448,6 +606,103 @@ def test_tick_deduplicates_by_site_period_and_group_not_period_only():
     svc.tick("pc28", current_period="20260705001", **kwargs)
 
     assert _wait_until(lambda: sender.sent == [("g1", "大", 100.0), ("g2", "大", 100.0)])
+
+
+def test_restart_does_not_resend_a_persisted_site_period_group(tmp_path):
+    from app.services.ai_prediction_store import AiPredictionStore
+
+    sender = Sender()
+    store = AiPredictionStore(tmp_path / "ai_predictions.db")
+    store.record_sent_groups("pc28", "1001", ["g1"])
+    service = AutoBetService()
+    service.apply_config(StrategyConfig(
+        strategy_type="flat", site="pc28", target_groups=["g1", "g2"], bet_amount=100,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(Provider(recent=[DrawResult("1", "pc28", "小单")]))
+    service.set_ai_client(AiClient(play_type="大"))
+    service.set_ai_prediction_store(store)
+
+    service.start()
+    _ai_tick(service)
+
+    assert _wait_until(lambda: sender.sent == [("g2", "大", 100.0)])
+    assert store.sent_group_ids("pc28", "1001") == {"g1", "g2"}
+
+
+def test_restart_restores_an_unsettled_round_and_its_original_odds(tmp_path):
+    from app.services.ai_prediction_store import AiPredictionStore
+
+    store = AiPredictionStore(tmp_path / "ai_predictions.db")
+    first = AutoBetService()
+    first.apply_config(StrategyConfig(
+        strategy_type="martingale", site="pc28", martingale_sequence=[10, 20], odds={"大": 2.0},
+    ))
+    first._runtime_state.current_step = 1
+    first.set_ai_prediction_store(store)
+    first._record_round("pc28", "1008", [BetDecision(True, "大", 20, "g1", "test")])
+
+    restarted = AutoBetService()
+    restarted.apply_config(StrategyConfig(strategy_type="flat", site="pc28", odds={"大": 1.0}))
+    restarted.set_ai_prediction_store(store)
+    restarted.start()
+
+    assert restarted.runtime_state.pending_staked == 20
+    assert restarted.runtime_state.current_step == 1
+    assert restarted.settle_pending_rounds(Provider(by_period={"1008": DrawResult("1008", "pc28", "大单")})) == 1
+    assert restarted.runtime_state.total_payout == 40
+    assert restarted.runtime_state.total_profit == 20
+    assert restarted.runtime_state.current_step == 0
+
+
+def test_restart_restores_the_next_martingale_step_after_a_losing_round(tmp_path):
+    from app.services.ai_prediction_store import AiPredictionStore
+
+    store = AiPredictionStore(tmp_path / "ai_predictions.db")
+    first = AutoBetService()
+    first.apply_config(StrategyConfig(
+        strategy_type="martingale", site="pc28", martingale_sequence=[10, 20], odds={"大": 2.0},
+    ))
+    first.set_ai_prediction_store(store)
+    first._record_round("pc28", "1009", [BetDecision(True, "大", 10, "g1", "test")])
+
+    restarted = AutoBetService()
+    restarted.apply_config(StrategyConfig(
+        strategy_type="martingale", site="pc28", martingale_sequence=[10, 20], odds={"大": 2.0},
+    ))
+    restarted.set_ai_prediction_store(store)
+    restarted.start()
+
+    assert restarted.settle_pending_rounds(Provider(by_period={"1009": DrawResult("1009", "pc28", "小单")})) == 1
+    assert restarted.runtime_state.current_step == 1
+
+
+def test_martingale_runtime_tracks_the_highest_actual_amount_with_context():
+    service = AutoBetService()
+    service.apply_config(StrategyConfig(
+        strategy_type="martingale", site="pc28", martingale_sequence=[10, 20, 40],
+    ))
+    service._runtime_state.current_step = 2
+
+    service._record_round("pc28", "1010", [BetDecision(True, "大", 40, "g1", "test")])
+
+    state = service.runtime_state
+    assert state.martingale_peak_step == 2
+    assert state.martingale_peak_amount == 40
+    assert state.martingale_peak_site == "pc28"
+    assert state.martingale_peak_period == "1010"
+    assert state.martingale_peak_at is not None
+
+
+def test_non_martingale_round_does_not_record_a_martingale_peak():
+    service = AutoBetService()
+    service.apply_config(StrategyConfig(strategy_type="flat", site="pc28"))
+
+    service._record_round("pc28", "1011", [BetDecision(True, "大", 100, "g1", "test")])
+
+    state = service.runtime_state
+    assert state.martingale_peak_amount == 0
+    assert state.martingale_peak_period == ""
 
 
 def test_inject_log_records_site_period_and_group_name_when_available():
@@ -519,7 +774,7 @@ class AiClient:
         self.confidence = confidence
         self.calls = []
 
-    def recommend(self, config, results, quant_context=None, performance_context=None):
+    def recommend(self, config, results, quant_context=None, performance_context=None, retry_notifier=None):
         from app.services.ai_bet_client import AiRecommendation
 
         self.calls.append((config.site, list(results), quant_context, performance_context))
@@ -530,6 +785,13 @@ class AiClient:
             quant_rationale="测试量化依据",
             reason=self.reason,
         )
+
+
+class RetryingAiClient(AiClient):
+    def recommend(self, config, results, quant_context=None, performance_context=None, retry_notifier=None):
+        if retry_notifier is not None:
+            retry_notifier(1, 2, "<urlopen error simulated TLS EOF>")
+        return super().recommend(config, results, quant_context, performance_context, retry_notifier)
 
 
 def _wait_until(condition, timeout: float = 1.0) -> bool:
@@ -630,6 +892,19 @@ def test_ai_strategy_auto_sends_after_one_valid_suggestion_when_confirmation_is_
     assert len(client.calls) == 1
 
 
+def test_ai_network_retry_is_shown_in_the_auto_bet_log():
+    service, sender, _client = _started_ai_service(require_confirmation=False)
+    service.set_ai_client(RetryingAiClient())
+
+    _ai_tick(service)
+
+    assert _wait_until(lambda: len(sender.sent) == 2)
+    retry_log = next(record for record in service.get_logs() if "AI 请求重试（第 1/2 次）" in record.content)
+    assert retry_log.site == "pc28"
+    assert retry_log.period == "1001"
+    assert "TLS EOF" in retry_log.content
+
+
 def test_ai_strategy_does_not_repeat_a_group_already_bet_by_another_strategy():
     service, sender, _client = _started_ai_service(require_confirmation=False)
     service._bet_keys.add(("pc28", "1001", "g1"))
@@ -713,11 +988,56 @@ def test_ai_period_refreshes_history_settles_previous_prediction_and_passes_feed
     _ai_tick(service)
 
     assert _wait_until(lambda: len(client.calls) == 1)
-    assert provider.refresh_calls == [("pc28", 50)]
+    assert provider.refresh_calls == [("pc28", 51)]
     _site, _history, quant_context, performance_context = client.calls[0]
     assert quant_context["sample_size"] == 1
     assert performance_context["overall"]["direction_accuracy"] == 1.0
     assert set(performance_context) == {"overall", "short", "recent_predictions"}
+
+
+def test_ai_history_excludes_the_target_period_and_future_periods():
+    service = AutoBetService()
+    sender = Sender()
+    client = AiClient(play_type="大")
+    provider = Provider(recent=[
+        DrawResult("998", "pc28", "小单"),
+        DrawResult("999", "pc28", "大双"),
+        DrawResult("1000", "pc28", "小双"),
+        DrawResult("1001", "pc28", "大单"),
+        DrawResult("1002", "pc28", "小单"),
+    ])
+    service.apply_config(StrategyConfig(
+        strategy_type="flat", site="pc28", target_groups=["g1"], ai_history_count=50,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(provider)
+    service.set_ai_client(client)
+    service.start()
+
+    _ai_tick(service)
+
+    assert _wait_until(lambda: len(client.calls) == 1)
+    assert [result.period for result in client.calls[0][1]] == ["998", "999", "1000"]
+    assert client.calls[0][2]["sample_size"] == 3
+    assert any("已排除 2 条" in record.content for record in service.get_logs())
+
+
+def test_ai_prediction_settlement_rejects_a_mismatched_site_or_period(tmp_path):
+    from app.services.ai_prediction_store import AiPredictionStore
+
+    store = AiPredictionStore(tmp_path / "ai_predictions.db")
+    store.record_prediction(
+        site="pc28", period="999", action="bet", play_type="大", confidence=80,
+        quant_rationale="test", reason="test", model="model", sent=True, status="sent",
+    )
+    service = AutoBetService()
+    provider = Provider(by_period={"999": DrawResult("998", "macao", "大单")})
+
+    service.set_ai_prediction_store(store)
+
+    assert service._settle_ai_predictions(provider, "pc28") == 0
+    assert store.recent_records("pc28", 1)[0].actual_result == ""
+    assert any("AI 预测结算等待" in record.content for record in service.get_logs())
 
 
 def test_ai_low_confidence_is_persisted_and_skipped_without_sending(tmp_path):
@@ -858,7 +1178,7 @@ def test_flat_strategy_uses_ai_play_with_the_fixed_amount():
     _ai_tick(service)
 
     assert _wait_until(lambda: sender.sent == [("g1", "小", 88.0)])
-    assert any("AI 正在分析（超时 60 秒）" in record.content for record in service.get_logs())
+    assert any("AI 正在分析" in record.content for record in service.get_logs())
 
 
 def test_flat_strategy_ignores_a_saved_martingale_sequence_for_its_amount():

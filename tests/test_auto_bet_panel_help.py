@@ -300,11 +300,44 @@ def test_auto_bet_panel_displays_ai_accuracy_summary():
         "streak": {"result": "hit", "count": 3},
     })
 
-    text = panel._ai_stats_label.text()
-    assert "总体方向 70.0%" in text
-    assert "总体精确 40.0%" in text
-    assert "近 20 条方向 62.5%" in text
-    assert "连中 3" in text
+    card_text = "\n".join(label.text() for label in panel._ai_stat_labels)
+    assert "总体方向命中" in card_text
+    assert "70.0% (7/10)" in card_text
+    assert "总体精确命中" in card_text
+    assert "40.0% (4/10)" in card_text
+    assert "近 20 条方向" in card_text
+    assert "62.5% (5/8)" in card_text
+    assert "连中" in card_text
+    assert "3" in card_text
+
+
+def test_auto_bet_panel_shows_martingale_peak_only_for_martingale_strategy():
+    from datetime import datetime
+    from PySide6.QtWidgets import QApplication
+    from app.models.auto_bet import AutoBetRuntimeState
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("martingale"))
+    panel.update_runtime_state(AutoBetRuntimeState(
+        martingale_peak_step=9,
+        martingale_peak_amount=256,
+        martingale_peak_site="pc28",
+        martingale_peak_period="3458137",
+        martingale_peak_at=datetime(2026, 7, 17, 15, 10, 52),
+    ))
+
+    assert panel._martingale_peak_box.isVisibleTo(panel)
+    text = panel._martingale_peak_label.text()
+    assert "第 10 档" in text
+    assert "256" in text
+    assert "2026-07-17 15:10:52" in text
+    assert "pc28" in text
+    assert "3458137" in text
+
+    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
+    assert not panel._martingale_peak_box.isVisibleTo(panel)
 
 
 def test_auto_bet_panel_labels_pending_and_settled_betting_statistics():
@@ -326,6 +359,61 @@ def test_auto_bet_panel_labels_pending_and_settled_betting_statistics():
     assert "已结算下注: 40.00" in text
     assert "已结算盈亏: 39.20" in text
 
+
+def test_auto_bet_panel_displays_session_maximum_win_and_loss_streaks():
+    from PySide6.QtWidgets import QApplication
+    from app.models.auto_bet import AutoBetRuntimeState
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel.update_runtime_state(AutoBetRuntimeState(
+        consecutive_wins=1,
+        consecutive_losses=0,
+        max_consecutive_wins=4,
+        max_consecutive_losses=3,
+    ))
+
+    text = "\n".join(label.text() for label in panel._runtime_stat_labels)
+    assert "最大连中" in text
+    assert "最大连输" in text
+    assert "当前连中" in text
+    assert "当前连输" in text
+    assert "当前倍投档" in text
+    assert "已结算" in text
+    assert "命中" in text
+    assert "未中" in text
+    assert "4" in text
+    assert "3" in text
+    assert panel._stats_detail_label.isHidden()
+
+
+def test_auto_bet_panel_reflows_runtime_stat_cards_for_narrow_widths():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    panel.show()
+
+    panel.resize(800, 900)
+    app.processEvents()
+    assert panel._runtime_stat_columns == 4
+
+    panel.resize(460, 900)
+    app.processEvents()
+    assert panel._runtime_stat_columns == 2
+
+
+def test_auto_bet_panel_runtime_statistics_reserve_full_two_row_height():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    assert panel._runtime_stats_box.minimumHeight() >= 150
+    assert panel._runtime_stat_labels[0].minimumHeight() >= 48
 
 def test_auto_bet_panel_formats_recent_ai_prediction_history():
     from datetime import datetime
@@ -446,7 +534,7 @@ def test_play_preset_replaces_checked_plays_with_its_corresponding_pair():
     assert panel.get_config().play_types == ["单", "双"]
 
 
-def test_three_door_preset_replaces_checked_plays_with_the_first_three_doors():
+def test_three_door_preset_selects_all_four_candidates_for_dynamic_exclusion():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
@@ -454,7 +542,7 @@ def test_three_door_preset_replaces_checked_plays_with_the_first_three_doors():
     panel = AutoBetPanel()
     panel._mode_combo.setCurrentIndex(panel._mode_combo.findData("three_doors"))
 
-    assert panel.get_config().play_types == ["小单", "大双", "小双"]
+    assert panel.get_config().play_types == ["大单", "小单", "大双", "小双"]
 
 
 def test_auto_bet_panel_uses_deepseek_anthropic_ai_defaults():

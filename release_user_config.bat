@@ -2,8 +2,8 @@
 rem StarTrace user release config.
 rem Admin usually only edits the first two values: version and notes.
 
-set "STARTRACE_RELEASE_VERSION=1.99.3"
-set "STARTRACE_RELEASE_NOTES=1.99.3 更新：新增 AI 量化下注反馈、站点选择记忆与 AI 配置校验，优化弱信号下注频率"
+set "STARTRACE_RELEASE_VERSION=1.99.7"
+set "STARTRACE_RELEASE_NOTES=1.99.6 更新：自动下注使用下期期号，AI 历史数据严格过滤目标期及未来期"
 
 rem Usually unchanged unless server, path, or domain changes.
 set "STARTRACE_RELEASE_CHANNEL=user"

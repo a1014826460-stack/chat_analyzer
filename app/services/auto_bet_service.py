@@ -12,6 +12,9 @@ from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, 
 logger = logging.getLogger(__name__)
 
 
+THREE_DOOR_PLAYS = ("\u5c0f\u5355", "\u5927\u53cc", "\u5c0f\u53cc", "\u5927\u5355")
+
+
 class BetMessageSender(Protocol):
     def inject_bet(self, group_id: str, play_type: str, amount: float) -> bool: ...
 
@@ -23,6 +26,7 @@ class AiRecommendationClient(Protocol):
         results: list,
         quant_context: dict[str, Any] | None = None,
         performance_context: dict[str, Any] | None = None,
+        retry_notifier: Callable[[int, int, str], None] | None = None,
     ) -> object: ...
 
 
@@ -141,6 +145,10 @@ class AutoBetService:
             self._rounds = []
             self._last_bet_period = ""
             self._bet_keys.clear()
+            prediction_store = self._ai_prediction_store
+        self._restore_persisted_bet_keys(prediction_store)
+        self._restore_pending_rounds(prediction_store)
+        with self._lock:
             self._ai_attempted_keys.clear()
             self._ai_pending.clear()
             self._ai_skipped_keys.clear()
@@ -217,6 +225,10 @@ class AutoBetService:
                 self._log_ai_waiting_for_window(site, current_period, countdown_sec)
             return
 
+        if self._effective_bet_mode(cfg) == "three_doors":
+            self._process_three_doors_period(site, current_period, cfg, injector, result_provider)
+            return
+
         if cfg.strategy_type in {"flat", "martingale", "trend_following", "ai"}:
             if not self._ai_strategy_is_eligible(site, current_period, cfg, result_provider):
                 return
@@ -244,11 +256,63 @@ class AutoBetService:
             for group_id in {decision.group_id for decision in active_decisions}:
                 self._bet_keys.add((site, current_period, group_id))
             self._last_bet_period = current_period
+        self._record_persisted_bet_keys(site, current_period, [
+            decision.group_id for decision in active_decisions
+        ])
         self._record_round(site, current_period, active_decisions)
 
     # ------------------------------------------------------------------
     # Strategy: Trend Following
     # ------------------------------------------------------------------
+
+    def _process_three_doors_period(
+        self,
+        site: str,
+        period: str,
+        cfg: StrategyConfig,
+        injector: BetMessageSender,
+        result_provider: DrawResultProvider | None,
+    ) -> None:
+        if not period or result_provider is None:
+            return
+        refresh = getattr(result_provider, "refresh_recent_results", None)
+        if callable(refresh):
+            refresh(site, cfg.ai_history_count + 1)
+        self.settle_pending_rounds(result_provider)
+        doors, excluded, excluded_count = self._three_door_plays(cfg, result_provider, target_period=period)
+        if len(doors) != 3:
+            self._add_ai_status_log(site, period, "三门下注跳过：没有可用的复合玩法历史记录", success=False)
+            return
+        amount = self._current_bet_amount(cfg) if cfg.strategy_type == "martingale" else float(cfg.bet_amount)
+        reason = f"三门历史频率排除{excluded}({excluded_count}次)"
+        decisions = [
+            BetDecision(True, play, amount, group_id, reason)
+            for group_id in cfg.target_groups
+            for play in doors
+        ]
+        with self._lock:
+            processed_groups = {group_id for s, p, group_id in self._bet_keys if s == site and p == period}
+        decisions = [decision for decision in decisions if decision.group_id not in processed_groups]
+        if not decisions:
+            return
+        sent_decisions: list[BetDecision] = []
+        for group_id, group_decisions in self._group_decisions(decisions).items():
+            if self._execute_group(group_id, group_decisions, injector, site=site, period=period):
+                sent_decisions.extend(group_decisions)
+        if not sent_decisions:
+            return
+        with self._lock:
+            for group_id in {decision.group_id for decision in sent_decisions}:
+                self._bet_keys.add((site, period, group_id))
+            self._last_bet_period = period
+        self._record_persisted_bet_keys(site, period, [decision.group_id for decision in sent_decisions])
+        self._record_round(site, period, sent_decisions)
+        self._add_ai_status_log(
+            site,
+            period,
+            f"三门自动下注：{'、'.join(doors)}；{reason}",
+            success=True,
+        )
 
     def _ai_strategy_is_eligible(
         self,
@@ -308,11 +372,17 @@ class AutoBetService:
             return self._martingale_decisions(cfg, mode, amount, target_groups)
 
         if mode == "three_doors":
-            doors = [play for play in cfg.play_types if play in {"\u5c0f\u5355", "\u5927\u53cc", "\u5c0f\u53cc", "\u5927\u5355"}]
+            doors, excluded, excluded_count = self._three_door_plays(cfg, result_provider)
             if len(doors) != 3:
                 return []
             return [
-                BetDecision(True, play, amount, group_id, "\u4e09\u95e8\u4e0b\u6ce8")
+                BetDecision(
+                    True,
+                    play,
+                    amount,
+                    group_id,
+                    f"\u4e09\u95e8\u5386\u53f2\u9891\u7387\u6392\u9664{excluded}({excluded_count}\u6b21)",
+                )
                 for group_id in target_groups
                 for play in doors
             ]
@@ -362,13 +432,35 @@ class AutoBetService:
         plays = self._allowed_play_types_for_mode(cfg, mode)
         if not plays:
             return []
-        if mode == "three_doors" and len(plays) != 3:
-            return []
         return [
             BetDecision(True, play, amount, group_id, "\u56fa\u5b9a\u500d\u6295")
             for group_id in target_groups
             for play in plays
         ]
+
+    @staticmethod
+    def _three_door_plays(
+        cfg: StrategyConfig,
+        result_provider: DrawResultProvider | None,
+        *,
+        target_period: str = "",
+    ) -> tuple[list[str], str, int]:
+        if result_provider is None:
+            return [], "", 0
+        results = result_provider.get_recent_results(cfg.site, cfg.ai_history_count + 1)
+        if target_period:
+            results = [
+                result for result in results
+                if AutoBetService._history_period_precedes_target(result.period, target_period)
+            ]
+        counts = {door: 0 for door in THREE_DOOR_PLAYS}
+        for result in results:
+            if result.result in counts:
+                counts[result.result] += 1
+        if not any(counts.values()):
+            return [], "", 0
+        excluded = min(THREE_DOOR_PLAYS, key=lambda door: (counts[door], THREE_DOOR_PLAYS.index(door)))
+        return [door for door in THREE_DOOR_PLAYS if door != excluded], excluded, counts[excluded]
 
     # ------------------------------------------------------------------
     # Strategy: AI Recommendation
@@ -400,9 +492,10 @@ class AutoBetService:
             return
 
         try:
+            history_fetch_count = cfg.ai_history_count + 1
             refresh = getattr(result_provider, "refresh_recent_results", None)
             if callable(refresh):
-                refreshed = refresh(site, cfg.ai_history_count)
+                refreshed = refresh(site, history_fetch_count)
                 if not refreshed:
                     self._add_ai_status_log(
                         site, period,
@@ -411,7 +504,20 @@ class AutoBetService:
                     )
             self._settle_ai_predictions(result_provider, site)
             self.settle_pending_rounds(result_provider)
-            results = result_provider.get_recent_results(site, cfg.ai_history_count)
+            unfiltered_results = result_provider.get_recent_results(site, history_fetch_count)
+            eligible_results = [
+                result for result in unfiltered_results
+                if self._history_period_precedes_target(result.period, period)
+            ]
+            excluded_count = len(unfiltered_results) - len(eligible_results)
+            results = eligible_results[-cfg.ai_history_count:]
+            if excluded_count:
+                self._add_ai_status_log(
+                    site,
+                    period,
+                    f"AI 历史过滤：已排除 {excluded_count} 条期号大于等于目标期 {period} 的开奖记录",
+                    success=True,
+                )
         except Exception as exc:
             with self._lock:
                 self._ai_skipped_keys.add(key)
@@ -437,13 +543,46 @@ class AutoBetService:
             {"period": str(result.period), "result": str(result.result)}
             for result in results
         ]
-        self._add_ai_status_log(site, period, "AI 正在分析（超时 60 秒）", success=True)
+        self._add_ai_status_log(site, period, "AI 正在分析", success=True)
         future = self._ai_executor.submit(
-            client.recommend, cfg, results, quant_context, performance_context
+            self._recommend_with_retry_logging,
+            client,
+            site,
+            period,
+            cfg,
+            results,
+            quant_context,
+            performance_context,
         )
         future.add_done_callback(
             lambda done, s=site, p=period, c=cfg, sender=injector, h=history_snapshot, q=quant_context:
-                self._handle_ai_recommendation(s, p, c, sender, done, h, q)
+            self._handle_ai_recommendation(s, p, c, sender, done, h, q)
+        )
+
+    def _recommend_with_retry_logging(
+        self,
+        client: AiRecommendationClient,
+        site: str,
+        period: str,
+        cfg: StrategyConfig,
+        results: list,
+        quant_context: dict[str, Any],
+        performance_context: dict[str, Any],
+    ) -> object:
+        def on_retry(attempt: int, maximum: int, error: str) -> None:
+            self._add_ai_status_log(
+                site,
+                period,
+                f"AI 请求重试（第 {attempt}/{maximum} 次）：{error}",
+                success=False,
+            )
+
+        return client.recommend(
+            cfg,
+            results,
+            quant_context,
+            performance_context,
+            retry_notifier=on_retry,
         )
 
     def _log_ai_waiting_for_window(self, site: str, period: str, countdown_sec: int) -> None:
@@ -568,6 +707,14 @@ class AutoBetService:
                 success=True,
             )
 
+    @staticmethod
+    def _history_period_precedes_target(history_period: object, target_period: object) -> bool:
+        history_text = str(history_period or "").strip()
+        target_text = str(target_period or "").strip()
+        if not history_text.isdigit() or not target_text.isdigit():
+            return False
+        return int(history_text) < int(target_text)
+
     def pending_ai_recommendation(self, site: str, period: str) -> PendingAiBet | None:
         with self._lock:
             return self._ai_pending.get((site, period))
@@ -634,6 +781,12 @@ class AutoBetService:
                 for site, period, group_id in self._bet_keys
                 if site == pending.site and period == pending.period
             }
+            prediction_store = self._ai_prediction_store
+        if prediction_store is not None:
+            try:
+                already_sent_groups.update(prediction_store.sent_group_ids(pending.site, pending.period))
+            except Exception:
+                logger.exception("Unable to restore automatic-bet duplicate keys")
         decisions = [
             BetDecision(True, pending.play_type, pending.amount, group_id, f"AI：{pending.reason}")
             for group_id in cfg.target_groups
@@ -654,6 +807,9 @@ class AutoBetService:
         with self._lock:
             for decision in sent_decisions:
                 self._bet_keys.add((pending.site, pending.period, decision.group_id))
+        self._record_persisted_bet_keys(pending.site, pending.period, [
+            decision.group_id for decision in sent_decisions
+        ])
         if sent_decisions:
             self._record_round(pending.site, pending.period, sent_decisions)
             if self._ai_prediction_store is not None:
@@ -671,6 +827,22 @@ class AutoBetService:
         for prediction in store.pending_sent_records(site):
             result = result_provider.get_result(prediction.site, prediction.period)
             if result is None:
+                continue
+            if str(result.site) != prediction.site or str(result.period) != prediction.period:
+                self._add_log(InjectRecord(
+                    ts=datetime.now(),
+                    group_name="",
+                    play_type="",
+                    amount=0,
+                    content=(
+                        "AI 预测结算等待：开奖结果不匹配，"
+                        f"待结算 {prediction.site} {prediction.period}，"
+                        f"返回 {result.site} {result.period}"
+                    ),
+                    success=False,
+                    site=prediction.site,
+                    period=prediction.period,
+                ))
                 continue
             if store.settle(prediction.site, prediction.period, result.result):
                 settled += 1
@@ -807,6 +979,111 @@ class AutoBetService:
     def _format_amount(value: float) -> str:
         return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
 
+    def _restore_persisted_bet_keys(self, prediction_store) -> None:
+        if prediction_store is None:
+            return
+        try:
+            keys = prediction_store.all_sent_group_keys()
+        except Exception:
+            logger.exception("Unable to load automatic-bet duplicate keys")
+            return
+        with self._lock:
+            self._bet_keys.update(keys)
+
+    def _record_persisted_bet_keys(self, site: str, period: str, group_ids: list[str]) -> None:
+        store = self._ai_prediction_store
+        if store is None:
+            return
+        try:
+            store.record_sent_groups(site, period, group_ids)
+        except Exception:
+            logger.exception("Unable to persist automatic-bet duplicate keys")
+
+    def _restore_pending_rounds(self, prediction_store) -> None:
+        if prediction_store is None:
+            return
+        try:
+            records = prediction_store.pending_round_records()
+        except Exception:
+            logger.exception("Unable to load unsettled automatic-bet rounds")
+            return
+        restored_rounds: list[AutoBetRound] = []
+        pending_staked = 0.0
+        latest_martingale_step: int | None = None
+        for record in records:
+            bets: list[BetDecision] = []
+            for item in record.bets:
+                if not isinstance(item, dict):
+                    continue
+                play_type = str(item.get("play_type", ""))
+                group_id = str(item.get("group_id", ""))
+                if not play_type or not group_id:
+                    continue
+                try:
+                    amount = float(item.get("amount", 0))
+                except (TypeError, ValueError):
+                    continue
+                bets.append(BetDecision(
+                    should_bet=True,
+                    play_type=play_type,
+                    amount=amount,
+                    group_id=group_id,
+                    reason=str(item.get("reason", "")),
+                ))
+            if not bets:
+                continue
+            restored_rounds.append(AutoBetRound(
+                period=record.period,
+                site=record.site,
+                bets=bets,
+                strategy_type=record.strategy_type,
+                martingale_step=record.martingale_step,
+                odds=dict(record.odds),
+            ))
+            pending_staked += sum(float(bet.amount) for bet in bets)
+            if record.strategy_type == "martingale" and record.site == self.config.site:
+                latest_martingale_step = record.martingale_step
+        if not restored_rounds:
+            return
+        with self._lock:
+            self._rounds.extend(restored_rounds)
+            self._runtime_state.pending_staked += pending_staked
+            if latest_martingale_step is not None:
+                self._runtime_state.current_step = latest_martingale_step
+
+    def _record_persisted_pending_round(self, round_info: AutoBetRound) -> None:
+        store = self._ai_prediction_store
+        if store is None:
+            return
+        try:
+            store.record_pending_round(
+                site=round_info.site,
+                period=round_info.period,
+                bets=[
+                    {
+                        "play_type": bet.play_type,
+                        "amount": float(bet.amount),
+                        "group_id": bet.group_id,
+                        "reason": bet.reason,
+                    }
+                    for bet in round_info.bets
+                ],
+                strategy_type=round_info.strategy_type,
+                martingale_step=round_info.martingale_step,
+                odds=round_info.odds,
+            )
+        except Exception:
+            logger.exception("Unable to persist unsettled automatic-bet round")
+
+    def _settle_persisted_pending_round(self, site: str, period: str) -> None:
+        store = self._ai_prediction_store
+        if store is None:
+            return
+        try:
+            store.settle_pending_round(site, period)
+        except Exception:
+            logger.exception("Unable to mark automatic-bet round as settled")
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -866,33 +1143,73 @@ class AutoBetService:
 
     def settle_pending_rounds(self, result_provider: DrawResultProvider) -> int:
         settled = 0
-        cfg = self.config
         for round_info in list(self._rounds):
             if round_info.settled:
                 continue
             result = result_provider.get_result(round_info.site, round_info.period)
             if result is None:
                 continue
-            self._settle_round(round_info, result.result, cfg)
+            if str(result.site) != str(round_info.site) or str(result.period) != str(round_info.period):
+                self._add_log(InjectRecord(
+                    ts=datetime.now(),
+                    group_name="",
+                    play_type="",
+                    amount=0,
+                    content=(
+                        "结算等待：开奖结果不匹配，"
+                        f"待结算 {round_info.site} {round_info.period}，"
+                        f"返回 {result.site} {result.period}"
+                    ),
+                    success=False,
+                    site=round_info.site,
+                    period=round_info.period,
+                ))
+                continue
+            self._settle_round(round_info, result.result)
             settled += 1
         return settled
 
     def _record_round(self, site: str, period: str, bets: list[BetDecision]) -> None:
         if not period or not bets:
             return
-        round_info = AutoBetRound(period=period, site=site, bets=list(bets))
+        cfg = self.config
+        round_info = AutoBetRound(
+            period=period,
+            site=site,
+            bets=list(bets),
+            strategy_type=cfg.strategy_type,
+            martingale_step=self.runtime_state.current_step,
+            odds=dict(cfg.odds),
+        )
         with self._lock:
             self._rounds.append(round_info)
-            self._runtime_state.pending_staked += sum(float(bet.amount) for bet in bets)
+            state = self._runtime_state
+            state.pending_staked += sum(float(bet.amount) for bet in bets)
+            peak_amount = max(float(bet.amount) for bet in bets)
+            if cfg.strategy_type == "martingale" and peak_amount > state.martingale_peak_amount:
+                state.martingale_peak_step = round_info.martingale_step
+                state.martingale_peak_amount = peak_amount
+                state.martingale_peak_site = site
+                state.martingale_peak_period = period
+                state.martingale_peak_at = datetime.now()
+        self._record_persisted_pending_round(round_info)
 
-    def _settle_round(self, round_info: AutoBetRound, result: str, cfg: StrategyConfig) -> None:
+    def _settle_round(self, round_info: AutoBetRound, result: str) -> None:
         if round_info.settled:
             return
+        cfg = self.config
+        strategy_type = round_info.strategy_type or cfg.strategy_type
+        odds = round_info.odds or cfg.odds
         staked = sum(float(bet.amount) for bet in round_info.bets)
         payout = 0.0
+        outcomes: list[str] = []
         for bet in round_info.bets:
-            if self._bet_wins(bet.play_type, result):
-                payout += float(bet.amount) * float(cfg.odds.get(bet.play_type, 1.0))
+            won = self._bet_wins(bet.play_type, result)
+            outcomes.append(
+                f"{bet.play_type}{self._format_amount(bet.amount)}={'命中' if won else '未中'}"
+            )
+            if won:
+                payout += float(bet.amount) * float(odds.get(bet.play_type, 1.0))
         profit = payout - staked
 
         round_info.settled = True
@@ -900,8 +1217,11 @@ class AutoBetService:
         round_info.payout = payout
         round_info.profit = profit
 
+        step_before = 0
+        step_after = 0
         with self._lock:
             state = self._runtime_state
+            step_before = state.current_step
             state.pending_staked = max(0.0, state.pending_staked - staked)
             state.total_staked += staked
             state.total_payout += payout
@@ -909,20 +1229,43 @@ class AutoBetService:
             state.total_rounds += 1
             if profit > 0:
                 state.win_rounds += 1
+                state.consecutive_wins += 1
                 state.consecutive_losses = 0
-                if cfg.strategy_type == "martingale":
+                state.max_consecutive_wins = max(state.max_consecutive_wins, state.consecutive_wins)
+                if strategy_type == "martingale":
                     state.current_step = 0
             else:
                 state.lose_rounds += 1
                 state.consecutive_losses += 1
-                if cfg.strategy_type == "martingale":
+                state.consecutive_wins = 0
+                state.max_consecutive_losses = max(state.max_consecutive_losses, state.consecutive_losses)
+                if strategy_type == "martingale":
                     sequence = cfg.martingale_sequence or [cfg.bet_amount]
-                    if state.current_step >= len(sequence) - 1:
-                        state.halted = True
-                        state.halt_reason = "倍投已到最后一档，等待人工处理"
+                    if round_info.martingale_step >= len(sequence) - 1:
+                        state.current_step = 0
                     else:
-                        state.current_step += 1
+                        state.current_step = round_info.martingale_step + 1
             self._apply_risk_limits(state, cfg)
+            step_after = state.current_step
+        self._settle_persisted_pending_round(round_info.site, round_info.period)
+        group_names = ", ".join(
+            self._display_group_name(bet.group_id) for bet in round_info.bets
+        )
+        self._add_log(InjectRecord(
+            ts=datetime.now(),
+            group_name=group_names,
+            play_type="/".join(bet.play_type for bet in round_info.bets),
+            amount=staked,
+            content=(
+                f"结算：实际 {result}；{'、'.join(outcomes)}；"
+                f"派彩 {payout:.2f}；本期盈亏 {profit:.2f}；"
+                f"累计盈亏 {self.runtime_state.total_profit:.2f}；"
+                f"倍投档位 {step_before + 1}→{step_after + 1}"
+            ),
+            success=profit > 0,
+            site=round_info.site,
+            period=round_info.period,
+        ))
 
     @staticmethod
     def _apply_risk_limits(state: AutoBetRuntimeState, cfg: StrategyConfig) -> None:
