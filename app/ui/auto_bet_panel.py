@@ -37,6 +37,7 @@ from app.models.auto_bet import (
     PendingAiBet,
     StrategyConfig,
 )
+from app.services.history_fetchers import supported_history_fetch_counts
 
 
 logger = logging.getLogger(__name__)
@@ -131,14 +132,13 @@ class AiConfigDialog(QDialog):
 
         history_row = QHBoxLayout()
         history_row.addWidget(QLabel("历史期数:"))
-        self._history_spin = QSpinBox()
-        self._history_spin.setRange(20, 200)
-        self._history_spin.setValue(50)
-        history_row.addWidget(self._history_spin)
+        self._history_combo = QComboBox()
+        history_row.addWidget(self._history_combo)
         self._confirm_check = QCheckBox("每期下注前需确认")
         history_row.addWidget(self._confirm_check)
         history_row.addStretch(1)
         layout.addLayout(history_row)
+        self.set_history_site("pc28")
 
         quant_row = QHBoxLayout()
         quant_row.addWidget(QLabel("最低置信度:"))
@@ -184,7 +184,8 @@ class AiConfigDialog(QDialog):
         self._base_url_edit.setText(config.ai_base_url or DEFAULT_AI_BASE_URL)
         self._model_edit.setText(config.ai_model or DEFAULT_AI_MODEL)
         self._api_key_edit.setText(config.ai_api_key)
-        self._history_spin.setValue(config.ai_history_count)
+        self.set_history_site(config.site)
+        self._set_history_count(config.ai_history_count)
         self._confirm_check.setChecked(config.ai_require_confirmation)
         self._confidence_spin.setValue(config.ai_confidence_threshold)
         self._accuracy_window_spin.setValue(config.ai_accuracy_window)
@@ -196,7 +197,7 @@ class AiConfigDialog(QDialog):
         config.ai_base_url = self._base_url_edit.text().strip()
         config.ai_model = self._model_edit.text().strip()
         config.ai_api_key = self._api_key_edit.text().strip()
-        config.ai_history_count = self._history_spin.value()
+        config.ai_history_count = int(self._history_combo.currentData() or 50)
         config.ai_require_confirmation = self._confirm_check.isChecked()
         config.ai_confidence_threshold = self._confidence_spin.value()
         config.ai_accuracy_window = self._accuracy_window_spin.value()
@@ -216,6 +217,23 @@ class AiConfigDialog(QDialog):
     def _toggle_api_key_visibility(self, visible: bool) -> None:
         self._api_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
         self._api_key_visibility_button.setToolTip("隐藏 API Key" if visible else "显示 API Key")
+
+    def set_history_site(self, site: str) -> None:
+        """Restrict selectable history counts to the active site's API capability."""
+        previous = int(self._history_combo.currentData() or 50)
+        self._history_combo.blockSignals(True)
+        self._history_combo.clear()
+        for count in supported_history_fetch_counts(site):
+            self._history_combo.addItem(f"{count} 条", count)
+        self._history_combo.blockSignals(False)
+        self._set_history_count(previous)
+
+    def _set_history_count(self, count: int) -> None:
+        if self._history_combo.count() == 0:
+            return
+        choices = [int(self._history_combo.itemData(index)) for index in range(self._history_combo.count())]
+        selected = min(choices, key=lambda value: (abs(value - int(count)), -value))
+        self._history_combo.setCurrentIndex(self._history_combo.findData(selected))
 
 
 class AutoBetPanel(QGroupBox):
@@ -346,20 +364,29 @@ class AutoBetPanel(QGroupBox):
         super().resizeEvent(event)
 
     def _relayout_runtime_stat_cards(self) -> None:
-        """Arrange statistic cards according to the available panel width."""
-        # The panel width changes before child layouts receive their final geometry.
-        width = self.width()
-        columns = 4 if width >= 720 else 3 if width >= 540 else 2
-        if columns == self._runtime_stat_columns:
-            return
-
+        """Keep three statistic cards per row and stretch the incomplete last row."""
+        columns = 3
+        grid_columns = 6
         self._runtime_stat_columns = columns
         while self._runtime_stats_grid.count():
             self._runtime_stats_grid.takeAt(0)
-        for index, label in enumerate(self._runtime_stat_labels):
-            self._runtime_stats_grid.addWidget(label, index // columns, index % columns)
-
         rows = (len(self._runtime_stat_labels) + columns - 1) // columns
+        complete_count = len(self._runtime_stat_labels) - (len(self._runtime_stat_labels) % columns)
+        for index, label in enumerate(self._runtime_stat_labels[:complete_count]):
+            self._runtime_stats_grid.addWidget(label, index // columns, (index % columns) * 2, 1, 2)
+        for column in range(grid_columns):
+            self._runtime_stats_grid.setColumnStretch(column, 1)
+        last_row_count = len(self._runtime_stat_labels) % columns
+        if last_row_count:
+            last_row = rows - 1
+            for index, label in enumerate(self._runtime_stat_labels[complete_count:]):
+                self._runtime_stats_grid.addWidget(
+                    label,
+                    last_row,
+                    index * (grid_columns // last_row_count),
+                    1,
+                    grid_columns // last_row_count,
+                )
         self._runtime_stats_box.setMinimumHeight(rows * 58 + 42)
 
     def _update_martingale_peak(self, state: AutoBetRuntimeState) -> None:
@@ -553,6 +580,7 @@ class AutoBetPanel(QGroupBox):
             return
         changed = value != self._active_site
         self._active_site = value
+        self._ai_config_dialog.set_history_site(value)
         if changed:
             self._emit_config()
 

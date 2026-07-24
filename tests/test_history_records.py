@@ -2,7 +2,13 @@
 
 from datetime import datetime
 
-from app.utils.history_records import apply_saved_proxy_settings, parse_australia_history_html, parse_history_records
+from app.utils.history_records import (
+    apply_saved_proxy_settings,
+    fetch_history_records,
+    history_record_limit,
+    parse_australia_history_html,
+    parse_history_records,
+)
 
 
 def test_parse_pc28_history_skips_unopened_rows_and_normalizes_records():
@@ -25,6 +31,72 @@ def test_parse_pc28_history_skips_unopened_rows_and_normalizes_records():
             "raw": {"qishu": "3452647", "kjcode": "15", "kjcodestr": "3+5+7=15"},
         }
     ]
+
+
+def test_parse_pc28_recent_api_history_normalizes_draw_number_result_and_date():
+    payload = [
+        {
+            "draw_number": 3458935,
+            "draw_date": "2026-07-19T14:48:00+08:00",
+            "canada28_num1": 8,
+            "canada28_num2": 5,
+            "canada28_num3": 4,
+            "canada28_result": 17,
+        }
+    ]
+
+    records = parse_history_records("pc28", payload)
+
+    assert records[0]["period"] == "3458935"
+    assert records[0]["numbers"] == [8, 5, 4]
+    assert records[0]["sum"] == 17
+    assert records[0]["open_time"] == datetime.fromisoformat("2026-07-19T14:48:00+08:00")
+
+
+def test_pc28_history_fetches_recent_api_with_the_selected_limit(monkeypatch):
+    captured = {}
+
+    def fake_get_json(url, params=None, headers=None):
+        captured.update(url=url, params=params, headers=headers)
+        return [
+            {
+                "draw_number": 3458935,
+                "draw_date": "2026-07-19T14:48:00+08:00",
+                "canada28_num1": 8,
+                "canada28_num2": 5,
+                "canada28_num3": 4,
+                "canada28_result": 17,
+            }
+        ]
+
+    monkeypatch.setattr("app.utils.history_records._get_json", fake_get_json)
+
+    records = fetch_history_records("pc28", page_size=500)
+
+    assert captured["url"] == "https://jnd28-yc.vip/api/recent"
+    assert captured["params"] == {"limit": "500"}
+    assert captured["headers"]["referer"] == "https://jnd28-yc.vip/"
+    assert records[0]["period"] == "3458935"
+
+
+def test_history_record_limits_reflect_each_site_source_capability():
+    assert history_record_limit("pc28") == 500
+    assert history_record_limit("macao") == 100
+    assert history_record_limit("australia") == 100
+    assert history_record_limit("norway") == 500
+
+
+def test_history_fetch_clamps_macao_requests_to_its_remote_limit(monkeypatch):
+    captured = {}
+
+    def fake_get_json(url, params=None, headers=None):
+        captured.update(url=url, params=params)
+        return {"data": {"drawList": []}}
+
+    monkeypatch.setattr("app.utils.history_records._get_json", fake_get_json)
+
+    assert fetch_history_records("macao", page_size=500) == []
+    assert captured["params"] == {"pageNum": "1", "pageSize": "100"}
 
 
 def test_parse_macao_history_normalizes_draw_list():

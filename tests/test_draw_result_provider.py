@@ -6,7 +6,7 @@ from pathlib import Path
 from app.models.auto_bet import DrawResult, StrategyConfig
 from app.services.auto_bet_service import AutoBetService
 from app.services.draw_result_store import DrawResultStore
-from app.services.history_fetchers import HistoryFetcher, normalize_result_label
+from app.services.history_fetchers import HistoryFetcher, history_fetch_limit, normalize_result_label
 
 
 def test_auto_bet_tick_uses_next_period_as_the_betting_target():
@@ -78,6 +78,21 @@ def test_history_fetcher_converts_normalized_history_records_to_draw_results(mon
         DrawResult(site="pc28", period="1001", result="小单", open_time=datetime(2026, 7, 4, 1)),
         DrawResult(site="pc28", period="1002", result="大双", open_time=datetime(2026, 7, 4, 2)),
     ]
+
+
+def test_history_fetcher_clamps_requested_count_to_the_site_history_limit(monkeypatch):
+    calls = []
+
+    def fake_fetch_history_records(site: str, page: int = 1, page_size: int = 20):
+        calls.append((site, page, page_size))
+        return []
+
+    monkeypatch.setattr("app.services.history_fetchers.fetch_history_records", fake_fetch_history_records)
+
+    HistoryFetcher().fetch("macao", count=500)
+
+    assert history_fetch_limit("macao") == 100
+    assert calls == [("macao", 1, 100)]
 
 
 def test_draw_result_store_persists_and_returns_recent_results_oldest_first(tmp_path: Path):

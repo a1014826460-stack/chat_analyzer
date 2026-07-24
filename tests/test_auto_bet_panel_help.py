@@ -201,7 +201,9 @@ def test_ai_strategy_config_exposes_provider_history_and_confirmation():
     panel._ai_config_dialog._base_url_edit.setText("https://api.example")
     panel._ai_config_dialog._model_edit.setText("claude-test")
     panel._ai_config_dialog._api_key_edit.setText("secret")
-    panel._ai_config_dialog._history_spin.setValue(80)
+    panel._ai_config_dialog._history_combo.setCurrentIndex(
+        panel._ai_config_dialog._history_combo.findData(100)
+    )
     panel._ai_config_dialog._confidence_spin.setValue(70)
     panel._ai_config_dialog._accuracy_window_spin.setValue(35)
     panel._ai_config_dialog._confirm_check.setChecked(True)
@@ -214,13 +216,28 @@ def test_ai_strategy_config_exposes_provider_history_and_confirmation():
     assert config.ai_base_url == "https://api.example"
     assert config.ai_model == "claude-test"
     assert config.ai_api_key == "secret"
-    assert config.ai_history_count == 80
+    assert config.ai_history_count == 100
     assert config.ai_confidence_threshold == 70
     assert config.ai_accuracy_window == 35
     assert config.ai_require_confirmation is True
     assert panel._ai_config_button.isVisibleTo(panel)
     assert panel._mode_row_widget.isVisibleTo(panel)
     assert panel._play_row_widget.isVisibleTo(panel)
+
+
+def test_ai_history_record_count_uses_site_supported_presets():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    history_combo = panel._ai_config_dialog._history_combo
+
+    assert [history_combo.itemData(index) for index in range(history_combo.count())] == [20, 50, 100, 200, 500]
+
+    panel.set_active_site("macao")
+
+    assert [history_combo.itemData(index) for index in range(history_combo.count())] == [20, 50, 100]
 
 
 def test_ai_config_button_is_visible_for_every_ai_constrained_strategy():
@@ -388,7 +405,7 @@ def test_auto_bet_panel_displays_session_maximum_win_and_loss_streaks():
     assert panel._stats_detail_label.isHidden()
 
 
-def test_auto_bet_panel_reflows_runtime_stat_cards_for_narrow_widths():
+def test_auto_bet_panel_displays_runtime_stat_cards_in_three_columns_and_fills_last_row():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
@@ -398,11 +415,19 @@ def test_auto_bet_panel_reflows_runtime_stat_cards_for_narrow_widths():
 
     panel.resize(800, 900)
     app.processEvents()
-    assert panel._runtime_stat_columns == 4
+    assert panel._runtime_stat_columns == 3
+    positions = {
+        panel._runtime_stats_grid.itemAt(index).widget(): panel._runtime_stats_grid.getItemPosition(index)
+        for index in range(panel._runtime_stats_grid.count())
+    }
+    assert positions[panel._runtime_stat_labels[12]] == (4, 0, 1, 3)
+    assert positions[panel._runtime_stat_labels[13]] == (4, 3, 1, 3)
+    assert panel._runtime_stats_grid.columnStretch(0) == 1
+    assert panel._runtime_stats_grid.columnStretch(5) == 1
 
     panel.resize(460, 900)
     app.processEvents()
-    assert panel._runtime_stat_columns == 2
+    assert panel._runtime_stat_columns == 3
 
 
 def test_auto_bet_panel_runtime_statistics_reserve_full_two_row_height():

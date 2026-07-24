@@ -225,6 +225,17 @@ class AutoBetService:
                 self._log_ai_waiting_for_window(site, current_period, countdown_sec)
             return
 
+        # Every executable period first refreshes the selected site's history.
+        # This keeps settlement and strategy/AI analysis on the same latest data.
+        refreshed = self._refresh_history_before_bet(site, cfg, result_provider)
+        if result_provider is not None and refreshed <= 0:
+            self._add_ai_status_log(
+                site,
+                current_period,
+                "最新开奖记录刷新失败或无新增数据，本期使用本地缓存分析",
+                success=False,
+            )
+
         if self._effective_bet_mode(cfg) == "three_doors":
             self._process_three_doors_period(site, current_period, cfg, injector, result_provider)
             return
@@ -261,6 +272,19 @@ class AutoBetService:
         ])
         self._record_round(site, current_period, active_decisions)
 
+    @staticmethod
+    def _refresh_history_before_bet(
+        site: str,
+        cfg: StrategyConfig,
+        result_provider: DrawResultProvider | None,
+    ) -> int:
+        if result_provider is None:
+            return 0
+        refresh = getattr(result_provider, "refresh_recent_results", None)
+        if not callable(refresh):
+            return 0
+        return int(refresh(site, cfg.ai_history_count + 1) or 0)
+
     # ------------------------------------------------------------------
     # Strategy: Trend Following
     # ------------------------------------------------------------------
@@ -275,9 +299,6 @@ class AutoBetService:
     ) -> None:
         if not period or result_provider is None:
             return
-        refresh = getattr(result_provider, "refresh_recent_results", None)
-        if callable(refresh):
-            refresh(site, cfg.ai_history_count + 1)
         self.settle_pending_rounds(result_provider)
         doors, excluded, excluded_count = self._three_door_plays(cfg, result_provider, target_period=period)
         if len(doors) != 3:
@@ -493,15 +514,6 @@ class AutoBetService:
 
         try:
             history_fetch_count = cfg.ai_history_count + 1
-            refresh = getattr(result_provider, "refresh_recent_results", None)
-            if callable(refresh):
-                refreshed = refresh(site, history_fetch_count)
-                if not refreshed:
-                    self._add_ai_status_log(
-                        site, period,
-                        "最新开奖记录刷新失败或无新增数据，本期使用本地缓存分析",
-                        success=False,
-                    )
             self._settle_ai_predictions(result_provider, site)
             self.settle_pending_rounds(result_provider)
             unfiltered_results = result_provider.get_recent_results(site, history_fetch_count)

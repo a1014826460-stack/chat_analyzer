@@ -46,6 +46,11 @@ def test_strategy_config_defaults_to_deepseek_anthropic_and_clamps_lock_threshol
     assert StrategyConfig.from_dict({"lock_threshold_sec": 90}).lock_threshold_sec == 60
 
 
+def test_strategy_config_accepts_up_to_five_hundred_history_records():
+    assert StrategyConfig.from_dict({"ai_history_count": 500}).ai_history_count == 500
+    assert StrategyConfig.from_dict({"ai_history_count": 501}).ai_history_count == 500
+
+
 def test_strategy_config_reports_all_automatic_bet_start_validation_errors():
     config = StrategyConfig(
         target_groups=[],
@@ -993,6 +998,37 @@ def test_ai_period_refreshes_history_settles_previous_prediction_and_passes_feed
     assert quant_context["sample_size"] == 1
     assert performance_context["overall"]["direction_accuracy"] == 1.0
     assert set(performance_context) == {"overall", "short", "recent_predictions"}
+
+
+def test_each_betting_window_refreshes_history_before_trend_eligibility():
+    class RefreshingProvider(Provider):
+        def __init__(self):
+            super().__init__(recent=[
+                DrawResult("998", "pc28", "小单"),
+                DrawResult("999", "pc28", "小单"),
+                DrawResult("1000", "pc28", "小单"),
+            ])
+            self.refresh_calls = []
+
+        def refresh_recent_results(self, site: str, count: int):
+            self.refresh_calls.append((site, count))
+            return 1
+
+    service = AutoBetService()
+    sender = Sender()
+    provider = RefreshingProvider()
+    service.apply_config(StrategyConfig(
+        strategy_type="trend_following", site="pc28", target_groups=["g1"],
+        observation_window=3, trigger_threshold=3, ai_history_count=50,
+    ))
+    service.set_injector(sender)
+    service.set_result_provider(provider)
+    service.set_ai_client(AiClient())
+    service.start()
+
+    _ai_tick(service)
+
+    assert provider.refresh_calls == [("pc28", 51)]
 
 
 def test_ai_history_excludes_the_target_period_and_future_periods():

@@ -5,7 +5,11 @@ from datetime import datetime
 from typing import Any
 
 from app.models.auto_bet import DrawResult
-from app.utils.history_records import fetch_history_records
+from app.utils.history_records import (
+    fetch_history_records,
+    history_record_limit,
+    supported_history_record_counts,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,7 @@ class HistoryFetcher:
     """Fetch and convert normalized history records into DrawResult objects."""
 
     def fetch(self, site: str, count: int = 20) -> list[DrawResult]:
+        count = min(max(1, int(count)), history_fetch_limit(site))
         try:
             records = fetch_history_records(site, page=1, page_size=count)
         except Exception as exc:
@@ -62,3 +67,13 @@ class HistoryFetcher:
             result=normalize_result_label(site, total),
             open_time=open_time,
         )
+
+
+def history_fetch_limit(site: str) -> int:
+    """Expose the remote history window supported by a site's fetcher."""
+    return history_record_limit(site)
+
+
+def supported_history_fetch_counts(site: str) -> tuple[int, ...]:
+    """Return the UI-safe selectable history windows for a site."""
+    return supported_history_record_counts(site)

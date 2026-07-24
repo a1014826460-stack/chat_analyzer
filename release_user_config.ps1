@@ -1,8 +1,8 @@
 # StarTrace user release config.
 # Admin usually only edits these two values.
 
-$Version = "1.99.7"
-$Notes = "1.99.7 更新：实战统计卡片自适应布局，补充当前连中、连输、倍投档与结算明细"
+$Version = "1.99.8"
+$Notes = "1.99.8 更新：PC28 新开奖源、历史条数按站点适配，实战统计改为三列布局"
 
 # Usually unchanged unless server, path, or domain changes.
 $Channel = "user"

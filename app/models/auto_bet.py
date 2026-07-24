@@ -265,7 +265,7 @@ def _ensure_lock_threshold_sec(value: object) -> int:
 
 def _ensure_ai_history_count(value: object) -> int:
     try:
-        return min(200, max(20, int(value)))
+        return min(500, max(20, int(value)))
     except (TypeError, ValueError):
         return 50
 

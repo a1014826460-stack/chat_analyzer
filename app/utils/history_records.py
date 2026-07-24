@@ -13,6 +13,16 @@ from typing import Any
 
 HistoryRecord = dict[str, object]
 
+# The source pages expose different maximum history windows.  Keep the UI
+# options compatible with the actual data each source can provide.
+_HISTORY_RECORD_LIMITS = {
+    "pc28": 500,
+    "macao": 100,
+    "australia": 100,
+    "norway": 500,
+}
+HISTORY_RECORD_PRESETS = (20, 50, 100, 200, 500)
+
 _SITES = ("pc28", "australia", "macao", "norway")
 _TS_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
@@ -36,10 +46,22 @@ def site_list() -> list[str]:
     return list(_SITES)
 
 
+def history_record_limit(site: str) -> int:
+    """Return the maximum number of records available from a site's source."""
+    return _HISTORY_RECORD_LIMITS[_normalize_site(site)]
+
+
+def supported_history_record_counts(site: str) -> tuple[int, ...]:
+    """Return selectable history windows supported by the site source."""
+    maximum = history_record_limit(site)
+    return tuple(count for count in HISTORY_RECORD_PRESETS if count <= maximum)
+
+
 def fetch_history_records(site: str, page: int = 1, page_size: int = 20) -> list[HistoryRecord]:
     normalized = _normalize_site(site)
-    payload = _fetch_history_payload(normalized, page=page, page_size=page_size)
-    return parse_history_records(normalized, payload)[:page_size]
+    limit = min(max(1, int(page_size)), history_record_limit(normalized))
+    payload = _fetch_history_payload(normalized, page=page, page_size=limit)
+    return parse_history_records(normalized, payload)[:limit]
 
 
 def fetch_all_history_records(page: int = 1, page_size: int = 20) -> dict[str, list[HistoryRecord]]:
@@ -49,8 +71,8 @@ def fetch_all_history_records(page: int = 1, page_size: int = 20) -> dict[str, l
 def parse_history_records(site: str, payload: Any) -> list[HistoryRecord]:
     normalized = _normalize_site(site)
     if normalized == "pc28":
-        if not isinstance(payload, dict):
-            raise ValueError("PC28 history payload must be a dict")
+        if not isinstance(payload, (dict, list)):
+            raise ValueError("PC28 history payload must be a dict or list")
         return _parse_pc28_history(payload)
     if normalized == "australia":
         if not isinstance(payload, str):
@@ -94,9 +116,9 @@ def parse_australia_history_html(page_html: str) -> list[HistoryRecord]:
 def _fetch_history_payload(site: str, *, page: int, page_size: int) -> Any:
     if site == "pc28":
         return _get_json(
-            "https://1pc.cc/data/get/getForecastByType",
-            params={"game": "jnd28", "type": "zh", "sf": "1"},
-            headers={"referer": "https://1pc.cc/", "x-requested-with": "XMLHttpRequest"},
+            "https://jnd28-yc.vip/api/recent",
+            params={"limit": str(page_size)},
+            headers={"referer": "https://jnd28-yc.vip/"},
         )
     if site == "australia":
         return _get_text("https://gaga28.com/az28.php", headers={"referer": "https://gaga28.com/"})
@@ -115,23 +137,46 @@ def _fetch_history_payload(site: str, *, page: int, page_size: int) -> Any:
     raise ValueError(f"unsupported site: {site}")
 
 
-def _parse_pc28_history(payload: dict[str, Any]) -> list[HistoryRecord]:
-    rows = payload.get("data", [])
+def _parse_pc28_history(payload: dict[str, Any] | list[Any]) -> list[HistoryRecord]:
+    rows = payload if isinstance(payload, list) else payload.get("data", [])
     if not isinstance(rows, list):
         return []
     records: list[HistoryRecord] = []
     for item in rows:
         if not isinstance(item, dict):
             continue
-        period = _str_val(item.get("qishu"))
-        result_text = _str_val(item.get("kjcodestr") or item.get("number") or item.get("opennum"))
-        numbers, total = _parse_numbers_and_sum(result_text)
+        period = _str_val(item.get("draw_number") or item.get("qishu"))
+        numbers = _pc28_numbers(item)
+        total = _int_or_none(item.get("canada28_result"))
+        if not numbers:
+            result_text = _str_val(item.get("kjcodestr") or item.get("number") or item.get("opennum"))
+            numbers, parsed_total = _parse_numbers_and_sum(result_text)
+            total = total if total is not None else parsed_total
         if len(numbers) != 3:
             continue
         if total is None:
             total = _int_or_none(item.get("kjcode"))
-        records.append(_record("pc28", period=period, open_time=None, numbers=numbers, total=total, raw=item))
+        records.append(
+            _record(
+                "pc28",
+                period=period,
+                open_time=_parse_ts(item.get("draw_date")),
+                numbers=numbers,
+                total=total,
+                raw=item,
+            )
+        )
     return records
+
+
+def _pc28_numbers(item: dict[str, Any]) -> list[int]:
+    values = [item.get(f"canada28_num{index}") for index in range(1, 4)]
+    if any(value is None for value in values):
+        return []
+    try:
+        return [int(value) for value in values]
+    except (TypeError, ValueError):
+        return []
 
 
 def _parse_macao_history(payload: dict[str, Any]) -> list[HistoryRecord]:
@@ -227,11 +272,11 @@ def _normalize_site(site: str) -> str:
     return normalized
 
 
-def _get_json(url: str, params: dict[str, str] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
+def _get_json(url: str, params: dict[str, str] | None = None, headers: dict[str, str] | None = None) -> Any:
     text = _get_text(url, params=params, headers=headers)
     payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError(f"unexpected non-object JSON from {url}")
+    if not isinstance(payload, (dict, list)):
+        raise ValueError(f"unexpected JSON payload from {url}")
     return payload
 
 
