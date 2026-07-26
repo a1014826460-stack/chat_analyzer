@@ -10,6 +10,30 @@ def test_auto_bet_panel_exposes_martingale_strategy_option():
     assert all(value != "ai" for _label, value in BET_STRATEGY_OPTIONS)
 
 
+def test_auto_bet_panel_displays_frequency_probabilities_and_three_door_status():
+    from PySide6.QtWidgets import QApplication
+    from app.models.auto_bet import DrawResult
+    from app.services.frequency_probability_analysis import FrequencyProbabilityAnalyzer
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    analysis = FrequencyProbabilityAnalyzer().analyze("pc28", [
+        DrawResult("1", "pc28", "小单", total=13),
+        DrawResult("2", "pc28", "大双", total=14),
+        DrawResult("3", "pc28", "大单", total=15),
+    ], history_count=20, confidence_threshold=30, target_period="4")
+
+    panel.update_frequency_analysis(analysis)
+
+    text = panel._frequency_analysis_label.text()
+    assert "实际样本：3" in text
+    assert "13: 33.3%" in text
+    assert "大双: 33.3%" in text
+    assert "排除：小双" in text
+    assert "本期将下注" in text
+
+
 def test_strategy_help_text_explains_strategy_differences():
     text = strategy_help_text()
 

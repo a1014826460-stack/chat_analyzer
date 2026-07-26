@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS draw_results (
     period       TEXT NOT NULL,
     result       TEXT NOT NULL,
     result_label TEXT,
+    result_total INTEGER,
     open_time    TEXT,
     fetched_at   TEXT NOT NULL,
     PRIMARY KEY (site, period)
@@ -58,7 +59,7 @@ class DrawResultStore(DrawResultProvider):
             con.row_factory = sqlite3.Row
             try:
                 rows = con.execute(
-                    "SELECT site, period, result, result_label, open_time "
+                    "SELECT site, period, result, result_label, result_total, open_time "
                     "FROM draw_results WHERE site = ? "
                     "ORDER BY period DESC LIMIT ?",
                     (site, count),
@@ -77,7 +78,7 @@ class DrawResultStore(DrawResultProvider):
             con.row_factory = sqlite3.Row
             try:
                 row = con.execute(
-                    "SELECT site, period, result, result_label, open_time "
+                    "SELECT site, period, result, result_label, result_total, open_time "
                     "FROM draw_results WHERE site = ? AND period = ?",
                     (site, period),
                 ).fetchone()
@@ -96,13 +97,14 @@ class DrawResultStore(DrawResultProvider):
                         continue
                     con.execute(
                         "INSERT OR REPLACE INTO draw_results "
-                        "(site, period, result, result_label, open_time, fetched_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        "(site, period, result, result_label, result_total, open_time, fetched_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
                             site,
                             result.period,
                             result.result,
                             result.result,
+                            result.total,
                             result.open_time.isoformat() if result.open_time else None,
                             now,
                         ),
@@ -153,6 +155,12 @@ class DrawResultStore(DrawResultProvider):
             con = sqlite3.connect(str(self._db_path))
             try:
                 con.executescript(_DDL)
+                columns = {
+                    str(row[1])
+                    for row in con.execute("PRAGMA table_info(draw_results)").fetchall()
+                }
+                if "result_total" not in columns:
+                    con.execute("ALTER TABLE draw_results ADD COLUMN result_total INTEGER")
                 con.commit()
             finally:
                 con.close()
@@ -171,4 +179,5 @@ class DrawResultStore(DrawResultProvider):
             period=str(row["period"]),
             result=str(row["result_label"] or row["result"]),
             open_time=open_time,
+            total=int(row["result_total"]) if row["result_total"] is not None else None,
         )

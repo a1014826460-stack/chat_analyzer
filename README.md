@@ -8,6 +8,7 @@ StarTrace 是一个 Windows 桌面应用，用于读取本地聊天记录、筛�
 - 按站点、期号、群组、用户和玩法汇总下注数据。
 - 获取当前/下一期开奖信息及历史开奖结果。
 - 在用户配置后提供自动下注、AI 建议、策略运行统计和结算记录。
+- 自动下注面板按当前站点的历史期数显示 13/14 与八种玩法的频率概率；压三门会排除最低频率的复合玩法，并在任一保留玩法达到最低置信度时同时下注其余三门。
 - 提供普通用户版与管理员版 Windows 可执行文件。
 
 ## 运行环境
@@ -58,6 +59,12 @@ python -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q app tools
 ```
+
+## 集中服务端模式
+
+`backend/` 提供 FastAPI、PostgreSQL、Redis 和 worker。它统一执行站点开奖/历史抓取、频率分析、在线授权、WSS 凭据加密与服务端发送；客户端通过“帮助 -> 服务器模式”使用机器码和服务端激活码登录，JWT 仅保留在内存。
+
+本地启动与生产部署说明见 [`docs/server-deployment.md`](docs/server-deployment.md)。
 
 手工诊断脚本位于 `tools/diagnostics/`，不属于自动化测试套件。它们可能访问本地客户端、数据库或外部服务，应按脚本说明单独运行。
 
@@ -110,6 +117,7 @@ tools/diagnostics/   手工探针、恢复和诊断工具
 | `app/main.py` | 应用启动入口，解析用户版/管理员版参数。 |
 | `app/services/chat_service.py` | 加载、过滤、解析和统计聊天消息。 |
 | `app/services/auto_bet_service.py` | 自动下注运行时、去重、结算与策略状态。 |
+| `app/services/frequency_probability_analysis.py` | 历史频率概率与动态压三门决策。 |
 | `app/services/ai_bet_client.py` | OpenAI 兼容与 Anthropic 格式的 AI 建议请求。 |
 | `app/services/history_fetchers.py` | 站点历史开奖结果获取与规范化。 |
 | `app/utils/fetch_date.py` | 当前期、下一期和倒计时信息获取。 |

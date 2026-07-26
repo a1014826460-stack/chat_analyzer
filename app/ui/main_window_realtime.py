@@ -196,6 +196,8 @@ class MainWindowRealtimeMixin:
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "set_active_site"):
             panel.set_active_site(self._active_site)
+        if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+            self._refresh_auto_bet_frequency_analysis(self._active_site, getattr(info, "next_period", ""))
         self._sync_period_input_from_site(info)
         self._sync_chart_status()
 

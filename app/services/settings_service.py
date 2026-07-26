@@ -48,6 +48,7 @@ class SettingsService:
                 "proxy_http": "",
                 "proxy_https": "",
                 "auto_bet": {},
+                "server_mode": {"enabled": False, "base_url": "http://127.0.0.1:8080"},
             }
         )
 

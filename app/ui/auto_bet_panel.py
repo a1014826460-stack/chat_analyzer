@@ -358,6 +358,45 @@ class AutoBetPanel(QGroupBox):
         )
         self._update_martingale_peak(state)
 
+    def update_frequency_analysis(self, analysis: object | None) -> None:
+        """Render the latest history-frequency snapshot without changing bet settings."""
+        if analysis is None:
+            self._frequency_analysis_label.setText("暂无可用历史概率分析")
+            return
+        number_probabilities = getattr(analysis, "number_probabilities", {})
+        play_probabilities = getattr(analysis, "play_probabilities", {})
+        selected_plays = "、".join(getattr(analysis, "selected_plays", ())) or "-"
+        status = "本期将下注" if getattr(analysis, "should_bet", False) else "本期不下注"
+        period = str(getattr(analysis, "period", "") or "-")
+        analyzed_at = getattr(analysis, "analyzed_at", None)
+        updated_at = analyzed_at.strftime("%H:%M:%S") if isinstance(analyzed_at, datetime) else "-"
+        play_text = "  ".join(
+            f"{play}: {float(play_probabilities.get(play, 0.0)):.1f}%"
+            for play in PLAY_TYPE_OPTIONS
+        )
+        self._frequency_analysis_label.setText(
+            "站点：{site}  目标期：{period}  更新时间：{updated}\n"
+            "历史期数：{requested}  实际样本：{sample}  数值样本：{number_sample}\n"
+            "13: {thirteen:.1f}%  14: {fourteen:.1f}%\n"
+            "{plays}\n"
+            "排除：{excluded}  压三门：{selected}  阈值：{threshold}%  最高：{highest:.1f}%  {status}".format(
+                site=getattr(analysis, "site", "-") or "-",
+                period=period,
+                updated=updated_at,
+                requested=getattr(analysis, "requested_history_count", 0),
+                sample=getattr(analysis, "sample_count", 0),
+                number_sample=getattr(analysis, "number_sample_count", 0),
+                thirteen=float(number_probabilities.get(13, 0.0)),
+                fourteen=float(number_probabilities.get(14, 0.0)),
+                plays=play_text,
+                excluded=getattr(analysis, "excluded_play", "-") or "-",
+                selected=selected_plays,
+                threshold=getattr(analysis, "confidence_threshold", 0),
+                highest=float(getattr(analysis, "highest_selected_probability", 0.0)),
+                status=status,
+            )
+        )
+
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         if hasattr(self, "_runtime_stats_grid"):
             self._relayout_runtime_stat_cards()
@@ -493,6 +532,7 @@ class AutoBetPanel(QGroupBox):
         if pending is None:
             self._ai_pending_widget.setVisible(False)
             self._ai_pending_key = None
+            self._server_pending_bet_id = None
             return
         self._ai_pending_key = (pending.site, pending.period)
         self._ai_pending_label.setText(
@@ -512,6 +552,29 @@ class AutoBetPanel(QGroupBox):
             )
         )
         self._ai_pending_widget.setVisible(True)
+
+    def show_pending_server_bet(self, pending: PendingAiBet | None, *, order_id: int | None = None) -> None:
+        """Show a server-created order without presenting it as an AI proposal."""
+        if pending is None:
+            self.show_pending_ai_recommendation(None)
+            return
+        self._server_pending_bet_id = int(order_id) if order_id is not None else None
+        self._ai_pending_key = (pending.site, pending.period)
+        self._ai_pending_label.setText(
+            "服务器待确认下注 [{site} {period}]：{play}{amount}\n"
+            "说明：{reason}".format(
+                site=pending.site,
+                period=pending.period,
+                play=pending.play_type,
+                amount=self._format_amount(pending.amount),
+                reason=pending.reason,
+            )
+        )
+        self._ai_pending_widget.setVisible(True)
+
+    @property
+    def server_pending_bet_id(self) -> int | None:
+        return getattr(self, "_server_pending_bet_id", None)
 
     @property
     def pending_ai_key(self) -> tuple[str, str] | None:
@@ -771,6 +834,14 @@ class AutoBetPanel(QGroupBox):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
+        self._frequency_analysis_box = QGroupBox("概率分析")
+        frequency_layout = QVBoxLayout(self._frequency_analysis_box)
+        self._frequency_analysis_label = QLabel("暂无可用历史概率分析")
+        self._frequency_analysis_label.setWordWrap(True)
+        self._frequency_analysis_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        frequency_layout.addWidget(self._frequency_analysis_label)
+        layout.addWidget(self._frequency_analysis_box)
+
         self._runtime_stats_box = QGroupBox("实战统计")
         self._runtime_stats_box.setMinimumHeight(150)
         stats_layout = QVBoxLayout(self._runtime_stats_box)
@@ -883,12 +954,19 @@ class AutoBetPanel(QGroupBox):
         self._set_target_group_checks(False)
 
     def _on_start(self) -> None:
-        validation_errors = self.get_config().start_validation_errors()
+        validation_errors = self.get_config().start_validation_errors(
+            require_ai_credentials=not getattr(self, "_server_mode", False),
+        )
         if validation_errors:
             QMessageBox.warning(self, "无法启动自动下注", "\n".join(validation_errors))
             return
         self.set_running(True)
         self.start_clicked.emit()
+
+    def set_server_mode(self, enabled: bool) -> None:
+        """Use the server AI configuration instead of a client API key."""
+        self._server_mode = bool(enabled)
+        self._sync_strategy_visibility()
 
     def _on_stop(self) -> None:
         self.set_running(False)
@@ -902,7 +980,7 @@ class AutoBetPanel(QGroupBox):
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
         self._martingale_peak_box.setVisible(is_martingale)
-        self._ai_config_button.setVisible(True)
+        self._ai_config_button.setVisible(not getattr(self, "_server_mode", False))
         self._mode_row_widget.setVisible(True)
         self._play_row_widget.setVisible(True)
 

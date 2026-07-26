@@ -21,10 +21,13 @@ from app.services.account_resolver import AccountResolver
 from app.services.chat_service import ChatLogService
 from app.services.license_service import LicenseService
 from app.services.settings_service import SettingsService
+from app.services.server_api_client import ServerApiClient
+from app.services.server_mode_settings import ServerModeSettings
 from app.services.summary_check_report_service import SummaryCheckReportService
 from app.services.update_installer import schedule_update_install
 from app.services.update_service import download_and_verify, fetch_manifest, update_available
 from app.ui.license_generator_dialog import LicenseGeneratorDialog
+from app.ui.server_mode_dialog import ServerModeDialog
 from app.ui.main_window_actions import MainWindowActionsMixin
 from app.ui.main_window_blocking import MainWindowBlockingMixin
 from app.ui.main_window_data import MainWindowDataMixin
@@ -64,6 +67,8 @@ class MainWindow(
         self.settings_service = SettingsService()
         self.account_resolver = AccountResolver()
         self.settings = self.settings_service.load()
+        self.server_mode_settings = ServerModeSettings.from_dict(self.settings.get("server_mode"))
+        self.server_api_client = ServerApiClient(self.server_mode_settings.base_url)
         summary_export_dir = str(self.settings.get("export_dir", "") or "").strip()
         self.summary_check_report_service = SummaryCheckReportService(Path(summary_export_dir).expanduser() if summary_export_dir else Path.cwd())
         self.auto_bet_service = AutoBetService()
@@ -176,6 +181,9 @@ class MainWindow(
         proxy_action = QAction("代理设置", self)
         proxy_action.triggered.connect(self._open_proxy_settings)
         help_menu.addAction(proxy_action)
+        server_mode_action = QAction("服务器模式", self)
+        server_mode_action.triggered.connect(self._open_server_mode_settings)
+        help_menu.addAction(server_mode_action)
         if IS_ADMIN_VERSION:
             license_action = QAction("生成激活码", self)
             license_action.triggered.connect(self._show_admin_license_panel)
@@ -216,6 +224,39 @@ class MainWindow(
             return
         dlg = LicenseGeneratorDialog(self.license_service, self)
         dlg.exec()
+
+    def _open_server_mode_settings(self) -> None:
+        from app.services.local_wss_credentials import LocalWssCredentialProvider
+        from app.services.wuquan_account_mapping import DEFAULT_SHARED_PREFS
+
+        resolved = getattr(self, "resolved_db", None)
+        account_id = str(getattr(resolved, "accid", "") or "").strip()
+        local_wss = LocalWssCredentialProvider(DEFAULT_SHARED_PREFS).read(account_id) if account_id else None
+        dialog = ServerModeDialog(
+            settings=self.server_mode_settings,
+            machine_code=self.license_service.get_machine_code(),
+            license_token=self.license_service.local_license_token(),
+            wss_credentials=(local_wss.appid, local_wss.accid, local_wss.user_sig) if local_wss else None,
+            parent=self,
+        )
+        if dialog.exec() != dialog.Accepted:
+            return
+        if self.server_api_client.is_authenticated:
+            try:
+                self.server_api_client.logout()
+            except Exception:
+                logger.debug("Previous server session could not be logged out", exc_info=True)
+        self.server_mode_settings = dialog.settings
+        self.server_api_client = dialog.client or ServerApiClient(dialog.settings.base_url)
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "set_server_mode"):
+            panel.set_server_mode(dialog.settings.enabled)
+        self.settings["server_mode"] = dialog.settings.to_dict()
+        self.settings_service.save(self.settings)
+        self._set_status(
+            "服务器模式已登录" if dialog.settings.enabled else "服务器模式已关闭",
+            "info",
+        )
 
     def _set_status(self, message: str, log_level: str = "debug") -> None:
         if hasattr(self, "status_label"):
@@ -267,6 +308,11 @@ class MainWindow(
             self._auto_bet_timer.stop()
         if hasattr(self, "auto_bet_service"):
             self.auto_bet_service.stop()
+        if getattr(self, "server_api_client", None) is not None and self.server_api_client.is_authenticated:
+            try:
+                self.server_api_client.logout()
+            except Exception:
+                logger.debug("Server session logout failed during shutdown", exc_info=True)
         self._worker.shutdown(wait=False, cancel_futures=True)
         self._data_worker.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)

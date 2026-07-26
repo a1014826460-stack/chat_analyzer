@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Protocol
 
 from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, PendingAiBet, StrategyConfig, allowed_play_types_for_config
+from app.services.frequency_probability_analysis import FrequencyProbabilityAnalysis, FrequencyProbabilityAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,8 @@ class AutoBetService:
         self._ai_skipped_keys: set[tuple[str, str]] = set()
         self._ai_waiting_keys: set[tuple[str, str]] = set()
         self._on_ai_pending_updated: Callable[[PendingAiBet | None], None] | None = None
+        self._frequency_analyzer = FrequencyProbabilityAnalyzer()
+        self._frequency_analysis: FrequencyProbabilityAnalysis | None = None
 
     # ------------------------------------------------------------------
     # Configuration
@@ -107,6 +110,31 @@ class AutoBetService:
     def set_result_provider(self, provider: DrawResultProvider | None) -> None:
         with self._lock:
             self._result_provider = provider
+
+    @property
+    def frequency_analysis(self) -> FrequencyProbabilityAnalysis | None:
+        with self._lock:
+            return self._frequency_analysis
+
+    def refresh_frequency_analysis(
+        self, site: str | None = None, *, target_period: str = ""
+    ) -> FrequencyProbabilityAnalysis | None:
+        with self._lock:
+            cfg = self._config
+            provider = self._result_provider
+        active_site = str(site or cfg.site).strip()
+        if provider is None or not active_site:
+            return None
+        analysis = self._frequency_analyzer.analyze(
+            active_site,
+            provider.get_recent_results(active_site, cfg.ai_history_count + 1),
+            history_count=cfg.ai_history_count,
+            confidence_threshold=cfg.ai_confidence_threshold,
+            target_period=target_period,
+        )
+        with self._lock:
+            self._frequency_analysis = analysis
+        return analysis
 
     def set_ai_client(self, client: AiRecommendationClient | None) -> None:
         with self._lock:
@@ -300,12 +328,14 @@ class AutoBetService:
         if not period or result_provider is None:
             return
         self.settle_pending_rounds(result_provider)
-        doors, excluded, excluded_count = self._three_door_plays(cfg, result_provider, target_period=period)
-        if len(doors) != 3:
-            self._add_ai_status_log(site, period, "三门下注跳过：没有可用的复合玩法历史记录", success=False)
+        analysis = self.refresh_frequency_analysis(site, target_period=period)
+        if analysis is None or len(analysis.selected_plays) != 3 or not analysis.should_bet:
+            reason = analysis.reason if analysis is not None else "没有可用的复合玩法历史记录"
+            self._add_ai_status_log(site, period, f"三门下注跳过：{reason}", success=False)
             return
+        doors = list(analysis.selected_plays)
         amount = self._current_bet_amount(cfg) if cfg.strategy_type == "martingale" else float(cfg.bet_amount)
-        reason = f"三门历史频率排除{excluded}({excluded_count}次)"
+        reason = f"三门历史频率：{analysis.reason}"
         decisions = [
             BetDecision(True, play, amount, group_id, reason)
             for group_id in cfg.target_groups
@@ -393,8 +423,8 @@ class AutoBetService:
             return self._martingale_decisions(cfg, mode, amount, target_groups)
 
         if mode == "three_doors":
-            doors, excluded, excluded_count = self._three_door_plays(cfg, result_provider)
-            if len(doors) != 3:
+            analysis = self._analyze_frequency(cfg, result_provider)
+            if analysis is None or len(analysis.selected_plays) != 3 or not analysis.should_bet:
                 return []
             return [
                 BetDecision(
@@ -402,10 +432,10 @@ class AutoBetService:
                     play,
                     amount,
                     group_id,
-                    f"\u4e09\u95e8\u5386\u53f2\u9891\u7387\u6392\u9664{excluded}({excluded_count}\u6b21)",
+                    f"\u4e09\u95e8\u5386\u53f2\u9891\u7387：{analysis.reason}",
                 )
                 for group_id in target_groups
-                for play in doors
+                for play in analysis.selected_plays
             ]
 
         if result_provider is None:
@@ -459,29 +489,23 @@ class AutoBetService:
             for play in plays
         ]
 
-    @staticmethod
-    def _three_door_plays(
+    def _analyze_frequency(
+        self,
         cfg: StrategyConfig,
         result_provider: DrawResultProvider | None,
         *,
         target_period: str = "",
-    ) -> tuple[list[str], str, int]:
+    ) -> FrequencyProbabilityAnalysis | None:
         if result_provider is None:
-            return [], "", 0
+            return None
         results = result_provider.get_recent_results(cfg.site, cfg.ai_history_count + 1)
-        if target_period:
-            results = [
-                result for result in results
-                if AutoBetService._history_period_precedes_target(result.period, target_period)
-            ]
-        counts = {door: 0 for door in THREE_DOOR_PLAYS}
-        for result in results:
-            if result.result in counts:
-                counts[result.result] += 1
-        if not any(counts.values()):
-            return [], "", 0
-        excluded = min(THREE_DOOR_PLAYS, key=lambda door: (counts[door], THREE_DOOR_PLAYS.index(door)))
-        return [door for door in THREE_DOOR_PLAYS if door != excluded], excluded, counts[excluded]
+        return self._frequency_analyzer.analyze(
+            cfg.site,
+            results,
+            history_count=cfg.ai_history_count,
+            confidence_threshold=cfg.ai_confidence_threshold,
+            target_period=target_period,
+        )
 
     # ------------------------------------------------------------------
     # Strategy: AI Recommendation

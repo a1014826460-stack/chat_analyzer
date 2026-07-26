@@ -92,6 +92,12 @@ class LicenseService:
             return False
         return self._verify_time_integrity()
 
+    def local_license_token(self) -> str:
+        """Return the signed local entitlement only after full local verification."""
+        if not self.is_activated():
+            return ""
+        return str(self._load_state().get(ACTIVATION_CODE_FIELD, "")).strip()
+
     def _verify_time_integrity(self) -> bool:
         state = self._load_state()
         last_seen_str = str(state.get(LAST_SEEN_FIELD, "")).strip()

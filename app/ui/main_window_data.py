@@ -745,8 +745,44 @@ class MainWindowDataMixin:
     # Auto Bet Integration
     # ------------------------------------------------------------------
 
+    def _refresh_auto_bet_frequency_analysis(
+        self,
+        site: str,
+        target_period: str = "",
+    ) -> None:
+        """Publish an explicit history-cache analysis update to the auto-bet panel."""
+        panel = getattr(self, "auto_bet_panel", None)
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            client = getattr(self, "server_api_client", None)
+            config = panel.get_config() if panel is not None and hasattr(panel, "get_config") else None
+            if client is None or config is None or not getattr(client, "is_authenticated", False):
+                return
+            try:
+                panel.update_frequency_analysis(client.frequency_analysis(
+                    site,
+                    history_count=config.ai_history_count,
+                    confidence_threshold=config.ai_confidence_threshold,
+                ))
+            except Exception as exc:
+                logger.debug("Unable to refresh server frequency analysis: %s", exc)
+            return
+        service = getattr(self, "auto_bet_service", None)
+        if (
+            service is None
+            or getattr(service, "_result_provider", None) is None
+            or not hasattr(service, "refresh_frequency_analysis")
+            or panel is None
+            or not hasattr(panel, "update_frequency_analysis")
+        ):
+            return
+        analysis = service.refresh_frequency_analysis(site, target_period=target_period)
+        panel.update_frequency_analysis(analysis)
+
     def _on_auto_bet_tick(self) -> None:
         """Called by auto_bet timer to evaluate betting strategy."""
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            self._refresh_server_pending_bet()
+            return
         service = getattr(self, "auto_bet_service", None)
         if service is None or not service.is_running:
             return
@@ -764,6 +800,8 @@ class MainWindowDataMixin:
             period_start_time=getattr(info, "start_time", None),
             period_end_time=getattr(info, "next_time", None),
         )
+        if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+            self._refresh_auto_bet_frequency_analysis(active_site, target_period)
         if service.runtime_state.halted:
             self._on_auto_bet_risk_halted(service.runtime_state.halt_reason)
         panel = getattr(self, "auto_bet_panel", None)
@@ -787,7 +825,83 @@ class MainWindowDataMixin:
         if panel is not None and hasattr(panel, "show_pending_ai_recommendation"):
             panel.show_pending_ai_recommendation(pending)
 
+    def _start_server_auto_bet(self) -> None:
+        """Server mode leaves crawling, AI, and WSS sending on the backend."""
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None:
+            return
+        try:
+            config = panel.get_config()
+            validation_errors = config.start_validation_errors(require_ai_credentials=False)
+            if validation_errors:
+                QMessageBox.warning(self, "无法启动自动下注", "\n".join(validation_errors))
+                panel.set_running(False)
+                return
+            self.server_api_client.save_strategy({
+                "enabled": True,
+                "site": config.site,
+                "target_groups": config.target_groups,
+                "history_count": config.ai_history_count,
+                "confidence_threshold": config.ai_confidence_threshold,
+                "require_confirmation": config.ai_require_confirmation,
+                "bet_amount": config.bet_amount,
+            })
+            panel.set_running(True)
+            self._refresh_server_pending_bet()
+            timer = getattr(self, "_auto_bet_timer", None)
+            if timer is not None:
+                timer.start()
+        except Exception as exc:
+            logger.warning("Unable to start server auto-bet: %s", exc)
+            panel.set_running(False)
+
+    def _refresh_server_pending_bet(self) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None:
+            return
+        try:
+            items = self.server_api_client.pending_bets()
+        except Exception as exc:
+            logger.debug("Unable to refresh server pending bets: %s", exc)
+            return
+        if not items:
+            panel.show_pending_server_bet(None)
+            return
+        item = items[0]
+        from app.models.auto_bet import PendingAiBet
+
+        panel.show_pending_server_bet(PendingAiBet(
+            site=str(item.get("site", "")), period=str(item.get("period", "")),
+            play_type=str(item.get("play_type", "")), amount=float(item.get("amount", 0)),
+            reason="等待服务器确认下注", created_at=datetime.now(),
+        ), order_id=int(item["id"]))
+
+    def _confirm_server_pending_bet(self) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        bet_id = getattr(panel, "server_pending_bet_id", None) if panel is not None else None
+        if not bet_id:
+            return
+        try:
+            self.server_api_client.confirm_bet(bet_id)
+            self._refresh_server_pending_bet()
+        except Exception as exc:
+            logger.warning("Unable to confirm server bet: %s", exc)
+
+    def _skip_server_pending_bet(self) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        bet_id = getattr(panel, "server_pending_bet_id", None) if panel is not None else None
+        if not bet_id:
+            return
+        try:
+            self.server_api_client.skip_bet(bet_id)
+            self._refresh_server_pending_bet()
+        except Exception as exc:
+            logger.warning("Unable to skip server bet: %s", exc)
+
     def _on_confirm_ai_bet(self) -> None:
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            self._confirm_server_pending_bet()
+            return
         service = getattr(self, "auto_bet_service", None)
         panel = getattr(self, "auto_bet_panel", None)
         if service is None or panel is None:
@@ -809,6 +923,9 @@ class MainWindowDataMixin:
         panel.update_runtime_state(service.runtime_state)
 
     def _on_skip_ai_bet(self) -> None:
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            self._skip_server_pending_bet()
+            return
         service = getattr(self, "auto_bet_service", None)
         panel = getattr(self, "auto_bet_panel", None)
         if service is None or panel is None:
@@ -836,9 +953,25 @@ class MainWindowDataMixin:
             service.apply_config(config)
             self.settings["auto_bet"] = config.to_dict()
             self.settings_service.save(self.settings)
+            if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+                try:
+                    self.server_api_client.save_strategy({
+                        "enabled": config.enabled,
+                        "site": config.site,
+                        "target_groups": config.target_groups,
+                        "history_count": config.ai_history_count,
+                        "confidence_threshold": config.ai_confidence_threshold,
+                        "require_confirmation": config.ai_require_confirmation,
+                        "bet_amount": config.bet_amount,
+                    })
+                except Exception as exc:
+                    logger.warning("Unable to save server auto-bet strategy: %s", exc)
 
     def _on_auto_bet_start(self) -> None:
         """Start the auto bet engine."""
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            self._start_server_auto_bet()
+            return
         service = getattr(self, "auto_bet_service", None)
         if service is None:
             return
@@ -940,6 +1073,8 @@ class MainWindowDataMixin:
         history_count = svc_cfg.ai_history_count
         store.ensure_data(svc_cfg.site, min_count=history_count)
         service.set_result_provider(store)
+        if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+            self._refresh_auto_bet_frequency_analysis(svc_cfg.site)
         if hasattr(service, "set_ai_prediction_store"):
             prediction_store = AiPredictionStore(Path(user_data_dir()) / "ai_predictions.db")
             service.set_ai_prediction_store(prediction_store)
@@ -964,6 +1099,14 @@ class MainWindowDataMixin:
 
     def _on_auto_bet_stop(self) -> None:
         """Stop the auto bet engine."""
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            panel = getattr(self, "auto_bet_panel", None)
+            if panel is not None:
+                panel.set_running(False)
+            timer = getattr(self, "_auto_bet_timer", None)
+            if timer is not None:
+                timer.stop()
+            return
         service = getattr(self, "auto_bet_service", None)
         if service is not None:
             service.stop()
@@ -1021,6 +1164,9 @@ class MainWindowDataMixin:
         if getattr(self, "_auto_bet_panel_connected", False):
             return
         self._auto_bet_panel_connected = True
+        panel.set_server_mode(bool(
+            getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled
+        ))
 
         # Wire signals
         panel.config_changed.connect(self._on_auto_bet_config_changed)

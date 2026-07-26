@@ -66,6 +66,7 @@ class HistoryFetcher:
             period=period,
             result=normalize_result_label(site, total),
             open_time=open_time,
+            total=int(total),
         )
 
 

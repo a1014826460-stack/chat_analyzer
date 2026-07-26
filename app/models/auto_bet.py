@@ -17,6 +17,7 @@ class DrawResult:
     site: str             # "pc28" | "macao" | "australia" | "norway"
     result: str           # "大" | "小" | "单" | "双" | numeric string
     open_time: datetime | None = None
+    total: int | None = None  # Original numeric sum, when supplied by the history source.
 
 
 @dataclass
@@ -121,7 +122,12 @@ class StrategyConfig:
             missing.append("API Key")
         return missing
 
-    def start_validation_errors(self, *, require_execution_targets: bool = True) -> list[str]:
+    def start_validation_errors(
+        self,
+        *,
+        require_execution_targets: bool = True,
+        require_ai_credentials: bool = True,
+    ) -> list[str]:
         """Return configuration problems that block a requested start action."""
         errors: list[str] = []
         if require_execution_targets and not self.target_groups:
@@ -130,7 +136,8 @@ class StrategyConfig:
             errors.append("请至少选择一个推荐玩法")
         if not self.has_all_valid_odds():
             errors.append("请填写全部玩法的有效赔率")
-        errors.extend(self.missing_ai_fields())
+        if require_ai_credentials:
+            errors.extend(self.missing_ai_fields())
         if require_execution_targets and self.strategy_type == "martingale" and not self.martingale_sequence:
             errors.append("请填写有效的倍投序列")
         return errors

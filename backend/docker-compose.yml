@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: startrace
+      POSTGRES_USER: startrace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set-in-.env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U startrace -d startrace"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis_data:/data
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    build: .
+    command: ["python", "-m", "server_api.worker"]
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:

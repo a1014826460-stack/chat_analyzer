@@ -37,6 +37,52 @@ def test_auto_bet_tick_uses_next_period_as_the_betting_target():
     assert calls[0][0][2] == "3458211"
 
 
+def test_frequency_analysis_refresh_publishes_a_cached_analysis_without_running():
+    from types import SimpleNamespace
+
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    analysis = object()
+    calls = []
+    service = SimpleNamespace(
+        _result_provider=object(),
+        refresh_frequency_analysis=lambda site, target_period="": calls.append((site, target_period)) or analysis,
+    )
+    panel = SimpleNamespace(update_frequency_analysis=lambda value: calls.append(value))
+    window = SimpleNamespace(auto_bet_service=service, auto_bet_panel=panel)
+
+    MainWindowDataMixin._refresh_auto_bet_frequency_analysis(window, "pc28", "1002")
+
+    assert calls == [("pc28", "1002"), analysis]
+
+
+def test_auto_bet_tick_publishes_frequency_analysis_after_service_tick():
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.models.auto_bet import AutoBetRuntimeState, StrategyConfig
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = []
+    service = SimpleNamespace(
+        is_running=True,
+        runtime_state=AutoBetRuntimeState(),
+        config=StrategyConfig(site="pc28"),
+        tick=lambda *args, **kwargs: calls.append(("tick", args, kwargs)),
+    )
+    window = SimpleNamespace(
+        auto_bet_service=service,
+        auto_bet_panel=None,
+        _active_site="pc28",
+        _draw_infos={"pc28": DrawInfo(current_period="1001", next_period="1002", next_countdown=120)},
+        _refresh_auto_bet_frequency_analysis=lambda site, period: calls.append(("analysis", site, period)),
+    )
+
+    MainWindowDataMixin._on_auto_bet_tick(window)
+
+    assert calls[1] == ("analysis", "pc28", "1002")
+
+
 class FakeFetcher:
     def __init__(self, results: list[DrawResult] | None = None) -> None:
         self.results = results or []
@@ -75,9 +121,25 @@ def test_history_fetcher_converts_normalized_history_records_to_draw_results(mon
     results = HistoryFetcher().fetch("pc28", count=3)
 
     assert results == [
-        DrawResult(site="pc28", period="1001", result="小单", open_time=datetime(2026, 7, 4, 1)),
-        DrawResult(site="pc28", period="1002", result="大双", open_time=datetime(2026, 7, 4, 2)),
+        DrawResult(site="pc28", period="1001", result="小单", open_time=datetime(2026, 7, 4, 1), total=13),
+        DrawResult(site="pc28", period="1002", result="大双", open_time=datetime(2026, 7, 4, 2), total=14),
     ]
+
+
+def test_history_fetcher_and_store_preserve_numeric_draw_total(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.history_fetchers.fetch_history_records",
+        lambda *_args, **_kwargs: [
+            {"site": "pc28", "period": "1001", "open_time": None, "sum": 13},
+        ],
+    )
+
+    fetched = HistoryFetcher().fetch("pc28", count=1)
+
+    assert fetched == [DrawResult("1001", "pc28", "小单", total=13)]
+    store = DrawResultStore(tmp_path / "draw.db", fetcher=FakeFetcher([]))
+    store.insert_results("pc28", fetched)
+    assert store.get_result("pc28", "1001").total == 13
 
 
 def test_history_fetcher_clamps_requested_count_to_the_site_history_limit(monkeypatch):

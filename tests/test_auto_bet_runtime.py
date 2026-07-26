@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResult, StrategyConfig, allowed_play_types_for_config
 from app.services.auto_bet_service import AutoBetService
@@ -164,6 +164,7 @@ def test_three_doors_uses_history_to_choose_three_doors_with_current_step_amount
     cfg = StrategyConfig(
         site="pc28",
         bet_mode="three_doors",
+        ai_confidence_threshold=0,
         martingale_sequence=[100, 200, 400],
         target_groups=["207191791"],
     )
@@ -176,11 +177,10 @@ def test_three_doors_uses_history_to_choose_three_doors_with_current_step_amount
         DrawResult("3", "pc28", "大单"),
     ]))
 
-    assert decisions == [
-        BetDecision(True, "小单", 200.0, "207191791", "三门历史频率排除小双(0次)"),
-        BetDecision(True, "大双", 200.0, "207191791", "三门历史频率排除小双(0次)"),
-        BetDecision(True, "大单", 200.0, "207191791", "三门历史频率排除小双(0次)"),
+    assert [(item.play_type, item.amount) for item in decisions] == [
+        ("小单", 200.0), ("大双", 200.0), ("大单", 200.0),
     ]
+    assert all("排除小双(0.0%)" in item.reason for item in decisions)
 
 
 def test_three_doors_excludes_the_least_frequent_composite_result():
@@ -201,12 +201,14 @@ def test_three_doors_excludes_the_least_frequent_composite_result():
     decisions = svc._analyze_many(cfg, provider)
 
     assert [decision.play_type for decision in decisions] == ["小单", "大双", "大单"]
-    assert all("排除小双(0次)" in decision.reason for decision in decisions)
+    assert all("排除小双(0.0%)" in decision.reason for decision in decisions)
 
 
 def test_three_doors_uses_fixed_order_to_break_frequency_ties():
     svc = AutoBetService()
-    cfg = StrategyConfig(site="pc28", bet_mode="three_doors", target_groups=["g1"])
+    cfg = StrategyConfig(
+        site="pc28", bet_mode="three_doors", target_groups=["g1"], ai_confidence_threshold=0,
+    )
     provider = Provider(recent=[
         DrawResult("1", "pc28", "大单"),
         DrawResult("2", "pc28", "大双"),
@@ -217,7 +219,7 @@ def test_three_doors_uses_fixed_order_to_break_frequency_ties():
     decisions = svc._analyze_many(cfg, provider)
 
     assert [decision.play_type for decision in decisions] == ["大双", "小双", "大单"]
-    assert all("排除小单(1次)" in decision.reason for decision in decisions)
+    assert all("排除小单(25.0%)" in decision.reason for decision in decisions)
 
 
 def test_three_doors_skips_without_a_recognized_composite_history_result():
@@ -226,6 +228,47 @@ def test_three_doors_skips_without_a_recognized_composite_history_result():
     provider = Provider(recent=[DrawResult("1", "pc28", "未知")])
 
     assert svc._analyze_many(cfg, provider) == []
+
+
+def test_three_doors_sends_all_retained_plays_when_any_probability_meets_threshold():
+    service = AutoBetService()
+    cfg = StrategyConfig(
+        site="pc28",
+        bet_mode="three_doors",
+        target_groups=["g1"],
+        ai_history_count=20,
+        ai_confidence_threshold=60,
+    )
+    provider = Provider(recent=[
+        DrawResult("1", "pc28", "大单"),
+        DrawResult("2", "pc28", "大单"),
+        DrawResult("3", "pc28", "大单"),
+        DrawResult("4", "pc28", "小单"),
+    ])
+
+    decisions = service._analyze_many(cfg, provider)
+
+    assert [decision.play_type for decision in decisions] == ["小单", "小双", "大单"]
+    assert all("阈值60%" in decision.reason for decision in decisions)
+
+
+def test_three_doors_skips_when_no_retained_play_meets_confidence_threshold():
+    service = AutoBetService()
+    cfg = StrategyConfig(
+        site="pc28",
+        bet_mode="three_doors",
+        target_groups=["g1"],
+        ai_history_count=20,
+        ai_confidence_threshold=51,
+    )
+    provider = Provider(recent=[
+        DrawResult("1", "pc28", "小单"),
+        DrawResult("2", "pc28", "大双"),
+        DrawResult("3", "pc28", "小双"),
+        DrawResult("4", "pc28", "大单"),
+    ])
+
+    assert service._analyze_many(cfg, provider) == []
 
 
 def test_two_door_mode_uses_current_step_amount_and_selected_allowed_play():
@@ -529,7 +572,7 @@ def test_tick_places_dynamic_three_doors_without_calling_ai_and_excludes_target_
     client = AiClient()
     service.apply_config(StrategyConfig(
         strategy_type="flat", site="pc28", bet_mode="three_doors", target_groups=["g1"],
-        ai_history_count=20,
+        ai_history_count=20, ai_confidence_threshold=0,
     ))
     service.set_injector(sender)
     service.set_result_provider(Provider(recent=[
@@ -569,7 +612,7 @@ def test_dynamic_three_doors_refreshes_history_then_logs_settlement_for_the_bet_
     provider = RefreshingProvider()
     service.apply_config(StrategyConfig(
         strategy_type="flat", site="pc28", bet_mode="three_doors", target_groups=["g1"],
-        ai_history_count=20,
+        ai_history_count=20, ai_confidence_threshold=0,
     ))
     service.set_injector(sender)
     service.set_result_provider(provider)
