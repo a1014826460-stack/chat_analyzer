@@ -1,16 +1,8 @@
-.venv/
-build/
-dist/
-__pycache__/
-*.spec
+# Python bytecode and test/tool caches
+**/__pycache__/
+*.py[cod]
+*.pyo
 *.pyc
-.chat_analyzer/
-summary_check/
-WuQuan/
-.playwright-mcp/
-
-*.exe
-.codex_recovery/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -18,17 +10,35 @@ WuQuan/
 .coverage.*
 htmlcov/
 
-# Logs
+# Virtual environments and package metadata
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+
+# Local application state, logs, and temporary captures
+.chat_analyzer/
+WuQuan/
+logs/
 *.log
 chat_log.txt
-logs/
+summary_check/
+tmp_*
+.playwright-mcp/
+.superpowers/
+.codex_recovery/
 
-# Auto-generated embedded keys (written by tools/build.py)
-app/_embedded_keys.py
-
-# Local env / secrets
+# Sensitive local configuration and credentials
 .env
 .env.*
+!.env.example
+build_env.bat
+release_user_config.bat
+release_user_config.ps1
+secrets/
+keys/
+*_creds.json
 *.pem
 *.key
 *.p12
@@ -38,16 +48,22 @@ app/_embedded_keys.py
 *.der
 *.jks
 *.keystore
-secrets.*
 
-# Databases / local app data
+# Local application databases and generated data
+*.csv
 *.db
 *.sqlite
 *.sqlite3
 *.db-journal
 *.sqlite-journal
+data/generated/
+data/local/
 
-# Build outputs / large generated assets
+# Build and distribution artifacts
+build/
+dist/
+*.spec
+*.exe
 *.zip
 *.7z
 *.rar
@@ -65,11 +81,13 @@ secrets.*
 *.so
 *.dylib
 *.pdb
-main.dart.js
+app/_embedded_keys.py
 
-# Archived / decluttered files
-archive/
+# Operating system and notebook artifacts
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
 
-# Temporary analysis & capture artifacts
-tmp_*
-.superpowers/
+# Local worktree directories
+.worktrees/
+worktrees/

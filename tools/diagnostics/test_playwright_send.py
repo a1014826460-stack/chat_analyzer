@@ -4,14 +4,14 @@ Finds the message input field and chat target, types the message,
 presses Enter to send. Uses persistent browser context for auto-login.
 
 Usage:
-    .\.venv\Scripts\python.exe tools\test_playwright_send.py [group_id] [text]
+    .\.venv\Scripts\python.exe tools\diagnostics\test_playwright_send.py [group_id] [text]
 """
 from __future__ import annotations
 
 import sys, time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from playwright.sync_api import sync_playwright
 

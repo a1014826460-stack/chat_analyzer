@@ -2107,7 +2107,7 @@ def test_chat_service_can_build_offline_robot_summary_diagnostics_for_real_messa
 def test_diagnose_robot_summary_serializes_nested_datetimes() -> None:
     from datetime import datetime
 
-    from tools.diagnose_robot_summary import _serialize_diagnostics
+    from tools.diagnostics.diagnose_robot_summary import _serialize_diagnostics
 
     rows = [
         {

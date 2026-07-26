@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_inspect_wuquan_ui_script_exists_and_documents_usage():
-    path = Path("tools/inspect_wuquan_ui.py")
+    path = Path("tools/diagnostics/inspect_wuquan_ui.py")
 
     assert path.exists()
     source = path.read_text(encoding="utf-8")
@@ -15,7 +15,7 @@ def test_inspect_wuquan_ui_script_exists_and_documents_usage():
 
 
 def test_window_ranking_prefers_normal_flutter_window_over_offscreen_and_ime():
-    from tools.inspect_wuquan_ui import WindowInfo, rank_window_candidate
+    from tools.diagnostics.inspect_wuquan_ui import WindowInfo, rank_window_candidate
 
     offscreen_main = WindowInfo(
         hwnd=1,
@@ -50,6 +50,6 @@ def test_window_ranking_prefers_normal_flutter_window_over_offscreen_and_ime():
 
 
 def test_uia_dump_does_not_use_missing_pywinauto_ancestors_method():
-    source = Path("tools/inspect_wuquan_ui.py").read_text(encoding="utf-8")
+    source = Path("tools/diagnostics/inspect_wuquan_ui.py").read_text(encoding="utf-8")
 
     assert ".ancestors(" not in source

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tools._unrecovered_tool import main
+from tools.diagnostics._unrecovered_tool import main
 
 
 if __name__ == "__main__":

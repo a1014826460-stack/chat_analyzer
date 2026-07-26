@@ -140,7 +140,7 @@ def test_uia_sender_fails_when_target_group_cannot_be_opened(tmp_path):
 
 
 def test_uia_wuquan_group_message_tool_exists():
-    path = Path("tools/test_uia_wuquan_group_message.py")
+    path = Path("tools/diagnostics/test_uia_wuquan_group_message.py")
 
     assert path.exists()
     source = path.read_text(encoding="utf-8")

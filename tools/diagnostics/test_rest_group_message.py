@@ -1,10 +1,10 @@
 """Manual REST group-message test.
 
 Usage:
-    python tools/test_rest_group_message.py <account_name_or_accid> [group_id] [text]
+    python tools/diagnostics/test_rest_group_message.py <account_name_or_accid> [group_id] [text]
 
 Example:
-    .\.venv\Scripts\python.exe tools\test_rest_group_message.py lin2225427 207191791 "小单 1"
+    .\.venv\Scripts\python.exe tools\diagnostics\test_rest_group_message.py lin2225427 207191791 "小单 1"
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -43,7 +43,7 @@ def _load_user_sig(accid: str) -> str:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python tools/test_rest_group_message.py <account_name_or_accid> [group_id] [text]")
+        print("Usage: python tools/diagnostics/test_rest_group_message.py <account_name_or_accid> [group_id] [text]")
         return 2
 
     username = sys.argv[1]

@@ -11,8 +11,8 @@ import time
 from playwright.async_api import async_playwright
 
 SDK_APP_ID = 20011216
-ACCID = "A7MYtCxL8"
-USER_SIG = "eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwo7mvpElzhU*FlDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWxsbmJhbgI1JDMdqD84KcvXMKssMi2zzNu9NCwos6AgzTfQOVzb2KmywrvQMCg5MqIi1SvFJMzTVqkWAJiPMnI_"
+ACCID = ""
+USER_SIG = ""
 
 
 def frame(head: dict, body: dict) -> str:
@@ -41,8 +41,8 @@ def login_head(seq: int, accid: str, usersig: str, sdk_app_id: int) -> dict:
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--accid", default=ACCID)
-    ap.add_argument("--user-sig", default=USER_SIG)
+    ap.add_argument("--accid", default=ACCID, required=not bool(ACCID))
+    ap.add_argument("--user-sig", default=USER_SIG, required=not bool(USER_SIG))
     ap.add_argument("--sdk-app-id", type=int, default=SDK_APP_ID)
     ap.add_argument("--endpoint", default="wss://wsssgp.my-imcloud.com/binfo")
     ap.add_argument("--timeout", type=float, default=20)

@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
 
 SDK_APP_ID = 20011216
 IDENTIFIER = "A7MYtCxL8"
-USER_SIG = "eJyrVgrxCdYrSy1SslIy0jNQ0gHzM1NS80oy0zLBwo7mvpElzhU*FlDJ4pTsxIKCzBSQDgMDQ0MjQzOoTGpFQWZRqpKVoZGlmYGBAUSwJDMXJGRuYWxsbmJhbgI1JDMdqD84KcvXMKssMi2zzNu9NCwos6AgzTfQOVzb2KmywrvQMCg5MqIi1SvFJMzTVqkWAJiPMnI_"
+USER_SIG = ""
 DEFAULT_GROUP_ID = "207191791"
 DEFAULT_TEXT = "小单 1"
 FRONTEND_AES_KEY = "666888"
@@ -387,7 +387,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tencent IM WSS login/send/receive probe")
     parser.add_argument("--sdk-app-id", default=str(SDK_APP_ID))
     parser.add_argument("--accid", default=IDENTIFIER)
-    parser.add_argument("--user-sig", default=USER_SIG)
+    parser.add_argument("--user-sig", default=USER_SIG, required=not bool(USER_SIG))
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
     parser.add_argument("--text", default=DEFAULT_TEXT)
     parser.add_argument("--endpoint", default=WS_ENDPOINTS[0], choices=WS_ENDPOINTS)

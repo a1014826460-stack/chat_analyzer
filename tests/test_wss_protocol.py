@@ -3,7 +3,7 @@
 import base64
 import json
 
-import tests.tests_wss as wss
+import tools.diagnostics.probe_wss as wss
 
 
 def test_encode_frame_matches_websdk_direct_json_binary_frame():

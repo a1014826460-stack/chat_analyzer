@@ -4,11 +4,11 @@ Opens an independent WebSocket connection to Tencent IM — does NOT
 create an SDK login session, so WuQuan stays online.
 
 Usage:
-    python tools/test_ws_group_message.py <account_name_or_accid> [group_id] [text]
+    python tools/diagnostics/test_ws_group_message.py <account_name_or_accid> [group_id] [text]
 
 Example:
-    .\.venv\Scripts\python.exe tools\test_ws_group_message.py x1DuArYgV 207191791 "小单 1"
-    .\.venv\Scripts\python.exe tools\test_ws_group_message.py 齐天大圣 207191791 "大 100"
+    .\.venv\Scripts\python.exe tools\diagnostics\test_ws_group_message.py x1DuArYgV 207191791 "小单 1"
+    .\.venv\Scripts\python.exe tools\diagnostics\test_ws_group_message.py 齐天大圣 207191791 "大 100"
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -46,11 +46,11 @@ def _load_user_sig(accid: str) -> str:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python tools/test_ws_group_message.py <account_name_or_accid> [group_id] [text]")
+        print("Usage: python tools/diagnostics/test_ws_group_message.py <account_name_or_accid> [group_id] [text]")
         print()
         print("Examples:")
-        print("  .\\.venv\\Scripts\\python.exe tools\\test_ws_group_message.py 齐天大圣 207191791 \"小单 1\"")
-        print("  .\\.venv\\Scripts\\python.exe tools\\test_ws_group_message.py x1DuArYgV 207191791 \"大 100\"")
+        print("  .\\.venv\\Scripts\\python.exe tools\\diagnostics\\test_ws_group_message.py 齐天大圣 207191791 \"小单 1\"")
+        print("  .\\.venv\\Scripts\\python.exe tools\\diagnostics\\test_ws_group_message.py x1DuArYgV 207191791 \"大 100\"")
         return 2
 
     username = sys.argv[1]

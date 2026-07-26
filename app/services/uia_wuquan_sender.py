@@ -7,7 +7,7 @@ from typing import Callable, Protocol
 
 from app.services.chat_service import ChatLogService
 from app.services.local_message_verifier import capture_message_cursor, local_message_exists
-from tools.inspect_wuquan_ui import find_windows
+from tools.diagnostics.inspect_wuquan_ui import find_windows
 
 
 logger = logging.getLogger(__name__)

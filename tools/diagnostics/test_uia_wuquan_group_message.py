@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -56,7 +56,7 @@ def main() -> int:
         print("OK: UIA send completed and target group/content row was found in msg_0.db.")
         return 0
     print("FAILED: UIA send was not verified in msg_0.db within timeout.")
-    print("Tip: run tools/inspect_wuquan_ui.py again and confirm Edit controls and target group name are visible.")
+    print("Tip: run tools/diagnostics/inspect_wuquan_ui.py again and confirm Edit controls and target group name are visible.")
     return 2
 
 

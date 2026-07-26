@@ -1,11 +1,11 @@
 """Send a C2C message through TencentCloudChat Web WSS without ImSDK login.
 
-This intentionally reuses the Web WSS protocol in tests/tests_wss.py, so it does
+This intentionally reuses the Web WSS protocol in `probe_wss.py`, so it does
 not call ImSDK and will not trigger the native SDK multi-login/kick behavior.
 
 Examples:
-    .\.venv\Scripts\python.exe tools\test_web_wss_c2c_message.py --from lin2225427 --to LYGG88888 --text "WSS Web?????"
-    .\.venv\Scripts\python.exe tools\test_web_wss_c2c_message.py --from A7MYtCxL8 --to x1DuArYgV --text "hello"
+    ./.venv/Scripts/python.exe tools/diagnostics/test_web_wss_c2c_message.py --from lin2225427 --to LYGG88888 --text "WSS Web?????"
+    ./.venv/Scripts/python.exe tools/diagnostics/test_web_wss_c2c_message.py --from A7MYtCxL8 --to x1DuArYgV --text "hello"
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -26,7 +26,7 @@ from app.services.wuquan_account_mapping import (
     resolve_im_accid,
     resolve_login_account,
 )
-from tests.tests_wss import ImWssClient, WS_ENDPOINTS
+from tools.diagnostics.probe_wss import ImWssClient, WS_ENDPOINTS
 
 
 def parse_explicit_sender(

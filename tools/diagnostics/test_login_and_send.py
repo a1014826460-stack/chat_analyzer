@@ -1,17 +1,17 @@
 """Login via WuQuan API → send message via ImSDK ctypes.
 
 Usage:
-    .\.venv\Scripts\python.exe tools\test_login_and_send.py <phone> <code> [group_id] [text]
+    .\.venv\Scripts\python.exe tools\diagnostics\test_login_and_send.py <phone> <code> [group_id] [text]
 
 Example:
-    .\.venv\Scripts\python.exe tools\test_login_and_send.py 13727744565 608521 207191791 "小单 1"
+    .\.venv\Scripts\python.exe tools\diagnostics\test_login_and_send.py 13727744565 608521 207191791 "小单 1"
 """
 from __future__ import annotations
 
 import json, sys, time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import requests
@@ -67,7 +67,7 @@ def login_api(phone: str, code: str) -> dict | None:
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print("Usage: python tools/test_login_and_send.py <phone> <code> [group_id] [text]")
+        print("Usage: python tools/diagnostics/test_login_and_send.py <phone> <code> [group_id] [text]")
         return 2
 
     phone = sys.argv[1]

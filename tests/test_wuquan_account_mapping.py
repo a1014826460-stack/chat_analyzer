@@ -43,7 +43,7 @@ def test_resolve_login_account_matches_appid_or_accid_and_returns_token():
 
 
 def test_resolve_login_account_falls_back_to_explicit_accid_with_user_sig():
-    from tools.test_web_wss_c2c_message import parse_explicit_sender
+    from tools.diagnostics.test_web_wss_c2c_message import parse_explicit_sender
 
     account = parse_explicit_sender(
         from_id="lin2225427",

@@ -33,8 +33,8 @@ dist\
 
 例如：
 
-- `dist\StarTrace-1.97.0.exe`
-- `dist\StarTrace-Admin-1.97.0.exe`
+- `dist\StarTrace-<version>.exe`
+- `dist\StarTrace-Admin-<version>.exe`
 
 版本号来自：
 
@@ -118,7 +118,7 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 执行命令：
 
 ```powershell
-.\.venv\Scripts\python.exe tools\protect_with_upx.py dist\StarTrace-1.97.0.exe --backup
+.\.venv\Scripts\python.exe tools\protect_with_upx.py dist\StarTrace-<version>.exe --backup
 ```
 
 如果你最后发布的是加壳后的 exe，那么后续生成 `latest.json` 时，`--artifact` 必须指向“最终实际给客户下载的 exe”。
@@ -133,9 +133,9 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release_manifest.py `
-  --artifact dist\StarTrace-1.97.0.exe `
+  --artifact dist\StarTrace-<version>.exe `
   --channel user `
-  --version 1.97.0 `
+  --version <version> `
   --base-url https://www.twsaimahui.com/startrace/user `
   --private-key C:\keys\update_private.pem `
   --notes "修复回执群统计与自动更新" `
@@ -163,9 +163,9 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release_manifest.py `
-  --artifact dist\StarTrace-Admin-1.97.0.exe `
+  --artifact dist\StarTrace-Admin-<version>.exe `
   --channel admin `
-  --version 1.97.0 `
+  --version <version> `
   --base-url https://www.twsaimahui.com/startrace/admin `
   --private-key C:\keys\update_private.pem `
   --notes "管理员版更新" `
@@ -195,7 +195,7 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 那么用户版示例路径就是：
 
 - `https://www.twsaimahui.com/startrace/user/latest.json`
-- `https://www.twsaimahui.com/startrace/user/StarTrace-1.97.0.exe`
+- `https://www.twsaimahui.com/startrace/user/StarTrace-<version>.exe`
 
 ---
 
@@ -206,9 +206,9 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 
 ### 7.1 需要上传的文件
 
-以用户版 `1.97.0` 为例，只需要上传这两个文件：
+以用户版 `<version>` 为例，只需要上传这两个文件：
 
-1. `dist\StarTrace-1.97.0.exe`
+1. `dist\StarTrace-<version>.exe`
 2. `dist\latest.json`
 
 ### 7.2 服务器目标目录
@@ -223,7 +223,7 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 
 ```text
 /网站根目录/startrace/user/latest.json
-/网站根目录/startrace/user/StarTrace-1.97.0.exe
+/网站根目录/startrace/user/StarTrace-<version>.exe
 ```
 
 ### 7.3 用 SCP 上传
@@ -231,7 +231,7 @@ STARTRACE_UPDATE_PUBLIC_KEY_PEM=-----BEGIN PUBLIC KEY-----你的更新公钥----
 你可以在本机 PowerShell 执行：
 
 ```powershell
-scp -P 29618 dist\StarTrace-1.97.0.exe root@207.56.3.82:/网站根目录/startrace/user/StarTrace-1.97.0.exe
+scp -P 29618 dist\StarTrace-<version>.exe root@207.56.3.82:/网站根目录/startrace/user/StarTrace-<version>.exe
 scp -P 29618 dist\latest.json root@207.56.3.82:/网站根目录/startrace/user/latest.json
 ```
 
@@ -242,7 +242,7 @@ scp -P 29618 dist\latest.json root@207.56.3.82:/网站根目录/startrace/user/l
 那么命令可以写成：
 
 ```powershell
-scp -P 29618 dist\StarTrace-1.97.0.exe root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/StarTrace-1.97.0.exe
+scp -P 29618 dist\StarTrace-<version>.exe root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/StarTrace-<version>.exe
 scp -P 29618 dist\latest.json root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/latest.json
 ```
 
@@ -297,7 +297,7 @@ mkdir -p /www/wwwroot/www.twsaimahui.com/startrace/admin
 3. 把 exe 和 `latest.json` 上传到线上目录
 4. 浏览器直接访问：
    - `https://www.twsaimahui.com/startrace/user/latest.json`
-   - `https://www.twsaimahui.com/startrace/user/StarTrace-1.97.0.exe`
+   - `https://www.twsaimahui.com/startrace/user/StarTrace-<version>.exe`
 5. 确认两个地址都能正常打开/下载
 6. 在一台旧版本客户端上启动程序
 7. 确认出现更新提示
@@ -320,8 +320,8 @@ Copy-Item release_user_config.ps1.example release_user_config.ps1
 然后打开 `release_user_config.ps1`，通常只需要修改这两个值：
 
 ```powershell
-$Version = "1.98.0"
-$Notes = "StarTrace 1.98.0 update"
+$Version = "<version>"
+$Notes = "<release notes>"
 ```
 
 之后直接执行：
@@ -349,9 +349,9 @@ $Notes = "StarTrace 1.98.0 update"
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release_manifest.py `
-  --artifact dist\StarTrace-1.97.0.exe `
+  --artifact dist\StarTrace-<version>.exe `
   --channel user `
-  --version 1.97.0 `
+  --version <version> `
   --base-url https://www.twsaimahui.com/startrace/user `
   --private-key C:\keys\update_private.pem `
   --notes "本次更新说明" `
@@ -361,7 +361,7 @@ $Notes = "StarTrace 1.98.0 update"
 ### 上传到服务器
 
 ```powershell
-scp -P 29618 dist\StarTrace-1.97.0.exe root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/StarTrace-1.97.0.exe
+scp -P 29618 dist\StarTrace-<version>.exe root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/StarTrace-<version>.exe
 scp -P 29618 dist\latest.json root@207.56.3.82:/www/wwwroot/www.twsaimahui.com/startrace/user/latest.json
 ```
 

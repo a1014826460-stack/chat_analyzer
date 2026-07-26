@@ -1,9 +1,26 @@
-# UI And Flow
+# UI 与主要流程
 
-This document could not be recovered from the current workspace snapshot.
+## 主窗口流程
 
-The corrupted original file was archived to:
+`app/ui/main_window.py` 组合数据、布局、操作和实时站点混入类，负责启动以下工作流：
 
-` .codex_recovery/corrupted_docs_data_20260610_0215/ui_and_flow.md `
+1. 从设置恢复账号、群组选中状态、站点和代理配置。
+2. 通过 `AccountResolver` 解析聊天数据源，加载群组和消息。
+3. 根据站点的下一期、时间窗口、群组与屏蔽规则构建统计结果。
+4. 展示图表、原始消息、机器人汇总校验和导出入口。
 
-If you still have an older source backup, restore that version here. Until then, treat this file as a placeholder rather than authoritative documentation.
+## 自动下注流程
+
+`app/ui/auto_bet_panel.py` 提供目标群组、推荐玩法、赔率、策略、AI 配置和实战统计配置。启动后由 `app/services/auto_bet_service.py`：
+
+1. 使用当前选中站点的 `next_period` 作为下注目标期。
+2. 刷新站点历史开奖记录并按目标期过滤数据。
+3. 根据策略与可选玩法生成、确认或跳过建议。
+4. 对每个站点、期号和群组组合执行去重发送。
+5. 在开奖结果可用后结算，并更新盈亏、连中连输、倍投档位与 AI 统计。
+
+## 配置与帮助
+
+- 代理设置由 `app/ui/proxy_settings_dialog.py` 管理，并由 `app/utils/proxy.py` 应用于开奖和历史记录请求。
+- AI 配置通过自动下注面板中的对话框保存到本地设置；API Key 默认隐藏。
+- 当前界面字段和行为以 `app/ui/` 实现与自动化测试为准。

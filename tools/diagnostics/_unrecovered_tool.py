@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 
-RECOVERY_DIR = Path(__file__).resolve().parents[1] / ".codex_recovery" / "corrupted_tools_20260610_0205"
+RECOVERY_DIR = Path(__file__).resolve().parents[2] / "docs" / "archive" / "recovery" / "unrecovered_tools"
 
 
 def build_parser(tool_name: str) -> argparse.ArgumentParser:
