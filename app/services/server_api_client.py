@@ -68,6 +68,10 @@ class ServerApiClient:
     def current_draw(self, site: str) -> dict:
         return self._call("GET", f"/v1/draws/{site}/current", authenticated=True)
 
+    def draw_history(self, site: str, *, limit: int = 50) -> list[dict]:
+        safe_limit = min(max(1, int(limit)), 500)
+        return list(self._call("GET", f"/v1/draws/{site}/history?limit={safe_limit}", authenticated=True).get("items", []))
+
     def pending_bets(self) -> list[dict]:
         return list(self._call("GET", "/v1/bets/pending", authenticated=True).get("items", []))
 
