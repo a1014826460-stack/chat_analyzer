@@ -38,6 +38,7 @@ from app.models.auto_bet import (
     StrategyConfig,
 )
 from app.services.history_fetchers import supported_history_fetch_counts
+from app.ui.collapsible_section import CollapsibleSection
 
 
 logger = logging.getLogger(__name__)
@@ -780,7 +781,14 @@ class AutoBetPanel(QGroupBox):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        self.auto_bet_basic_section = CollapsibleSection("基础配置", expanded=True)
+        self.auto_bet_advanced_section = CollapsibleSection("高级配置", expanded=False)
+        self.auto_bet_actions_section = CollapsibleSection("操作", expanded=False)
+        outer_layout.addWidget(self.auto_bet_basic_section)
+        outer_layout.addWidget(self.auto_bet_advanced_section)
+        outer_layout.addWidget(self.auto_bet_actions_section)
+        layout = self.auto_bet_basic_section.content_layout()
         layout.setSpacing(6)
 
         # --- Row: strategy type ---
@@ -1092,6 +1100,8 @@ class AutoBetPanel(QGroupBox):
         layout.addLayout(runtime_log_actions)
         self._runtime_log_next_before_id: int | None = None
         self._runtime_log_row_count = 0
+        self.auto_bet_advanced_section.content_layout().addWidget(QLabel("高级策略、赔率、统计与日志筛选保持当前配置。"))
+        self.auto_bet_actions_section.content_layout().addWidget(QLabel("启动、停止、确认和跳过操作不会因折叠而中断。"))
         self._sync_strategy_visibility()
 
     def _on_runtime_log_filters_changed(self) -> None:
