@@ -30,8 +30,36 @@ class MainWindowRealtimeMixin:
         self._render_site_cards()
         if hasattr(self, "site_status_label"):
             self.site_status_label.setText("正在后台加载线路数据...")
-        future = self._worker.submit(fetch_all_draw_infos)
+        server_mode = bool(getattr(getattr(self, "server_mode_settings", None), "enabled", False))
+        client = getattr(self, "server_api_client", None)
+        if server_mode and client is not None and getattr(client, "is_authenticated", False):
+            future = self._worker.submit(self._fetch_server_draw_infos)
+        else:
+            future = self._worker.submit(fetch_all_draw_infos)
         future.add_done_callback(self._handle_site_cards_loaded)
+
+    def _fetch_server_draw_infos(self) -> dict[str, DrawInfo]:
+        """Read current periods from FastAPI; never fall back to provider HTTP in server mode."""
+        client = self.server_api_client
+        infos: dict[str, DrawInfo] = {}
+        for site in site_list():
+            payload = client.current_draw(site)
+            next_time = None
+            raw_next_time = str(payload.get("next_time") or "")
+            if raw_next_time:
+                try:
+                    next_time = datetime.fromisoformat(raw_next_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                except ValueError:
+                    next_time = None
+            infos[site] = DrawInfo(
+                current_period="",
+                next_period=str(payload.get("next_period") or ""),
+                next_time=next_time,
+                next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else 0,
+                source="api",
+                last_api_success_at=datetime.now(),
+            )
+        return infos
 
     def _render_site_cards(self) -> None:
         sites = site_list()
@@ -287,13 +315,31 @@ class MainWindowRealtimeMixin:
             self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
             return
         try:
-            future = worker.submit(extract_draw_info, site)
+            server_mode = bool(getattr(getattr(self, "server_mode_settings", None), "enabled", False))
+            client = getattr(self, "server_api_client", None)
+            if server_mode and client is not None and getattr(client, "is_authenticated", False):
+                future = worker.submit(self._fetch_server_draw_info, site)
+            else:
+                future = worker.submit(extract_draw_info, site)
         except Exception:
             logger.warning("[%s] failed to submit draw calibration, retry scheduled", site_label(site), exc_info=True)
             refreshing_sites.discard(site)
             self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
             return
         future.add_done_callback(lambda finished, value=site: self._handle_single_draw_info_loaded(value, None, finished))
+
+    def _fetch_server_draw_info(self, site: str) -> DrawInfo:
+        payload = self.server_api_client.current_draw(site)
+        raw_next_time = str(payload.get("next_time") or "")
+        next_time = datetime.fromisoformat(raw_next_time.replace("Z", "+00:00")).replace(tzinfo=None) if raw_next_time else None
+        return DrawInfo(
+            current_period="",
+            next_period=str(payload.get("next_period") or ""),
+            next_time=next_time,
+            next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else 0,
+            source="api",
+            last_api_success_at=datetime.now(),
+        )
 
 
     def _handle_single_draw_info_loaded(self, site: str, fallback: DrawInfo | None, future) -> None:

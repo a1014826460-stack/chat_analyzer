@@ -65,6 +65,9 @@ class ServerApiClient:
         })
         return self._call("GET", f"/v1/analysis/frequency?{query}", authenticated=True)
 
+    def current_draw(self, site: str) -> dict:
+        return self._call("GET", f"/v1/draws/{site}/current", authenticated=True)
+
     def pending_bets(self) -> list[dict]:
         return list(self._call("GET", "/v1/bets/pending", authenticated=True).get("items", []))
 

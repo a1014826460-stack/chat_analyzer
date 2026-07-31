@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server_api.api.routes.auth import get_session, require_admin
 from server_api.dependencies import current_user_id
 from server_api.services.draws import analyze, history, upsert_draw
+from server_api.workers.current_period import fetch_current_period
 
 
 router = APIRouter()
@@ -34,6 +35,18 @@ async def write_draw(payload: DrawRequest, session: Session, _: None = Depends(r
 @router.get("/v1/draws/{site}/history")
 async def read_history(site: str, session: Session, _: int = Depends(current_user_id), limit: int = Query(50, ge=1, le=500)):
     return {"items": [serialize(row) for row in await history(session, site, limit)]}
+
+
+@router.get("/v1/draws/{site}/current")
+async def read_current_draw(site: str, _: int = Depends(current_user_id)):
+    current = fetch_current_period(site)
+    if current is None:
+        raise HTTPException(status_code=503, detail="当前期数据暂不可用")
+    return {
+        "site": site,
+        "next_period": current.period,
+        "next_time": current.betting_deadline_at.isoformat() if current.betting_deadline_at else None,
+    }
 
 
 @router.get("/v1/analysis/frequency")

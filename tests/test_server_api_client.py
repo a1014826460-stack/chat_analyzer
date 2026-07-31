@@ -110,3 +110,12 @@ def test_server_api_client_fetches_runtime_logs_with_filters_and_cursor():
 
     assert page["items"] == [{"id": 19}]
     assert calls == ["/v1/runtime-logs?limit=50&level=ERROR&keyword=timeout&before_id=20"]
+
+
+def test_server_api_client_reads_current_draw_through_the_server():
+    calls = []
+    client = ServerApiClient("http://server", request=lambda method, path, payload, headers: calls.append(path) or {"next_period": "101"})
+    client._access_token = "token"
+
+    assert client.current_draw("pc28") == {"next_period": "101"}
+    assert calls == ["/v1/draws/pc28/current"]

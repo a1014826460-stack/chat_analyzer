@@ -41,3 +41,30 @@ def test_shared_draw_upsert_history_and_frequency_analysis(tmp_path):
         assert payload["number_probabilities"] == {"13": 25.0, "14": 25.0}
         assert payload["excluded_play"] == "小单"
         assert payload["selected_plays"] == ["大双", "小双", "大单"]
+
+
+def test_current_draw_endpoint_is_authenticated_and_proxies_the_registered_source(tmp_path, monkeypatch):
+    from datetime import datetime
+    from server_api.workers.current_period import CurrentPeriod
+
+    signer = LicenseSigner()
+    app = create_app(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
+        license_public_key_pem=signer.public_key_pem,
+        initialize_schema=True,
+    )
+    monkeypatch.setattr(
+        "server_api.api.routes.draws.fetch_current_period",
+        lambda site: CurrentPeriod(period="20260731001", betting_deadline_at=datetime(2026, 7, 31, 12, 0)),
+    )
+    with TestClient(app) as client:
+        assert client.get("/v1/draws/pc28/current").status_code == 401
+        headers = _user_headers(client, signer)
+        response = client.get("/v1/draws/pc28/current", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "site": "pc28",
+        "next_period": "20260731001",
+        "next_time": "2026-07-31T12:00:00",
+    }
