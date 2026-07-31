@@ -43,3 +43,17 @@ def test_packaged_build_embeds_server_url_in_build_config(monkeypatch, tmp_path)
     build._embed_release_metadata()
 
     assert "_BUILD_SERVER_API_BASE_URL = 'https://207.56.2.71:8080'" in config_path.read_text(encoding="utf-8")
+
+
+def test_build_config_uses_embedded_update_public_key_when_runtime_env_is_absent(monkeypatch, tmp_path):
+    monkeypatch.delenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", raising=False)
+    source = Path("app/build_config.py").read_text(encoding="utf-8")
+    source = source.replace('_BUILD_UPDATE_PUBLIC_KEY = ""', '_BUILD_UPDATE_PUBLIC_KEY = "EMBEDDED-UPDATE-KEY"')
+    module_path = tmp_path / "build_config.py"
+    module_path.write_text(source, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("packaged_build_config", module_path)
+    assert spec is not None and spec.loader is not None
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+
+    assert config.UPDATE_PUBLIC_KEY_PEM == "EMBEDDED-UPDATE-KEY"

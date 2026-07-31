@@ -171,6 +171,89 @@ def test_server_strategy_save_is_coalesced_and_never_calls_http_from_the_ui_hand
     assert len(submitted) == 1
 
 
+def test_server_auto_bet_stop_persists_disabled_strategy_and_reverts_ui_on_failure():
+    from app.models.auto_bet import StrategyConfig
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = []
+    panel = SimpleNamespace(
+        get_config=lambda: StrategyConfig(
+            site="pc28",
+            target_groups=["g1"],
+            ai_history_count=100,
+            ai_confidence_threshold=65,
+            ai_require_confirmation=True,
+            bet_amount=88,
+        ),
+        set_running=lambda value: calls.append(("running", value)),
+    )
+    timer = SimpleNamespace(
+        start=lambda: calls.append("timer-start"),
+        stop=lambda: calls.append("timer-stop"),
+    )
+    window = SimpleNamespace(
+        auto_bet_panel=panel,
+        _auto_bet_timer=timer,
+        _schedule_server_strategy_save=lambda payload: calls.append(("save", payload)),
+    )
+
+    MainWindowDataMixin._on_auto_bet_stop(window)
+
+    assert calls == [
+        ("save", {
+            "enabled": False,
+            "site": "pc28",
+            "target_groups": ["g1"],
+            "history_count": 100,
+            "confidence_threshold": 65,
+            "require_confirmation": True,
+            "bet_amount": 88,
+        }),
+        ("running", False),
+        "timer-stop",
+    ]
+    assert window._server_strategy_stop_pending is True
+
+    MainWindowDataMixin._handle_server_strategy_save_ready(window, {
+        "ok": True,
+        "payload": {"enabled": True},
+    })
+    assert window._server_strategy_stop_pending is True
+
+    MainWindowDataMixin._handle_server_strategy_save_ready(window, {
+        "error": RuntimeError("offline"),
+        "payload": {"enabled": False},
+    })
+
+    assert calls[-2:] == [("running", True), "timer-start"]
+    assert window._server_strategy_stop_pending is False
+
+
+def test_local_ai_credentials_are_removed_from_saved_auto_bet_settings():
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    saved_snapshots = []
+    window = SimpleNamespace(
+        settings={
+            "auto_bet": {
+                "site": "pc28",
+                "ai_provider": "anthropic",
+                "ai_base_url": "https://ai.example",
+                "ai_model": "legacy-model",
+                "ai_api_key": "legacy-secret",
+                "ai_history_count": 100,
+            }
+        },
+        settings_service=SimpleNamespace(save=lambda value: saved_snapshots.append(value.copy())),
+    )
+
+    assert MainWindowDataMixin._remove_local_ai_credentials_from_settings(window) is True
+    assert window.settings["auto_bet"] == {"site": "pc28", "ai_history_count": 100}
+    assert saved_snapshots == [window.settings]
+    assert MainWindowDataMixin._remove_local_ai_credentials_from_settings(window) is False
+    assert len(saved_snapshots) == 1
+
+
 def test_server_confirm_is_submitted_to_a_background_worker_instead_of_blocking_ui():
     from app.ui.main_window_data import MainWindowDataMixin
 
@@ -401,12 +484,13 @@ def test_server_mode_tick_refreshes_server_statistics_snapshot():
         _bootstrap_server_mode=lambda: calls.append("bootstrap"),
         _refresh_server_pending_bet=lambda: calls.append("pending"),
         _refresh_server_betting_events=lambda: calls.append("events"),
+        _refresh_server_runtime_logs=lambda now=None: calls.append("logs"),
         _refresh_server_statistics=lambda: calls.append("statistics"),
     )
 
     MainWindowDataMixin._on_auto_bet_tick(window)
 
-    assert calls == ["pending", "events", "statistics"]
+    assert calls == ["pending", "events", "logs", "statistics"]
 
 
 def test_handle_server_statistics_ready_updates_runtime_and_ai_statistics_cards():
@@ -444,13 +528,14 @@ def test_server_mode_tick_refreshes_server_frequency_statistics_and_events():
         _bootstrap_server_mode=lambda: calls.append("bootstrap"),
         _refresh_server_pending_bet=lambda: calls.append("pending"),
         _refresh_server_betting_events=lambda: calls.append("events"),
+        _refresh_server_runtime_logs=lambda now=None: calls.append("logs"),
         _refresh_server_statistics=lambda: calls.append("statistics"),
         _refresh_auto_bet_frequency_analysis=lambda site: calls.append(("frequency", site)),
     )
 
     MainWindowDataMixin._on_auto_bet_tick(window)
 
-    assert calls == ["pending", "events", "statistics", ("frequency", "pc28")]
+    assert calls == ["pending", "events", "logs", "statistics", ("frequency", "pc28")]
 
 
 def test_handle_server_frequency_ready_updates_probability_cards():
@@ -666,6 +751,7 @@ def test_server_event_handler_reenters_high_frequency_refresh_on_key_activity():
     assert calls == [("log", "AI 执行"), ("statistics", True), ("frequency", "pc28", True)]
 
 
+@pytest.mark.skip(reason="desktop local auto-bet polling was removed; server polling has separate coverage")
 def test_local_auto_bet_tick_uses_mixed_refresh_cadence_for_three_panels():
     from app.ui.main_window_data import MainWindowDataMixin
     from app.models.auto_bet import StrategyConfig, AutoBetRuntimeState

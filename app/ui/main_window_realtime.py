@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePol
 
 from app.models import DrawInfo, StatsResult
 from app.ui.main_window_theme import THEME
-from app.utils.fetch_date import _SITE_INTERVAL_SEC, extract_draw_info, fetch_all_draw_infos, site_label, site_list
+from app.utils.fetch_date import _SITE_INTERVAL_SEC, site_label, site_list
 
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,12 @@ class MainWindowRealtimeMixin:
         self._render_site_cards()
         if hasattr(self, "site_status_label"):
             self.site_status_label.setText("正在后台加载线路数据...")
-        server_mode = bool(getattr(getattr(self, "server_mode_settings", None), "enabled", False))
         client = getattr(self, "server_api_client", None)
-        if server_mode and client is not None and getattr(client, "is_authenticated", False):
-            future = self._worker.submit(self._fetch_server_draw_infos)
-        else:
-            future = self._worker.submit(fetch_all_draw_infos)
+        if client is None or not getattr(client, "is_authenticated", False):
+            if hasattr(self, "site_status_label"):
+                self.site_status_label.setText("服务器会话不可用")
+            return
+        future = self._worker.submit(self._fetch_server_draw_infos)
         future.add_done_callback(self._handle_site_cards_loaded)
 
     def _fetch_server_draw_infos(self) -> dict[str, DrawInfo]:
@@ -315,12 +315,10 @@ class MainWindowRealtimeMixin:
             self._schedule_draw_calibration(site, datetime.now() + timedelta(seconds=CALIBRATION_RETRY_DELAY_SEC))
             return
         try:
-            server_mode = bool(getattr(getattr(self, "server_mode_settings", None), "enabled", False))
             client = getattr(self, "server_api_client", None)
-            if server_mode and client is not None and getattr(client, "is_authenticated", False):
-                future = worker.submit(self._fetch_server_draw_info, site)
-            else:
-                future = worker.submit(extract_draw_info, site)
+            if client is None or not getattr(client, "is_authenticated", False):
+                raise RuntimeError("server session is unavailable")
+            future = worker.submit(self._fetch_server_draw_info, site)
         except Exception:
             logger.warning("[%s] failed to submit draw calibration, retry scheduled", site_label(site), exc_info=True)
             refreshing_sites.discard(site)

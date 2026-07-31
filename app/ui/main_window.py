@@ -13,7 +13,7 @@ from PySide6.QtCore import QTimer, Signal, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QShowEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QMessageBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QLabel, QPushButton
 
-from app.build_config import APP_VERSION, IS_ADMIN_VERSION, UPDATE_PUBLIC_KEY_PEM, update_manifest_url
+from app.build_config import APP_VERSION, IS_ADMIN_VERSION, UPDATE_PUBLIC_KEY_PEM
 from app.models import StatsResult
 from app.services.auto_bet_service import AutoBetService
 from app.ui.auto_bet_panel import AutoBetPanel
@@ -25,7 +25,7 @@ from app.services.server_api_client import ServerApiClient
 from app.services.server_mode_settings import ServerModeSettings
 from app.services.summary_check_report_service import SummaryCheckReportService
 from app.services.update_installer import schedule_update_install
-from app.services.update_service import download_and_verify, fetch_manifest, update_available
+from app.services.update_service import download_server_artifact, manifest_json_to_token, update_available, verify_manifest_token
 from app.ui.license_generator_dialog import LicenseGeneratorDialog
 from app.ui.main_window_actions import MainWindowActionsMixin
 from app.ui.main_window_blocking import MainWindowBlockingMixin
@@ -444,21 +444,24 @@ class MainWindow(
         return self.license_service.is_activated()
 
     def _check_for_updates_async(self) -> None:
-        manifest_url = update_manifest_url()
-        if not manifest_url or not UPDATE_PUBLIC_KEY_PEM:
-            logger.debug("Update check skipped: manifest URL or public key is not configured")
+        client = getattr(self, "server_api_client", None)
+        if client is None or not client.is_authenticated:
+            logger.warning("Update check skipped: server session is unavailable")
             return
-        self._data_worker.submit(self._check_for_updates_worker, manifest_url, UPDATE_PUBLIC_KEY_PEM)
+        if not UPDATE_PUBLIC_KEY_PEM:
+            logger.warning("Update check skipped: public key is not configured")
+            return
+        self._data_worker.submit(self._check_server_updates_worker, client, UPDATE_PUBLIC_KEY_PEM)
 
-    def _check_for_updates_worker(self, manifest_url: str, public_key_pem: str) -> None:
+    def _check_server_updates_worker(self, client: ServerApiClient, public_key_pem: str) -> None:
         try:
-            manifest = fetch_manifest(manifest_url, public_key_pem)
+            manifest = verify_manifest_token(manifest_json_to_token(client.update_manifest()), public_key_pem)
             if update_available(APP_VERSION, manifest):
                 self._update_check_ready.emit({"ok": True, "manifest": manifest})
             else:
                 logger.debug("No update available: current=%s remote=%s", APP_VERSION, manifest.get("version"))
         except Exception as exc:
-            logger.warning("Update check failed: %s", exc)
+            logger.warning("Server update check failed: %s", exc)
 
     def _handle_update_check_ready(self, payload: object) -> None:
         if not isinstance(payload, dict) or not payload.get("ok"):
@@ -481,7 +484,7 @@ class MainWindow(
         try:
             file_name = Path(str(manifest.get("url", "StarTrace-update.exe"))).name or "StarTrace-update.exe"
             target_path = Path(tempfile.gettempdir()) / "StarTraceUpdates" / file_name
-            ok = download_and_verify(manifest, target_path)
+            ok = download_server_artifact(self.server_api_client, manifest, target_path)
             self._update_download_ready.emit({"ok": ok, "path": str(target_path), "manifest": manifest})
         except Exception as exc:
             logger.warning("Update download failed: %s", exc)

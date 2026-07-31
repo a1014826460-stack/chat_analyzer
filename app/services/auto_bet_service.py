@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Callable, Protocol
 
-from app.models.auto_bet import AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, PendingAiBet, StrategyConfig, allowed_play_types_for_config
+from app.models.auto_bet import DEFAULT_ODDS, AutoBetRound, AutoBetRuntimeState, BetDecision, DrawResultProvider, InjectRecord, PendingAiBet, StrategyConfig, allowed_play_types_for_config
 from app.services.frequency_probability_analysis import FrequencyProbabilityAnalysis, FrequencyProbabilityAnalyzer
 
 
@@ -86,10 +86,6 @@ class AutoBetService:
                 bet_mode=self._config.bet_mode,
                 martingale_sequence=list(self._config.martingale_sequence),
                 odds=dict(self._config.odds),
-                ai_provider=self._config.ai_provider,
-                ai_base_url=self._config.ai_base_url,
-                ai_model=self._config.ai_model,
-                ai_api_key=self._config.ai_api_key,
                 ai_history_count=self._config.ai_history_count,
                 ai_require_confirmation=self._config.ai_require_confirmation,
                 ai_confidence_threshold=self._config.ai_confidence_threshold,
@@ -161,13 +157,6 @@ class AutoBetService:
 
     def start(self) -> bool:
         with self._lock:
-            # Direct service callers using a real AI client receive the same
-            # credential guard as the UI; test/dry-run clients remain usable.
-            from app.services.ai_bet_client import AiBetClient
-
-            if isinstance(self._ai_client, AiBetClient) and self._config.start_validation_errors():
-                self._running = False
-                return False
             self._running = True
             self._runtime_state = AutoBetRuntimeState()
             self._rounds = []
@@ -657,11 +646,9 @@ class AutoBetService:
             reason = str(getattr(recommendation, "reason", "") or "").strip()
             quant_rationale = str(getattr(recommendation, "quant_rationale", "") or "").strip()
             confidence = int(getattr(recommendation, "confidence", 0))
-            from app.services.ai_bet_client import VALID_PLAY_TYPES
-
             if action not in {"bet", "skip"} or not reason or not quant_rationale:
                 raise ValueError("AI 建议缺少合法动作、量化依据或理由")
-            if action == "bet" and play_type not in VALID_PLAY_TYPES:
+            if action == "bet" and play_type not in DEFAULT_ODDS:
                 raise ValueError("AI 建议缺少合法玩法")
             if action == "bet" and play_type not in allowed_play_types_for_config(cfg):
                 allowed_text = "、".join(allowed_play_types_for_config(cfg)) or "无"
@@ -686,7 +673,7 @@ class AutoBetService:
                 confidence=confidence,
                 quant_rationale=quant_rationale,
                 reason=reason,
-                model=cfg.ai_model,
+                model="server-managed",
                 history_snapshot=history_snapshot,
                 quant_snapshot=quant_snapshot,
                 status=status,
@@ -906,7 +893,7 @@ class AutoBetService:
             period=period,
             action="error",
             reason=reason,
-            model=cfg.ai_model,
+            model="server-managed",
             history_snapshot=history_snapshot,
             quant_snapshot=quant_snapshot,
             status="failed",

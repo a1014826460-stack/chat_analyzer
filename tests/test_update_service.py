@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from urllib.error import URLError
 
 from Crypto.PublicKey import ECC
 import pytest
@@ -94,12 +93,39 @@ def test_verify_download_hash_detects_corruption(tmp_path: Path) -> None:
     assert not verify_download_hash(artifact, expected)
 
 
-def test_signed_manifest_json_fetch_and_download_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_server_artifact_uses_server_client_and_still_verifies_hash(tmp_path: Path) -> None:
+    from app.services.update_service import download_server_artifact
+
+    class Client:
+        def __init__(self) -> None:
+            self.name = ""
+            self.expected_size = 0
+
+        def download_update_file(self, file_name: str, target_path: Path, *, expected_size: int) -> None:
+            self.name = file_name
+            self.expected_size = expected_size
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(b"server-artifact")
+
+    target = tmp_path / "download.exe"
+    client = Client()
+    manifest = {
+        "url": "https://ignored.example/StarTrace-2.0.0.exe",
+        "sha256": hashlib.sha256(b"server-artifact").hexdigest(),
+        "size": len(b"server-artifact"),
+    }
+
+    assert download_server_artifact(client, manifest, target)
+    assert client.name == "StarTrace-2.0.0.exe"
+    assert client.expected_size == len(b"server-artifact")
+
+
+def test_signed_manifest_json_round_trip_and_update_detection(tmp_path: Path) -> None:
     from app.services.update_service import (
-        download_and_verify,
-        fetch_manifest,
+        manifest_json_to_token,
         manifest_token_to_json,
         update_available,
+        verify_manifest_token,
     )
 
     private_pem, public_pem = _key_pair()
@@ -115,34 +141,8 @@ def test_signed_manifest_json_fetch_and_download_validation(tmp_path: Path, monk
     )
     manifest_json = manifest_token_to_json(token)
 
-    class Response:
-        def __init__(self, payload: bytes) -> None:
-            self.payload = payload
-
-        def __enter__(self) -> "Response":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return self.payload
-
-    def fake_urlopen(url: str, timeout: int = 10) -> Response:
-        if url.endswith("latest.json"):
-            return Response(json.dumps(manifest_json).encode("utf-8"))
-        if url.endswith("StarTrace-1.98.0.exe"):
-            return Response(b"new-binary")
-        raise URLError("unexpected url")
-
-    monkeypatch.setattr("app.services.update_service.urlopen", fake_urlopen)
-
-    manifest = fetch_manifest("https://cdn.example.com/startrace/user/latest.json", public_pem)
-    target = tmp_path / "downloaded.exe"
-
+    manifest = verify_manifest_token(manifest_json_to_token(manifest_json), public_pem)
     assert update_available("1.97.0", manifest)
-    assert download_and_verify(manifest, target)
-    assert target.read_bytes() == b"new-binary"
 
 
 def test_build_config_artifact_name_tracks_edition(monkeypatch: pytest.MonkeyPatch) -> None:

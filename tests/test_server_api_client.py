@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from app.services.server_api_client import ServerApiClient, ServerApiError
 
 
@@ -128,3 +132,69 @@ def test_server_api_client_reads_draw_history_through_the_server():
 
     assert client.draw_history("pc28", limit=80) == [{"period": "100"}]
     assert calls == ["/v1/draws/pc28/history?limit=80"]
+
+
+def test_server_api_client_reads_update_manifest_and_file_through_the_server():
+    calls = []
+    client = ServerApiClient("http://server", request=lambda method, path, payload, headers: calls.append(path) or {"version": "2.0.0"})
+    client._access_token = "token"
+
+    assert client.update_manifest()["version"] == "2.0.0"
+    assert client.update_file_path("StarTrace-2.0.0.exe") == "/v1/updates/files/StarTrace-2.0.0.exe"
+    assert calls == ["/v1/updates/manifest"]
+
+
+def test_server_api_client_streams_authenticated_update_to_an_atomic_file(monkeypatch, tmp_path: Path):
+    requests = []
+
+    class Response:
+        def __init__(self) -> None:
+            self.chunks = [b"server-", b"artifact", b""]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size: int) -> bytes:
+            assert size == 65536
+            return self.chunks.pop(0)
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setattr("app.services.server_api_client.urlopen", fake_urlopen)
+    client = ServerApiClient("https://server.example")
+    client._access_token = "jwt-token"
+    target = tmp_path / "update.exe"
+
+    client.download_update_file("update.exe", target, expected_size=len(b"server-artifact"))
+
+    assert target.read_bytes() == b"server-artifact"
+    assert not target.with_name("update.exe.part").exists()
+    assert requests[0][0].get_header("Authorization") == "Bearer jwt-token"
+
+
+def test_server_api_client_removes_partial_update_when_response_exceeds_signed_size(monkeypatch, tmp_path: Path):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size: int) -> bytes:
+            return b"too-large"
+
+    monkeypatch.setattr("app.services.server_api_client.urlopen", lambda request, timeout: Response())
+    client = ServerApiClient("https://server.example")
+    client._access_token = "jwt-token"
+    target = tmp_path / "update.exe"
+
+    with pytest.raises(ServerApiError, match="大小"):
+        client.download_update_file("update.exe", target, expected_size=3)
+
+    assert not target.exists()
+    assert not target.with_name("update.exe.part").exists()

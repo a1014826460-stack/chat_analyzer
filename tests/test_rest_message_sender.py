@@ -112,8 +112,9 @@ def test_auto_bet_start_source_does_not_import_message_injector_for_tim_login():
     assert "TIMLogin" not in body
     assert "RemoteIMSender" not in body
     assert "RestGroupMessageSender" not in body
-    assert "UiaWuQuanMessageSender" in body
-    assert "BackgroundWindowMessageSender" in body
+    assert "UiaWuQuanMessageSender" not in body
+    assert "BackgroundWindowMessageSender" not in body
+    assert "self._start_server_auto_bet()" in body
 
 
 def _create_message_db(path):

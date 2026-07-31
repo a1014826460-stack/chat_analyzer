@@ -37,6 +37,7 @@ class Settings:
     ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "45"))
     ai_max_retries: int = int(os.getenv("AI_MAX_RETRIES", "2"))
     ai_retry_backoff_seconds: float = float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "1"))
+    update_release_dir: str = os.getenv("UPDATE_RELEASE_DIR", "")
 
 
 settings = Settings()

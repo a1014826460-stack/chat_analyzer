@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from app.models.auto_bet import DrawResult, StrategyConfig
 from app.services.auto_bet_service import AutoBetService
 from app.services.draw_result_store import DrawResultStore
@@ -58,6 +60,7 @@ def test_fetch_pc28_dashboard_requires_recent_records_and_countdown():
         _parse_pc28({"recent_records": [], "countdown": {"countdown_seconds": 30}})
 
 
+@pytest.mark.skip(reason="desktop local auto-bet ticking was removed; worker runtime is server-owned")
 def test_auto_bet_tick_uses_next_period_as_the_betting_target():
     from types import SimpleNamespace
 
@@ -105,6 +108,7 @@ def test_frequency_analysis_refresh_publishes_a_cached_analysis_without_running(
     assert calls == [("pc28", "1002"), analysis]
 
 
+@pytest.mark.skip(reason="desktop local auto-bet ticking was removed; worker runtime is server-owned")
 def test_auto_bet_tick_publishes_frequency_analysis_after_service_tick():
     from types import SimpleNamespace
 
@@ -304,6 +308,7 @@ def test_auto_bet_analyze_can_make_decision_from_store_data(tmp_path: Path):
     assert decision.group_id == "group-1"
 
 
+@pytest.mark.skip(reason="desktop local auto-bet runtime was removed; start is server-owned")
 def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_path: Path):
     import json
     import sys
@@ -513,6 +518,7 @@ def test_auto_bet_start_creates_and_injects_draw_result_store(monkeypatch, tmp_p
     assert win._auto_bet_timer.started is True
 
 
+@pytest.mark.skip(reason="desktop local auto-bet runtime was removed; start is server-owned")
 def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(monkeypatch, tmp_path: Path):
     import json
     import sys
@@ -666,6 +672,7 @@ def test_auto_bet_start_falls_back_to_background_sender_when_wss_startup_fails(m
     assert win.auto_bet_service.started is True
 
 
+@pytest.mark.skip(reason="desktop local AI credentials were removed")
 def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sender(monkeypatch, tmp_path: Path):
     from app.ui.main_window_data import MainWindowDataMixin
     import app.ui.main_window_data as main_window_data
@@ -703,6 +710,7 @@ def test_auto_bet_start_rejects_missing_ai_configuration_before_creating_a_sende
     assert messages == ["Base URL\n模型\nAPI Key"]
 
 
+@pytest.mark.skip(reason="server validates automatic-bet strategy targets")
 def test_auto_bet_start_rejects_missing_target_group_before_creating_a_sender(monkeypatch):
     from app.ui.main_window_data import MainWindowDataMixin
     import app.ui.main_window_data as main_window_data

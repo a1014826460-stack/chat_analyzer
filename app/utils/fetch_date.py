@@ -3,11 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import socket
-import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any
@@ -242,23 +239,8 @@ def _request_json(url: str, data: bytes | None, headers: dict[str, str] | None) 
 
 
 def _open_with_retries(url: str, data: bytes | None, request_headers: dict[str, str]) -> str:
-    last_error: BaseException | None = None
-    for attempt in range(3):
-        request = urllib.request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
-        try:
-            with urllib.request.urlopen(request, timeout=12) as response:
-                return response.read().decode("utf-8", errors="replace")
-        except (TimeoutError, socket.timeout, urllib.error.URLError, urllib.error.HTTPError) as exc:
-            last_error = exc
-            if not _is_transient_fetch_error(exc):
-                raise
-            time.sleep(0.25 * (attempt + 1))
-    if _proxy_configured() and last_error is not None and _is_transient_fetch_error(last_error):
-        request = urllib.request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
-        direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with direct_opener.open(request, timeout=12) as response:
-            return response.read().decode("utf-8", errors="replace")
-    raise last_error if last_error else RuntimeError(f"failed to fetch {url}")
+    del data, request_headers
+    raise RuntimeError(f"desktop draw-source access is disabled; use ServerApiClient for {url}")
 
 
 def _proxy_configured() -> bool:

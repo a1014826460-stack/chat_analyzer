@@ -45,21 +45,24 @@ def test_user_build_embeds_only_the_license_public_key(monkeypatch, tmp_path):
     config_path = tmp_path / "app" / "build_config.py"
     config_path.parent.mkdir()
     config_path.write_text(
-        '_BUILD_PUBLIC_KEY = ""\n_BUILD_PRIVATE_KEY = ""\n', encoding="utf-8"
+        '_BUILD_PUBLIC_KEY = ""\n_BUILD_PRIVATE_KEY = ""\n_BUILD_UPDATE_PUBLIC_KEY = ""\n', encoding="utf-8"
     )
     keys_dir = tmp_path / "keys"
     keys_dir.mkdir()
     (keys_dir / "license_public.pem").write_text("PUBLIC-KEY", encoding="utf-8")
     (keys_dir / "license_private.pem").write_text("PRIVATE-KEY", encoding="utf-8")
+    (keys_dir / "update_public.pem").write_text("UPDATE-PUBLIC-KEY", encoding="utf-8")
     monkeypatch.setattr(build, "ROOT", tmp_path)
     monkeypatch.delenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", raising=False)
     monkeypatch.delenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", raising=False)
+    monkeypatch.delenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", raising=False)
 
     build._ensure_license_keys(admin=False)
 
     embedded = config_path.read_text(encoding="utf-8")
     assert 'PUBLIC-KEY' in embedded
     assert 'PRIVATE-KEY' not in embedded
+    assert 'UPDATE-PUBLIC-KEY' in embedded
 
 
 def test_user_build_command_excludes_legacy_embedded_keys_module():
@@ -75,15 +78,17 @@ def test_admin_build_embeds_the_license_private_key(monkeypatch, tmp_path):
     config_path = tmp_path / "app" / "build_config.py"
     config_path.parent.mkdir()
     config_path.write_text(
-        '_BUILD_PUBLIC_KEY = ""\n_BUILD_PRIVATE_KEY = ""\n', encoding="utf-8"
+        '_BUILD_PUBLIC_KEY = ""\n_BUILD_PRIVATE_KEY = ""\n_BUILD_UPDATE_PUBLIC_KEY = ""\n', encoding="utf-8"
     )
     keys_dir = tmp_path / "keys"
     keys_dir.mkdir()
     (keys_dir / "license_public.pem").write_text("PUBLIC-KEY", encoding="utf-8")
     (keys_dir / "license_private.pem").write_text("PRIVATE-KEY", encoding="utf-8")
+    (keys_dir / "update_public.pem").write_text("UPDATE-PUBLIC-KEY", encoding="utf-8")
     monkeypatch.setattr(build, "ROOT", tmp_path)
     monkeypatch.delenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", raising=False)
     monkeypatch.delenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", raising=False)
+    monkeypatch.delenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", raising=False)
 
     build._ensure_license_keys(admin=True)
 

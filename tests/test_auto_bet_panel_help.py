@@ -230,17 +230,13 @@ def test_auto_bet_panel_shows_target_group_lock_hint_while_running():
     assert not panel._target_group_lock_hint.isVisibleTo(panel)
 
 
-def test_ai_strategy_config_exposes_provider_history_and_confirmation():
+def test_ai_strategy_config_exposes_server_history_and_confirmation():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
     panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
-    panel._ai_config_dialog._provider_combo.setCurrentIndex(panel._ai_config_dialog._provider_combo.findData("anthropic"))
-    panel._ai_config_dialog._base_url_edit.setText("https://api.example")
-    panel._ai_config_dialog._model_edit.setText("claude-test")
-    panel._ai_config_dialog._api_key_edit.setText("secret")
     panel._ai_config_dialog._history_combo.setCurrentIndex(
         panel._ai_config_dialog._history_combo.findData(100)
     )
@@ -252,10 +248,6 @@ def test_ai_strategy_config_exposes_provider_history_and_confirmation():
     panel._ai_config_dialog.apply_to_config(config)
 
     assert config.strategy_type == "flat"
-    assert config.ai_provider == "anthropic"
-    assert config.ai_base_url == "https://api.example"
-    assert config.ai_model == "claude-test"
-    assert config.ai_api_key == "secret"
     assert config.ai_history_count == 100
     assert config.ai_confidence_threshold == 70
     assert config.ai_accuracy_window == 35
@@ -526,37 +518,27 @@ def test_ai_status_log_shows_site_period_and_group_names():
     assert "[\u7fa4A, \u7fa4B]" in text
 
 
-def test_ai_api_key_is_hidden_by_default_and_eye_button_toggles_visibility():
-    from PySide6.QtWidgets import QApplication, QLineEdit
-    from app.ui.auto_bet_panel import AutoBetPanel
-
-    app = QApplication.instance() or QApplication([])
-    panel = AutoBetPanel()
-    dialog = panel._ai_config_dialog
-
-    assert dialog._api_key_edit.echoMode() == QLineEdit.Password
-    dialog._api_key_visibility_button.click()
-    assert dialog._api_key_edit.echoMode() == QLineEdit.Normal
-    dialog._api_key_visibility_button.click()
-    assert dialog._api_key_edit.echoMode() == QLineEdit.Password
-
-
-def test_ai_config_dialog_requires_a_valid_provider_and_all_credential_fields():
+def test_ai_config_dialog_has_no_local_api_credentials():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
     dialog = panel._ai_config_dialog
-    dialog._base_url_edit.setText("https://api.example")
-    dialog._model_edit.setText("model")
-    dialog._api_key_edit.setText("key")
 
+    assert not hasattr(dialog, "_api_key_edit")
+    assert not hasattr(dialog, "_base_url_edit")
+    assert not hasattr(dialog, "_model_edit")
+
+
+def test_ai_config_dialog_needs_no_client_credentials():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+    dialog = panel._ai_config_dialog
     assert dialog.has_required_values()
-
-    dialog._provider_combo.setCurrentIndex(-1)
-
-    assert not dialog.has_required_values()
 
 
 def test_ai_config_exposes_risk_limits_without_a_conflict_preference_override():
@@ -610,7 +592,7 @@ def test_three_door_preset_selects_all_four_candidates_for_dynamic_exclusion():
     assert panel.get_config().play_types == ["大单", "小单", "大双", "小双"]
 
 
-def test_auto_bet_panel_uses_deepseek_anthropic_ai_defaults():
+def test_auto_bet_panel_uses_server_strategy_defaults():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
@@ -618,9 +600,8 @@ def test_auto_bet_panel_uses_deepseek_anthropic_ai_defaults():
     panel = AutoBetPanel()
     dialog = panel._ai_config_dialog
 
-    assert dialog._provider_combo.currentData() == "anthropic"
-    assert dialog._base_url_edit.text() == "https://api.deepseek.com/anthropic"
-    assert dialog._model_edit.text() == "deepseek-v4-pro"
+    assert dialog._history_combo.currentData() == 50
+    assert dialog._confidence_spin.value() == 45
 
 
 def test_auto_bet_panel_shows_trend_controls_only_for_trend_strategy():
@@ -692,7 +673,7 @@ def test_auto_bet_panel_does_not_emit_start_for_empty_groups_or_invalid_odds(mon
 
     assert started == []
     assert messages == [
-        "请至少选择一个目标群组\n请填写全部玩法的有效赔率\nAPI Key"
+        "请至少选择一个目标群组\n请填写全部玩法的有效赔率"
     ]
 
 

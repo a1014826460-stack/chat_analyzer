@@ -91,6 +91,15 @@ def _ensure_license_keys(*, admin: bool) -> None:
         else:
             keys[kind] = ""
 
+    update_public_key = os.environ.get("STARTRACE_UPDATE_PUBLIC_KEY_PEM", "").strip()
+    update_public_path = ROOT / "keys" / "update_public.pem"
+    if not update_public_key and update_public_path.is_file():
+        update_public_key = update_public_path.read_text("utf-8").strip()
+        os.environ["STARTRACE_UPDATE_PUBLIC_KEY_PEM"] = update_public_key
+        print(f"  Loaded STARTRACE_UPDATE_PUBLIC_KEY_PEM from {update_public_path}")
+    if not update_public_key:
+        raise RuntimeError("STARTRACE_UPDATE_PUBLIC_KEY_PEM or keys/update_public.pem is required")
+
     # Patch build_config.py to embed the key content as string literals.
     config_path = ROOT / "app" / "build_config.py"
     original = config_path.read_text("utf-8")
@@ -101,6 +110,9 @@ def _ensure_license_keys(*, admin: bool) -> None:
     ).replace(
         '_BUILD_PRIVATE_KEY = ""',
         f'_BUILD_PRIVATE_KEY = """{private_key}"""',
+    ).replace(
+        '_BUILD_UPDATE_PUBLIC_KEY = ""',
+        f'_BUILD_UPDATE_PUBLIC_KEY = """{update_public_key}"""',
     )
     if patched != original:
         config_path.write_text(patched, encoding="utf-8")

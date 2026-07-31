@@ -31,6 +31,16 @@ class BetDecision:
 
 
 @dataclass(frozen=True)
+class AiRecommendation:
+    """Provider-neutral AI decision returned inside the server-owned runtime."""
+    action: str
+    play_type: str
+    confidence: int
+    quant_rationale: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class PendingAiBet:
     """A validated AI suggestion awaiting optional user confirmation."""
     site: str
@@ -56,9 +66,6 @@ DEFAULT_ODDS: dict[str, float] = {
     "大单": 4.28,
 }
 
-DEFAULT_AI_PROVIDER = "anthropic"
-DEFAULT_AI_BASE_URL = "https://api.deepseek.com/anthropic"
-DEFAULT_AI_MODEL = "deepseek-v4-pro"
 MIN_LOCK_THRESHOLD_SEC = 20
 MAX_LOCK_THRESHOLD_SEC = 60
 
@@ -97,10 +104,6 @@ class StrategyConfig:
     bet_mode: str = "size"
     martingale_sequence: list[float] = field(default_factory=list)
     odds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ODDS))
-    ai_provider: str = DEFAULT_AI_PROVIDER
-    ai_base_url: str = DEFAULT_AI_BASE_URL
-    ai_model: str = DEFAULT_AI_MODEL
-    ai_api_key: str = ""
     ai_history_count: int = 50
     ai_require_confirmation: bool = False
     ai_confidence_threshold: int = 45
@@ -109,24 +112,11 @@ class StrategyConfig:
     take_profit_limit: float = 0.0
     stop_loss_limit: float = 0.0
 
-    def missing_ai_fields(self) -> list[str]:
-        """Return the required AI settings that are absent or invalid."""
-        missing: list[str] = []
-        if self.ai_provider not in {"openai_compatible", "anthropic"}:
-            missing.append("AI 类型")
-        if not self.ai_base_url.strip():
-            missing.append("Base URL")
-        if not self.ai_model.strip():
-            missing.append("模型")
-        if not self.ai_api_key.strip():
-            missing.append("API Key")
-        return missing
-
     def start_validation_errors(
         self,
         *,
         require_execution_targets: bool = True,
-        require_ai_credentials: bool = True,
+        require_ai_credentials: bool = False,
     ) -> list[str]:
         """Return configuration problems that block a requested start action."""
         errors: list[str] = []
@@ -136,8 +126,7 @@ class StrategyConfig:
             errors.append("请至少选择一个推荐玩法")
         if not self.has_all_valid_odds():
             errors.append("请填写全部玩法的有效赔率")
-        if require_ai_credentials:
-            errors.extend(self.missing_ai_fields())
+        del require_ai_credentials
         if require_execution_targets and self.strategy_type == "martingale" and not self.martingale_sequence:
             errors.append("请填写有效的倍投序列")
         return errors
@@ -167,10 +156,6 @@ class StrategyConfig:
             "bet_mode": self.bet_mode,
             "martingale_sequence": self.martingale_sequence,
             "odds": self.odds,
-            "ai_provider": self.ai_provider,
-            "ai_base_url": self.ai_base_url,
-            "ai_model": self.ai_model,
-            "ai_api_key": self.ai_api_key,
             "ai_history_count": self.ai_history_count,
             "ai_require_confirmation": self.ai_require_confirmation,
             "ai_confidence_threshold": self.ai_confidence_threshold,
@@ -197,10 +182,6 @@ class StrategyConfig:
             bet_mode=str(data.get("bet_mode", "size")),
             martingale_sequence=_ensure_float_list(data.get("martingale_sequence"), default=[]),
             odds=_ensure_odds(data.get("odds")),
-            ai_provider=_ensure_ai_provider(data.get("ai_provider")),
-            ai_base_url=_ensure_nonempty_text(data.get("ai_base_url"), DEFAULT_AI_BASE_URL),
-            ai_model=_ensure_nonempty_text(data.get("ai_model"), DEFAULT_AI_MODEL),
-            ai_api_key=str(data.get("ai_api_key", "") or "").strip(),
             ai_history_count=_ensure_ai_history_count(data.get("ai_history_count")),
             ai_require_confirmation=bool(data.get("ai_require_confirmation", False)),
             ai_confidence_threshold=_ensure_int_range(data.get("ai_confidence_threshold"), 45, 0, 100),
@@ -251,16 +232,6 @@ def _ensure_odds(value: object) -> dict[str, float]:
             if number > 0:
                 odds[name] = number
     return odds
-
-
-def _ensure_ai_provider(value: object) -> str:
-    provider = str(value or DEFAULT_AI_PROVIDER).strip()
-    return provider if provider in {"openai_compatible", "anthropic"} else DEFAULT_AI_PROVIDER
-
-
-def _ensure_nonempty_text(value: object, default: str) -> str:
-    text = str(value or "").strip()
-    return text or default
 
 
 def _ensure_lock_threshold_sec(value: object) -> int:

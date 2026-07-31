@@ -12,6 +12,7 @@ from server_api.api.routes.draws import router as draws_router
 from server_api.api.routes.bets import router as bets_router
 from server_api.api.routes.strategies import router as strategies_router
 from server_api.api.routes.runtime_logs import router as runtime_logs_router
+from server_api.api.routes.updates import router as updates_router
 from server_api.db import create_engine, create_session_factory
 from server_api.services.redis_state import InMemoryRedis
 from server_api.settings import settings
@@ -29,6 +30,7 @@ def create_app(
     auth_session_limit: int | None = None,
     auth_session_window_seconds: int | None = None,
     license_public_key_pem: str | None = None,
+    update_release_dir: str | None = None,
 ) -> FastAPI:
     if database_url is None:
         database_url = settings.database_url
@@ -46,6 +48,8 @@ def create_app(
         auth_session_window_seconds = settings.auth_session_window_seconds
     if license_public_key_pem is None:
         license_public_key_pem = settings.license_public_key_pem
+    if update_release_dir is None:
+        update_release_dir = settings.update_release_dir
     uses_default_redis_factory = redis_factory is None
     if redis_factory is None:
         redis_factory = Redis.from_url
@@ -67,6 +71,7 @@ def create_app(
         app.state.auth_session_limit = auth_session_limit
         app.state.auth_session_window_seconds = auth_session_window_seconds
         app.state.license_public_key_pem = license_public_key_pem
+        app.state.update_release_dir = update_release_dir
         yield
         close = getattr(app.state.redis, "aclose", None)
         if close is not None:
@@ -80,6 +85,7 @@ def create_app(
     application.include_router(bets_router)
     application.include_router(strategies_router)
     application.include_router(runtime_logs_router)
+    application.include_router(updates_router)
 
     @application.get("/health/live")
     def liveness() -> dict[str, str]:

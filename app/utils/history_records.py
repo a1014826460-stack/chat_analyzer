@@ -5,7 +5,6 @@ import html
 import json
 import re
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any
@@ -283,19 +282,8 @@ def _get_json(url: str, params: dict[str, str] | None = None, headers: dict[str,
 def _get_text(url: str, params: dict[str, str] | None = None, headers: dict[str, str] | None = None) -> str:
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
-    request_headers = {
-        "accept": "*/*",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "cache-control": "no-cache",
-        "pragma": "no-cache",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-    if headers:
-        request_headers.update(headers)
-    request = urllib.request.Request(url, headers=request_headers)
-    with urllib.request.urlopen(request, timeout=12) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+    del headers
+    raise RuntimeError(f"desktop history-source access is disabled; use ServerApiClient for {url}")
 
 
 def _parse_ts(value: object) -> datetime | None:

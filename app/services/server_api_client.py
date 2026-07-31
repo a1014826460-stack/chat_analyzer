@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from collections.abc import Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -9,6 +10,9 @@ from urllib.request import Request, urlopen
 
 class ServerApiError(RuntimeError):
     pass
+
+
+MAX_UPDATE_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 
 
 RequestCallable = Callable[[str, str, dict | None, dict[str, str]], dict]
@@ -71,6 +75,63 @@ class ServerApiClient:
     def draw_history(self, site: str, *, limit: int = 50) -> list[dict]:
         safe_limit = min(max(1, int(limit)), 500)
         return list(self._call("GET", f"/v1/draws/{site}/history?limit={safe_limit}", authenticated=True).get("items", []))
+
+    def update_manifest(self) -> dict:
+        return self._call("GET", "/v1/updates/manifest", authenticated=True)
+
+    def update_file_path(self, file_name: str) -> str:
+        if not file_name or "/" in file_name or "\\" in file_name or file_name in {".", ".."}:
+            raise ServerApiError("更新文件名无效")
+        return f"/v1/updates/files/{file_name}"
+
+    def download_update_file(
+        self,
+        file_name: str,
+        target_path: Path,
+        *,
+        expected_size: int,
+        timeout: int = 60,
+    ) -> None:
+        """Download a release only through the authenticated server endpoint."""
+        if not self._access_token:
+            raise ServerApiError("服务器模式未登录")
+        if isinstance(expected_size, bool) or not isinstance(expected_size, int) or not 0 < expected_size <= MAX_UPDATE_ARTIFACT_BYTES:
+            raise ServerApiError("更新文件大小无效")
+        path = self.update_file_path(file_name)
+        request = Request(
+            f"{self.base_url}{path}",
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            method="GET",
+        )
+        target_path = Path(target_path)
+        partial_path = target_path.with_name(f"{target_path.name}.part")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        written = 0
+        try:
+            partial_path.unlink(missing_ok=True)
+            with urlopen(request, timeout=timeout) as response:
+                with partial_path.open("wb") as output:
+                    while True:
+                        chunk = response.read(65536)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > expected_size:
+                            raise ServerApiError("更新文件大小超过签名清单")
+                        output.write(chunk)
+            if written != expected_size:
+                raise ServerApiError("更新文件大小与签名清单不一致")
+            partial_path.replace(target_path)
+        except HTTPError as exc:
+            if exc.code == 401:
+                self._access_token = ""
+            raise ServerApiError(f"更新下载失败 ({exc.code})") from exc
+        except URLError as exc:
+            raise ServerApiError(f"无法连接服务器: {exc.reason}") from exc
+        except OSError as exc:
+            raise ServerApiError(f"无法保存更新文件: {exc}") from exc
+        finally:
+            partial_path.unlink(missing_ok=True)
 
     def pending_bets(self) -> list[dict]:
         return list(self._call("GET", "/v1/bets/pending", authenticated=True).get("items", []))

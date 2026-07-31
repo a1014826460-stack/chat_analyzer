@@ -1,6 +1,6 @@
 # 对外 API 接口清单
 
-最后审计：2026-07-31。调用链中的 `JWT` 表示 `current_user_id` 依赖（包含签名、过期和 Redis 吊销校验）；`ADMIN` 表示 `X-Admin-Token`。
+最后审计：2026-08-01。调用链中的 `JWT` 表示 `current_user_id` 依赖（包含签名、过期和 Redis 吊销校验）；`ADMIN` 表示 `X-Admin-Token`。
 
 ## FastAPI 入站 REST
 
@@ -23,6 +23,9 @@
 | API-015 | `GET /v1/runtime-logs` | 自动下注面板 -> `ServerApiClient.runtime_logs` -> runtime_logs 路由 | JWT；级别/分类枚举、关键字≤200、时间顺序、游标、limit 1-100 | 服务端终点；返回当前用户的脱敏日志。 |
 | API-016 | `GET /health/live` | 负载均衡 -> FastAPI | 无鉴权；固定状态 | 明确运维例外，无业务数据。 |
 | API-017 | `GET /health/ready` | 受限反向代理运维网段 -> FastAPI -> PostgreSQL/Redis | 反向代理 IP 限制；不返回依赖详情 | 明确运维例外。 |
+| API-018 | `GET /v1/draws/{site}/current` | 桌面线路卡片/开奖时钟 -> `ServerApiClient.current_draw` -> draws 路由 -> 共享开奖库 | JWT；site 固定枚举 | 服务端中转；桌面无第三方回退。 |
+| API-019 | `GET /v1/updates/manifest` | 桌面更新检查 -> `ServerApiClient.update_manifest` -> updates 路由 -> 只读发布目录 `latest.json` | JWT；清单必须为对象，包含合法文件名、正整数大小、64 位 SHA-256 和非空签名；桌面继续执行 Ed25519 验签 | 服务端受控分发。 |
+| API-020 | `GET /v1/updates/files/{file_name}` | 桌面更新下载 -> `ServerApiClient.download_update_file` -> updates 路由 -> 只读发布目录 | JWT；路径解析防穿越；文件名必须等于当前清单引用文件；桌面按签名大小分块落盘并校验 SHA-256 | 服务端二进制代理，无任意 URL/SSRF 输入。 |
 
 ## 服务端出站调用
 
@@ -39,8 +42,8 @@
 | CLIENT-001 | `app/services/server_api_client.py` | 唯一通用业务 HTTP 客户端；所有非 Tencent 生产网络请求必须经此入口。 |
 | EXCEPTION-TENCENT-IM-001 | `app/services/ws_message_sender.py` | 腾讯聊天 WSS 直连例外；使用已登录本地会话，仅用于聊天发送。 |
 | EXCEPTION-TENCENT-IM-002 | `app/services/rest_message_sender.py` | 腾讯聊天 REST 直连例外；仅用于聊天发送。 |
-| LEGACY-001 | `app/utils/fetch_date.py`、`app/utils/history_records.py` | 发现客户端直连开奖源；仅兼容/诊断路径，生产服务器模式必须禁用并迁移至 API-006/API-007。 |
-| LEGACY-002 | `app/services/ai_bet_client.py`、`app/services/update_service.py` | 发现客户端直连 AI/更新源；生产服务器模式必须禁用，后续改由受签名服务端资源提供。 |
+| MIGRATED-001 | `app/utils/fetch_date.py`、`app/utils/history_records.py` | 网络获取已禁用，仅保留元数据与纯解析兼容函数；当前期和历史分别由 API-018/API-006 提供，活动 UI 无第三方回退。 |
+| MIGRATED-002 | 本地 AI 与更新模块 | `app/services/ai_bet_client.py` 已删除，客户端不提供通用 AI 建议调用；AI 仅由 worker 的 `SharedAiClient` 决策。`update_service.py` 仅保留签名、哈希和服务器下载编排，网络入口为 API-019/API-020。 |
 
 ## 诊断工具
 
@@ -49,5 +52,6 @@
 ## 审计结果与修复优先级
 
 1. Tencent REST/WSS 已依用户要求登记为唯一客户端直连例外。
-2. `LEGACY-001` 与 `LEGACY-002` 是未完成的迁移项：当前仓库仍含直连实现。必须在生产构建中阻止这些路径并将更新、开奖及 AI 的读取契约补全到 FastAPI 后，才能达到“所有非 Tencent 调用均中转”的最终验收。
-3. `/health/ready` 必须只由反向代理允许的运维网段访问；部署时不可直接公开 API 端口。
+2. 历史开奖、当前期开奖、更新检查/下载均已迁移到 JWT FastAPI 路由；本地 AI 网络客户端和本地凭据配置已移除。服务端没有客户端可调用的通用 AI 建议路由，AI 只存在于 worker 内部决策链。
+3. 静态审计测试限制生产 `urlopen` 仅可出现在 `ServerApiClient` 和两项 Tencent IM 例外中。
+4. `/health/ready` 必须只由反向代理允许的运维网段访问；部署时不可直接公开 API 端口。

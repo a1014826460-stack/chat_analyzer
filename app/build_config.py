@@ -12,7 +12,6 @@ BUILD_ID = os.getenv("STARTRACE_BUILD_ID", "startrace_202606180001")
 IS_ADMIN_VERSION = False
 IS_PRODUCTION = True
 
-CDN_BASE_URL = os.getenv("STARTRACE_CDN_BASE_URL", "").rstrip("/")
 # __BUILD_INJECT_SERVER_API_BASE_URL__ — replaced by tools/build.py during packaging
 _BUILD_SERVER_API_BASE_URL = ""
 
@@ -27,6 +26,7 @@ def server_api_base_url() -> str:
 # __BUILD_INJECT_LICENSE_PUBLIC_KEY__ — replaced by tools/build.py during packaging
 _BUILD_PUBLIC_KEY = ""
 _BUILD_PRIVATE_KEY = ""
+_BUILD_UPDATE_PUBLIC_KEY = ""
 
 
 def _development_key(name: str) -> str:
@@ -44,7 +44,7 @@ _epl = os.getenv("STARTRACE_LICENSE_PUBLIC_KEY_PEM", "").strip()
 LICENSE_PUBLIC_KEY_PEM = _epl or _BUILD_PUBLIC_KEY.strip() or _development_key("license_public.pem")
 _epp = os.getenv("STARTRACE_LICENSE_PRIVATE_KEY_PEM", "").strip()
 LICENSE_PRIVATE_KEY_PEM = _epp or _BUILD_PRIVATE_KEY.strip() or _development_key("license_private.pem")
-UPDATE_PUBLIC_KEY_PEM = os.getenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", "").strip()
+UPDATE_PUBLIC_KEY_PEM = os.getenv("STARTRACE_UPDATE_PUBLIC_KEY_PEM", "").strip() or _BUILD_UPDATE_PUBLIC_KEY.strip()
 UPDATE_PRIVATE_KEY_PEM = os.getenv("STARTRACE_UPDATE_PRIVATE_KEY_PEM", "").strip()
 
 
@@ -55,9 +55,3 @@ def edition_name() -> str:
 def artifact_name() -> str:
     suffix = "-Admin" if IS_ADMIN_VERSION else ""
     return f"{APP_NAME}{suffix}-{APP_VERSION}"
-
-
-def update_manifest_url() -> str:
-    if not CDN_BASE_URL:
-        return ""
-    return f"{CDN_BASE_URL}/{APP_NAME.lower()}/{edition_name()}/latest.json"

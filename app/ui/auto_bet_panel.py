@@ -29,9 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.auto_bet import (
-    DEFAULT_AI_BASE_URL,
-    DEFAULT_AI_MODEL,
-    DEFAULT_AI_PROVIDER,
     DEFAULT_ODDS,
     AutoBetRuntimeState,
     InjectRecord,
@@ -90,52 +87,14 @@ PLAY_PRESET_TYPES: dict[str, tuple[str, ...]] = {
 
 
 class AiConfigDialog(QDialog):
-    """Keep API credentials out of the always-visible betting panel."""
+    """Configure server-owned AI strategy parameters."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("AI 配置")
+        self.setWindowTitle("策略配置")
         self.setModal(True)
         self.resize(500, 380)
         layout = QVBoxLayout(self)
-
-        provider_row = QHBoxLayout()
-        provider_row.addWidget(QLabel("AI 类型:"))
-        self._provider_combo = QComboBox()
-        self._provider_combo.addItem("OpenAI 兼容", "openai_compatible")
-        self._provider_combo.addItem("Anthropic", "anthropic")
-        self._provider_combo.setCurrentIndex(self._provider_combo.findData(DEFAULT_AI_PROVIDER))
-        provider_row.addWidget(self._provider_combo, 1)
-        layout.addLayout(provider_row)
-
-        self._local_ai_field_rows: list[QWidget] = []
-        for label, attr, placeholder, secret in (
-            ("Base URL:", "_base_url_edit", DEFAULT_AI_BASE_URL, False),
-            ("模型:", "_model_edit", DEFAULT_AI_MODEL, False),
-            ("API Key:", "_api_key_edit", "", True),
-        ):
-            row_widget = QWidget()
-            row = QHBoxLayout(row_widget)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label))
-            edit = QLineEdit()
-            edit.setPlaceholderText(placeholder)
-            if secret:
-                edit.setEchoMode(QLineEdit.Password)
-            setattr(self, attr, edit)
-            row.addWidget(edit, 1)
-            if secret:
-                self._api_key_visibility_button = QPushButton("👁")
-                self._api_key_visibility_button.setCheckable(True)
-                self._api_key_visibility_button.setFixedWidth(38)
-                self._api_key_visibility_button.setToolTip("显示 API Key")
-                self._api_key_visibility_button.toggled.connect(self._toggle_api_key_visibility)
-                row.addWidget(self._api_key_visibility_button)
-            self._local_ai_field_rows.append(row_widget)
-            layout.addWidget(row_widget)
-
-        self._base_url_edit.setText(DEFAULT_AI_BASE_URL)
-        self._model_edit.setText(DEFAULT_AI_MODEL)
 
         history_row = QHBoxLayout()
         history_row.addWidget(QLabel("历史期数:"))
@@ -185,24 +144,10 @@ class AiConfigDialog(QDialog):
         layout.addWidget(buttons)
 
     def set_server_mode(self, enabled: bool) -> None:
-        """Hide local model credentials when AI calls are hosted by the server."""
-        server_mode = bool(enabled)
-        self.setWindowTitle("策略配置" if server_mode else "AI 配置")
-        for row in getattr(self, "_local_ai_field_rows", []):
-            row.setVisible(not server_mode)
-        self._base_url_edit.setVisible(not server_mode)
-        self._model_edit.setVisible(not server_mode)
-        self._api_key_edit.setVisible(not server_mode)
-        if hasattr(self, "_api_key_visibility_button"):
-            self._api_key_visibility_button.setVisible(not server_mode)
+        del enabled
+        self.setWindowTitle("策略配置")
 
     def load_config(self, config: StrategyConfig) -> None:
-        index = self._provider_combo.findData(config.ai_provider)
-        if index >= 0:
-            self._provider_combo.setCurrentIndex(index)
-        self._base_url_edit.setText(config.ai_base_url or DEFAULT_AI_BASE_URL)
-        self._model_edit.setText(config.ai_model or DEFAULT_AI_MODEL)
-        self._api_key_edit.setText(config.ai_api_key)
         self.set_history_site(config.site)
         self._set_history_count(config.ai_history_count)
         self._confirm_check.setChecked(config.ai_require_confirmation)
@@ -212,10 +157,6 @@ class AiConfigDialog(QDialog):
         self._stop_loss_spin.setValue(config.stop_loss_limit)
 
     def apply_to_config(self, config: StrategyConfig) -> None:
-        config.ai_provider = str(self._provider_combo.currentData() or "openai_compatible")
-        config.ai_base_url = self._base_url_edit.text().strip()
-        config.ai_model = self._model_edit.text().strip()
-        config.ai_api_key = self._api_key_edit.text().strip()
         config.ai_history_count = int(self._history_combo.currentData() or 50)
         config.ai_require_confirmation = self._confirm_check.isChecked()
         config.ai_confidence_threshold = self._confidence_spin.value()
@@ -225,17 +166,7 @@ class AiConfigDialog(QDialog):
         config.stop_loss_limit = self._stop_loss_spin.value()
 
     def has_required_values(self) -> bool:
-        config = StrategyConfig(
-            ai_provider=str(self._provider_combo.currentData() or ""),
-            ai_base_url=self._base_url_edit.text(),
-            ai_model=self._model_edit.text(),
-            ai_api_key=self._api_key_edit.text(),
-        )
-        return not config.missing_ai_fields()
-
-    def _toggle_api_key_visibility(self, visible: bool) -> None:
-        self._api_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
-        self._api_key_visibility_button.setToolTip("隐藏 API Key" if visible else "显示 API Key")
+        return True
 
     def set_history_site(self, site: str) -> None:
         """Restrict selectable history counts to the active site's API capability."""
@@ -735,18 +666,6 @@ class AutoBetPanel(QGroupBox):
         )
         self._ai_config_dialog.apply_to_config(config)
         return config
-
-    def set_server_mode(self, enabled: bool) -> None:
-        """Hide local model credentials when AI calls are hosted by the server."""
-        server_mode = bool(enabled)
-        self.setWindowTitle("策略配置" if server_mode else "AI 配置")
-        for row in getattr(self, "_local_ai_field_rows", []):
-            row.setVisible(not server_mode)
-        self._base_url_edit.setVisible(not server_mode)
-        self._model_edit.setVisible(not server_mode)
-        self._api_key_edit.setVisible(not server_mode)
-        if hasattr(self, "_api_key_visibility_button"):
-            self._api_key_visibility_button.setVisible(not server_mode)
 
     def load_config(self, config: StrategyConfig) -> None:
         """Apply config to UI fields."""

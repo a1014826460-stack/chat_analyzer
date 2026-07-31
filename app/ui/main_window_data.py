@@ -874,48 +874,23 @@ class MainWindowDataMixin:
                     panel.update_ai_statistics(ai_summary)
 
     def _on_auto_bet_tick(self, now: datetime | None = None) -> None:
-        """Called by auto_bet timer to evaluate betting strategy."""
-        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
-            client = getattr(self, "server_api_client", None)
-            if client is not None and not getattr(client, "is_authenticated", False) and hasattr(self, "_bootstrap_server_mode"):
-                self._bootstrap_server_mode()
-            self._refresh_server_pending_bet()
-            self._refresh_server_betting_events()
-            self._refresh_server_runtime_logs(now=now)
-            if hasattr(self, "_refresh_server_statistics"):
-                try:
-                    self._refresh_server_statistics(now=now)
-                except TypeError:
-                    self._refresh_server_statistics()
-            if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
-                try:
-                    self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""), now=now)
-                except TypeError:
-                    self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""))
-            return
-        service = getattr(self, "auto_bet_service", None)
-        if service is None or not service.is_running:
-            return
-        active_site = getattr(self, "_active_site", "")
-        draw_infos = getattr(self, "_draw_infos", {})
-        info = draw_infos.get(active_site) if isinstance(draw_infos, dict) else None
-        if info is None:
-            return
-        target_period = info.next_period or ""
-        countdown = info.next_countdown or 0
-        service.tick(
-            active_site,
-            countdown,
-            target_period,
-            period_start_time=getattr(info, "start_time", None),
-            period_end_time=getattr(info, "next_time", None),
-        )
+        """Refresh the mandatory server-owned automatic betting runtime."""
+        client = getattr(self, "server_api_client", None)
+        if client is not None and not getattr(client, "is_authenticated", False) and hasattr(self, "_bootstrap_server_mode"):
+            self._bootstrap_server_mode()
+        self._refresh_server_pending_bet()
+        self._refresh_server_betting_events()
+        self._refresh_server_runtime_logs(now=now)
+        if hasattr(self, "_refresh_server_statistics"):
+            try:
+                self._refresh_server_statistics(now=now)
+            except TypeError:
+                self._refresh_server_statistics()
         if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
-            self._refresh_auto_bet_frequency_analysis(active_site, target_period, now=now)
-        if service.runtime_state.halted:
-            self._on_auto_bet_risk_halted(service.runtime_state.halt_reason)
-        if MainWindowDataMixin._auto_bet_refresh_due(self, "_local_statistics_last_polled_at", now):
-            MainWindowDataMixin._update_local_runtime_and_ai_statistics(self)
+            try:
+                self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""), now=now)
+            except TypeError:
+                self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""))
 
     def _handle_auto_bet_log_ready(self, record: object) -> None:
         panel = getattr(self, "auto_bet_panel", None)
@@ -1401,9 +1376,9 @@ class MainWindowDataMixin:
             self._server_strategy_pending_payload = None
             try:
                 self.server_api_client.save_strategy(request_payload)
-                return {"ok": True}
+                return {"ok": True, "payload": request_payload}
             except Exception as exc:
-                return {"error": exc}
+                return {"error": exc, "payload": request_payload}
 
         try:
             future = worker.submit(save_latest)
@@ -1427,8 +1402,20 @@ class MainWindowDataMixin:
 
     def _handle_server_strategy_save_ready(self, result: object) -> None:
         self._server_strategy_save_in_progress = False
-        if isinstance(result, dict) and result.get("error") is not None:
-            logger.warning("Unable to save server auto-bet strategy: %s", result["error"])
+        error = result.get("error") if isinstance(result, dict) else None
+        if error is not None:
+            logger.warning("Unable to save server auto-bet strategy: %s", error)
+        payload = result.get("payload") if isinstance(result, dict) else None
+        completed_stop = isinstance(payload, dict) and payload.get("enabled") is False
+        if completed_stop and getattr(self, "_server_strategy_stop_pending", False):
+            self._server_strategy_stop_pending = False
+            if error is not None:
+                panel = getattr(self, "auto_bet_panel", None)
+                if panel is not None:
+                    panel.set_running(True)
+                timer = getattr(self, "_auto_bet_timer", None)
+                if timer is not None:
+                    timer.start()
         if getattr(self, "_server_strategy_pending_payload", None):
             MainWindowDataMixin._schedule_server_strategy_save(self, self._server_strategy_pending_payload)
 
@@ -1549,154 +1536,25 @@ class MainWindowDataMixin:
                     })
 
     def _on_auto_bet_start(self) -> None:
-        """Start the auto bet engine."""
-        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
-            self._start_server_auto_bet()
-            return
-        service = getattr(self, "auto_bet_service", None)
-        if service is None:
-            return
-        MainWindowDataMixin._arm_auto_bet_refresh_burst(self)
-        MainWindowDataMixin._reset_local_run_statistics_snapshots(self)
-        validation_errors = service.config.start_validation_errors()
-        if validation_errors:
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None:
-                panel.set_running(False)
-            QMessageBox.warning(self, "无法启动自动下注", "\n".join(validation_errors))
-            return
-        resolved_db = getattr(self, "resolved_db", None)
-        if resolved_db is None:
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None:
-                panel.set_running(False)
-            return
-
-        # Prefer the browser/WebSDK WSS protocol: it uses a separate WebSocket
-        # instance and does not call the native IM SDK login, so it avoids kicking the
-        # running WuQuan client offline. Fall back to UIA/background window
-        # senders if WSS credentials are missing or WSS startup fails.
-        from app.services.account_resolver import DEFAULT_SHARED_PREFS
-        from app.services.background_window_sender import BackgroundWindowMessageSender
-        from app.services.uia_wuquan_sender import UiaWuQuanMessageSender
-        from app.services.ws_message_sender import WsMessageSender
-        from app.services.wuquan_account_mapping import load_shared_preferences, resolve_login_account
-
-        panel = getattr(self, "auto_bet_panel", None)
-        injector = None
-
-        try:
-            prefs_payload = load_shared_preferences(DEFAULT_SHARED_PREFS)
-            account = resolve_login_account(resolved_db.accid, prefs_payload)
-        except Exception as exc:
-            logger.warning("Web WSS credential lookup failed: %s", exc)
-            account = None
-
-        if account is not None and account.user_sig:
-            try:
-                injector = WsMessageSender(
-                    resolved_db.im_appid or account.im_appid,
-                    account.accid,
-                    account.user_sig,
-                    nick=account.nick_name,
-                    avatar=account.avatar,
-                )
-                if not injector.startup():
-                    logger.warning("WsMessageSender startup failed; fallback to UIA/background sender")
-                    injector = None
-            except (RuntimeError, OSError) as exc:
-                logger.error("WsMessageSender init/startup failed: %s", exc)
-                injector = None
-        else:
-            logger.warning("Web WSS credentials not found for accid=%s; fallback to UIA/background sender", resolved_db.accid)
-
-        if injector is None:
-            try:
-                injector = UiaWuQuanMessageSender(msg_db_path=resolved_db.msg_db)
-            except (RuntimeError, OSError) as exc:
-                logger.error("UiaWuQuanMessageSender init failed: %s", exc)
-                if panel is not None:
-                    panel.set_running(False)
-                return
-
-            if not injector.startup():
-                logger.warning("UiaWuQuanMessageSender startup failed; fallback to BackgroundWindowMessageSender")
-                try:
-                    injector = BackgroundWindowMessageSender(msg_db_path=resolved_db.msg_db)
-                except (RuntimeError, OSError) as exc:
-                    logger.error("BackgroundWindowMessageSender init failed: %s", exc)
-                    if panel is not None:
-                        panel.set_running(False)
-                    return
-                if not injector.startup():
-                    logger.error("BackgroundWindowMessageSender startup failed")
-                    if panel is not None:
-                        panel.set_running(False)
-                    return
-
-        service.set_injector(injector)
-        svc_cfg = service.config
-        if svc_cfg.strategy_type in {"flat", "martingale", "trend_following", "ai"}:
-            from app.services.ai_bet_client import AiBetClient
-
-            if hasattr(service, "set_ai_client"):
-                service.set_ai_client(AiBetClient())
-        elif hasattr(service, "set_ai_client"):
-            service.set_ai_client(None)
-
-        from app.services.draw_result_store import DrawResultStore
-        from app.services.ai_prediction_store import AiPredictionStore
-        from app.services.history_fetchers import HistoryFetcher
-        from app.utils.pathing import user_data_dir
-
-        store = DrawResultStore(
-            db_path=Path(user_data_dir()) / "draw_results.db",
-            fetcher=HistoryFetcher(),
-        )
-        history_count = svc_cfg.ai_history_count
-        store.ensure_data(svc_cfg.site, min_count=history_count)
-        service.set_result_provider(store)
-        if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
-            self._refresh_auto_bet_frequency_analysis(svc_cfg.site, force=True)
-        if hasattr(service, "set_ai_prediction_store"):
-            prediction_store = AiPredictionStore(Path(user_data_dir()) / "ai_predictions.db")
-            service.set_ai_prediction_store(prediction_store)
-
-        started = service.start()
-        if started is False:
-            if panel is not None:
-                panel.set_running(False)
-            return
-        MainWindowDataMixin._update_local_runtime_and_ai_statistics(self)
-        timer = getattr(self, "_auto_bet_timer", None)
-        if timer is not None:
-            timer.start()
+        """Submit automatic betting to the mandatory server runtime."""
+        self._start_server_auto_bet()
 
     def _on_auto_bet_stop(self) -> None:
-        """Stop the auto bet engine."""
-        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None:
-                panel.set_running(False)
-            timer = getattr(self, "_auto_bet_timer", None)
-            if timer is not None:
-                timer.stop()
-            return
-        service = getattr(self, "auto_bet_service", None)
-        if service is not None:
-            service.stop()
-            # Shutdown injector
-            injector = getattr(service, "_injector", None)
-            if injector is not None:
-                try:
-                    injector.shutdown()
-                except Exception as exc:
-                    logger.debug("Injector shutdown error: %s", exc)
-                service.set_injector(None)
-            panel = getattr(self, "auto_bet_panel", None)
-            if panel is not None and hasattr(panel, "update_runtime_state"):
-                panel.update_runtime_state(service.runtime_state)
-
+        """Stop client polling for the server-owned automatic betting runtime."""
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None:
+            config = panel.get_config()
+            self._server_strategy_stop_pending = True
+            self._schedule_server_strategy_save({
+                "enabled": False,
+                "site": config.site,
+                "target_groups": config.target_groups,
+                "history_count": config.ai_history_count,
+                "confidence_threshold": config.ai_confidence_threshold,
+                "require_confirmation": config.ai_require_confirmation,
+                "bet_amount": config.bet_amount,
+            })
+            panel.set_running(False)
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
             timer.stop()
@@ -1758,7 +1616,8 @@ class MainWindowDataMixin:
         # Populate groups
         self._refresh_auto_bet_groups()
 
-        # Load saved config
+        # Load saved config after removing credentials from pre-server releases.
+        MainWindowDataMixin._remove_local_ai_credentials_from_settings(self)
         saved = self.settings.get("auto_bet", {})
         if saved:
             from app.models.auto_bet import StrategyConfig
@@ -1772,6 +1631,21 @@ class MainWindowDataMixin:
 
         # Show panel now that DB is resolved
         panel.setVisible(True)
+
+    def _remove_local_ai_credentials_from_settings(self) -> bool:
+        settings = getattr(self, "settings", None)
+        if not isinstance(settings, dict):
+            return False
+        saved = settings.get("auto_bet")
+        if not isinstance(saved, dict):
+            return False
+        obsolete = {"ai_provider", "ai_base_url", "ai_model", "ai_api_key"}
+        cleaned = {key: value for key, value in saved.items() if key not in obsolete}
+        if len(cleaned) == len(saved):
+            return False
+        settings["auto_bet"] = cleaned
+        self.settings_service.save(settings)
+        return True
 
     def _refresh_auto_bet_groups(self) -> None:
         """Refresh the auto-bet panel's target group list from the current group_list."""

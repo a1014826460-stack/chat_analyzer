@@ -95,9 +95,9 @@ def test_server_mode_keeps_strategy_config_button_without_local_ai_secret_fields
     assert "API Key" not in panel._ai_config_button.toolTip()
 
     dialog = panel._ai_config_dialog
-    assert dialog._base_url_edit.isHidden()
-    assert dialog._model_edit.isHidden()
-    assert dialog._api_key_edit.isHidden()
+    assert not hasattr(dialog, "_base_url_edit")
+    assert not hasattr(dialog, "_model_edit")
+    assert not hasattr(dialog, "_api_key_edit")
     assert not dialog._confidence_spin.isHidden()
     assert not dialog._take_profit_spin.isHidden()
     assert not dialog._stop_loss_spin.isHidden()
