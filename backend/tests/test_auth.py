@@ -37,6 +37,7 @@ def test_signed_local_user_license_creates_online_session_and_can_be_revoked(tmp
 def test_online_session_rejects_tampered_expired_wrong_machine_or_non_user_license(tmp_path):
     signer = LicenseSigner()
     token = signer.sign("licensed-machine")
+    tampered_token = token[:-1] + ("A" if token[-1] != "A" else "B")
     app = create_app(
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
         jwt_secret="t" * 32,
@@ -46,7 +47,7 @@ def test_online_session_rejects_tampered_expired_wrong_machine_or_non_user_licen
     with TestClient(app) as client:
         attempts = [
             {"machine_code": "other-machine", "license_token": token},
-            {"machine_code": "licensed-machine", "license_token": token[:-1] + "A"},
+            {"machine_code": "licensed-machine", "license_token": tampered_token},
             {"machine_code": "licensed-machine", "license_token": signer.sign("licensed-machine", expires_in_seconds=-1)},
             {"machine_code": "licensed-machine", "license_token": signer.sign("licensed-machine", edition="admin")},
         ]
