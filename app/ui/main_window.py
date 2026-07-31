@@ -27,7 +27,6 @@ from app.services.summary_check_report_service import SummaryCheckReportService
 from app.services.update_installer import schedule_update_install
 from app.services.update_service import download_and_verify, fetch_manifest, update_available
 from app.ui.license_generator_dialog import LicenseGeneratorDialog
-from app.ui.server_mode_dialog import ServerModeDialog
 from app.ui.main_window_actions import MainWindowActionsMixin
 from app.ui.main_window_blocking import MainWindowBlockingMixin
 from app.ui.main_window_data import MainWindowDataMixin
@@ -56,6 +55,12 @@ class MainWindow(
     _ai_pending_ready = Signal(object)
     _update_check_ready = Signal(object)
     _update_download_ready = Signal(object)
+    _server_pending_ready = Signal(object)
+    _server_betting_events_ready = Signal(object)
+    _server_frequency_ready = Signal(object)
+    _server_statistics_ready = Signal(object)
+    _server_strategy_save_ready = Signal(object)
+    _server_order_action_ready = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -138,6 +143,12 @@ class MainWindow(
         self._ai_pending_ready.connect(self._handle_ai_pending_ready)
         self._update_check_ready.connect(self._handle_update_check_ready)
         self._update_download_ready.connect(self._handle_update_download_ready)
+        self._server_pending_ready.connect(self._handle_server_pending_ready)
+        self._server_betting_events_ready.connect(self._handle_server_betting_events_ready)
+        self._server_frequency_ready.connect(self._handle_server_frequency_ready)
+        self._server_statistics_ready.connect(self._handle_server_statistics_ready)
+        self._server_strategy_save_ready.connect(self._handle_server_strategy_save_ready)
+        self._server_order_action_ready.connect(self._handle_server_order_action_ready)
         self._auto_bet_timer = QTimer(self)
         self._auto_bet_timer.setInterval(2000)
         self._auto_bet_timer.timeout.connect(self._on_auto_bet_tick)
@@ -181,9 +192,6 @@ class MainWindow(
         proxy_action = QAction("代理设置", self)
         proxy_action.triggered.connect(self._open_proxy_settings)
         help_menu.addAction(proxy_action)
-        server_mode_action = QAction("服务器模式", self)
-        server_mode_action.triggered.connect(self._open_server_mode_settings)
-        help_menu.addAction(server_mode_action)
         if IS_ADMIN_VERSION:
             license_action = QAction("生成激活码", self)
             license_action.triggered.connect(self._show_admin_license_panel)
@@ -212,6 +220,7 @@ class MainWindow(
             self._build_analysis_page()
             self.tabs.insertWidget(0, self.analysis_page)
         self._load_initial_state()
+        self._bootstrap_server_mode()
         self._refresh_site_cards()
         self.tabs.setCurrentWidget(self.analysis_page)
 
@@ -225,38 +234,23 @@ class MainWindow(
         dlg = LicenseGeneratorDialog(self.license_service, self)
         dlg.exec()
 
-    def _open_server_mode_settings(self) -> None:
-        from app.services.local_wss_credentials import LocalWssCredentialProvider
-        from app.services.wuquan_account_mapping import DEFAULT_SHARED_PREFS
+    def _bootstrap_server_mode(self) -> None:
+        from app.services.local_wss_credentials import DEFAULT_SHARED_PREFS, LocalWssCredentialProvider
+        from app.services.server_mode_bootstrap import bootstrap_server_mode
 
         resolved = getattr(self, "resolved_db", None)
         account_id = str(getattr(resolved, "accid", "") or "").strip()
-        local_wss = LocalWssCredentialProvider(DEFAULT_SHARED_PREFS).read(account_id) if account_id else None
-        dialog = ServerModeDialog(
-            settings=self.server_mode_settings,
-            machine_code=self.license_service.get_machine_code(),
-            license_token=self.license_service.local_license_token(),
-            wss_credentials=(local_wss.appid, local_wss.accid, local_wss.user_sig) if local_wss else None,
-            parent=self,
+        status = bootstrap_server_mode(
+            self.server_api_client,
+            self.license_service,
+            account_identifier=account_id,
+            credential_provider=LocalWssCredentialProvider(DEFAULT_SHARED_PREFS),
         )
-        if dialog.exec() != dialog.Accepted:
-            return
-        if self.server_api_client.is_authenticated:
-            try:
-                self.server_api_client.logout()
-            except Exception:
-                logger.debug("Previous server session could not be logged out", exc_info=True)
-        self.server_mode_settings = dialog.settings
-        self.server_api_client = dialog.client or ServerApiClient(dialog.settings.base_url)
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "set_server_mode"):
-            panel.set_server_mode(dialog.settings.enabled)
-        self.settings["server_mode"] = dialog.settings.to_dict()
-        self.settings_service.save(self.settings)
-        self._set_status(
-            "服务器模式已登录" if dialog.settings.enabled else "服务器模式已关闭",
-            "info",
-        )
+            panel.set_server_mode(True)
+        if hasattr(self, "_set_status"):
+            self._set_status(status.message, "info" if status.connected else "warning")
 
     def _set_status(self, message: str, log_level: str = "debug") -> None:
         if hasattr(self, "status_label"):
@@ -307,14 +301,18 @@ class MainWindow(
         if hasattr(self, "_auto_bet_timer"):
             self._auto_bet_timer.stop()
         if hasattr(self, "auto_bet_service"):
-            self.auto_bet_service.stop()
+            self.auto_bet_service.shutdown()
         if getattr(self, "server_api_client", None) is not None and self.server_api_client.is_authenticated:
             try:
                 self.server_api_client.logout()
             except Exception:
                 logger.debug("Server session logout failed during shutdown", exc_info=True)
+        strategy_timer = getattr(self, "_server_strategy_timer", None)
+        if strategy_timer is not None:
+            strategy_timer.cancel()
         self._worker.shutdown(wait=False, cancel_futures=True)
         self._data_worker.shutdown(wait=False, cancel_futures=True)
+        self.settings_service.flush()
         super().closeEvent(event)
 
     def _restore_window_state(self) -> None:

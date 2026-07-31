@@ -1,23 +1,22 @@
 from fastapi.testclient import TestClient
 
 from server_api.main import create_app
+from license_test_utils import LicenseSigner
 
 
-def _user_headers(client: TestClient) -> dict[str, str]:
-    admin = {"X-Admin-Token": "development-admin-token"}
-    client.post("/v1/admin/activation-codes", headers=admin, json={
-        "activation_code": "DRAW-CODE", "expires_in_seconds": 3600,
-    })
+def _user_headers(client: TestClient, signer: LicenseSigner) -> dict[str, str]:
     response = client.post("/v1/auth/session", json={
-        "machine_code": "draw-machine", "activation_code": "DRAW-CODE",
+        "machine_code": "draw-machine", "license_token": signer.sign("draw-machine"),
     })
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def test_shared_draw_upsert_history_and_frequency_analysis(tmp_path):
+    signer = LicenseSigner()
     app = create_app(
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
         jwt_secret="x" * 32,
+        license_public_key_pem=signer.public_key_pem,
         initialize_schema=True,
     )
     with TestClient(app) as client:
@@ -32,7 +31,7 @@ def test_shared_draw_upsert_history_and_frequency_analysis(tmp_path):
             "site": "pc28", "period": "4", "result": "小双", "total": 12,
         }).status_code == 200
 
-        headers = _user_headers(client)
+        headers = _user_headers(client, signer)
         history = client.get("/v1/draws/pc28/history?limit=20", headers=headers)
         assert [item["period"] for item in history.json()["items"]] == ["1", "2", "3", "4"]
 

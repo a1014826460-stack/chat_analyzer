@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from server_api.workers import history_sources
@@ -17,7 +17,22 @@ class CurrentPeriod:
 def fetch_current_period(site: str) -> CurrentPeriod | None:
     payload = _fetch_payload(site)
     if site == "pc28":
-        issues = payload.get("issue", []) if isinstance(payload, dict) else []
+        if not isinstance(payload, dict):
+            return None
+        rows = payload.get("recent_records")
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+            current = str(rows[0].get("draw_number") or rows[0].get("qishu") or "").strip()
+            countdown_payload = payload.get("countdown")
+            next_period = ""
+            if isinstance(countdown_payload, dict):
+                next_period = str(countdown_payload.get("next_draw_number") or "").strip()
+                countdown = _int_or_none(countdown_payload.get("countdown_seconds"))
+            else:
+                countdown = _int_or_none(countdown_payload)
+            deadline = datetime.now() + timedelta(seconds=countdown) if countdown is not None else None
+            period = next_period or _increment_period(current)
+            return CurrentPeriod(period, deadline) if period else None
+        issues = payload.get("issue", [])
         if not isinstance(issues, list) or not issues or not isinstance(issues[0], dict):
             return None
         current = str(issues[0].get("qishu") or "").strip()
@@ -49,9 +64,9 @@ def fetch_current_period(site: str) -> CurrentPeriod | None:
 def _fetch_payload(site: str) -> Any:
     if site == "pc28":
         return history_sources._get_json(
-            "https://1pc.cc/data/get/checkData",
-            params={"type": "jnd28", "sf": "1", "ms": "zh"},
-            headers={"referer": "https://1pc.cc/", "x-requested-with": "XMLHttpRequest"},
+            "https://jnd28-yc.vip/api/dashboard",
+            params={"limit": "5"},
+            headers={"referer": "https://jnd28-yc.vip/"},
         )
     if site == "macao":
         return history_sources._get_json(
@@ -87,6 +102,13 @@ def _increment_period(value: str) -> str:
     if not value.isdigit():
         return ""
     return str(int(value) + 1).zfill(len(value))
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_timestamp(value: object) -> datetime | None:

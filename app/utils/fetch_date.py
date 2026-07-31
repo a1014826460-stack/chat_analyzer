@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -69,9 +71,9 @@ def site_meta(site: str) -> dict[str, str]:
 
 def fetch_pc_28_date() -> dict[str, Any]:
     return _get_json(
-        "https://1pc.cc/data/get/checkData",
-        params={"type": "jnd28", "sf": "1", "ms": "zh"},
-        headers={"referer": "https://1pc.cc/", "x-requested-with": "XMLHttpRequest"},
+        "https://jnd28-yc.vip/api/dashboard",
+        params={"limit": "5"},
+        headers={"referer": "https://jnd28-yc.vip/"},
     )
 
 
@@ -218,26 +220,85 @@ def _post_json(url: str, data: dict[str, str], headers: dict[str, str] | None = 
 def _request_json(url: str, data: bytes | None, headers: dict[str, str] | None) -> dict[str, Any]:
     request_headers = {
         "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
         "cache-control": "no-cache",
         "pragma": "no-cache",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Microsoft Edge";v="150"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0",
     }
     if headers:
         request_headers.update(headers)
-    request = urllib.request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
-    try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            body = response.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError:
-        raise
+    body = _open_with_retries(url, data, request_headers)
     payload = json.loads(body)
     if not isinstance(payload, dict):
         raise ValueError(f"unexpected payload from {url}")
     return payload
 
 
+def _open_with_retries(url: str, data: bytes | None, request_headers: dict[str, str]) -> str:
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        request = urllib.request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except (TimeoutError, socket.timeout, urllib.error.URLError, urllib.error.HTTPError) as exc:
+            last_error = exc
+            if not _is_transient_fetch_error(exc):
+                raise
+            time.sleep(0.25 * (attempt + 1))
+    if _proxy_configured() and last_error is not None and _is_transient_fetch_error(last_error):
+        request = urllib.request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
+        direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with direct_opener.open(request, timeout=12) as response:
+            return response.read().decode("utf-8", errors="replace")
+    raise last_error if last_error else RuntimeError(f"failed to fetch {url}")
+
+
+def _proxy_configured() -> bool:
+    return any(os.environ.get(key) for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"))
+
+
+def _is_transient_fetch_error(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "timed out",
+            "timeout",
+            "connection reset",
+            "unexpected_eof",
+            "eof occurred",
+            "handshake operation timed out",
+            "temporarily unavailable",
+        )
+    )
+
+
 def _parse_pc28(data: dict[str, Any]) -> DrawInfo:
+    recent_records = data.get("recent_records")
+    countdown = data.get("countdown")
+    if isinstance(recent_records, list) and recent_records and isinstance(countdown, dict):
+        latest = recent_records[0]
+        current_period = _str_val(latest.get("draw_number"))
+        next_period = _str_val(countdown.get("next_draw_number")) or _increment_period(current_period)
+        return DrawInfo(
+            current_period=current_period,
+            current_time=_parse_ts(latest.get("draw_date")),
+            next_countdown=_int_val(countdown.get("countdown_seconds")),
+            next_period=next_period,
+            next_time=_parse_unix_ts(countdown.get("estimated_timestamp")),
+            auto_period=current_period,
+        )
+
     issue_list = data.get("issue", [])
     if not isinstance(issue_list, list) or not issue_list:
         raise ValueError("PC28: API 返回空 issue 列表")
@@ -379,7 +440,11 @@ def _parse_ts(value: object) -> datetime | None:
             parsed = parsed.replace(year=datetime.now().year)
         return parsed
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
+        # The application stores and compares all draw times as local naive values.
+        if parsed.tzinfo is not None:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
     except ValueError:
         return None
 

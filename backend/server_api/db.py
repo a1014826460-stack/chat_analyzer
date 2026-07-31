@@ -121,6 +121,20 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class StrategyEvent(Base):
+    """Per-period server decisions presented in the desktop betting log."""
+
+    __tablename__ = "strategy_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    site: Mapped[str] = mapped_column(String(32))
+    period: Mapped[str] = mapped_column(String(64))
+    event_type: Mapped[str] = mapped_column(String(32))
+    message: Mapped[str] = mapped_column(String(1024))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 def create_engine(database_url: str) -> AsyncEngine:
     return create_async_engine(database_url, future=True)
 

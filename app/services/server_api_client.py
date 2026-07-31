@@ -68,6 +68,40 @@ class ServerApiClient:
     def pending_bets(self) -> list[dict]:
         return list(self._call("GET", "/v1/bets/pending", authenticated=True).get("items", []))
 
+    def betting_statistics(self, site: str, *, ai_window: int = 20, since=None) -> dict:
+        from urllib.parse import urlencode
+
+        query_args: dict[str, object] = {"site": str(site), "ai_window": int(ai_window)}
+        if since is not None:
+            if hasattr(since, "isoformat"):
+                query_args["since"] = since.isoformat()
+            else:
+                query_args["since"] = str(since)
+        query = urlencode(query_args)
+        return self._call("GET", f"/v1/bets/statistics?{query}", authenticated=True)
+
+    def betting_events(self, *, after_id: int = 0, limit: int = 100, site: str | None = None, since=None) -> list[dict]:
+        from urllib.parse import urlencode
+
+        query_args: dict[str, object] = {"after_id": max(0, int(after_id)), "limit": min(max(1, int(limit)), 100)}
+        if site:
+            query_args["site"] = str(site)
+        if since is not None:
+            if hasattr(since, "isoformat"):
+                query_args["since"] = since.isoformat()
+            else:
+                query_args["since"] = str(since)
+        query = urlencode(query_args)
+        return list(self._call("GET", f"/v1/bets/events?{query}", authenticated=True).get("items", []))
+
+    def latest_betting_event_id(self, *, site: str | None = None) -> int:
+        from urllib.parse import urlencode
+
+        path = "/v1/bets/events/latest"
+        if site:
+            path = f"{path}?{urlencode({'site': str(site)})}"
+        return int(self._call("GET", path, authenticated=True).get("latest_id", 0) or 0)
+
     def confirm_bet(self, bet_id: int) -> dict:
         return self._call("POST", f"/v1/bets/{int(bet_id)}/confirm", authenticated=True)
 
@@ -80,19 +114,11 @@ class ServerApiClient:
         headers = {"Accept": "application/json"}
         if authenticated:
             headers["Authorization"] = f"Bearer {self._access_token}"
-        return self._request(method, path, payload, headers)
-
-    def _http_request(self, method: str, path: str, payload: dict | None, headers: dict[str, str]) -> dict:
-        body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request_headers = dict(headers)
-        if body is not None:
-            request_headers["Content-Type"] = "application/json"
-        request = Request(f"{self.base_url}{path}", data=body, headers=request_headers, method=method)
         try:
-            with urlopen(request, timeout=10) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+            return self._request(method, path, payload, headers)
         except HTTPError as exc:
+            if exc.code == 401:
+                self._access_token = ""
             try:
                 detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
             except Exception:
@@ -100,3 +126,14 @@ class ServerApiClient:
             raise ServerApiError(f"服务器请求失败 ({exc.code}): {detail}") from exc
         except URLError as exc:
             raise ServerApiError(f"无法连接服务器: {exc.reason}") from exc
+
+    def _http_request(self, method: str, path: str, payload: dict | None, headers: dict[str, str]) -> dict:
+        body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_headers = dict(headers)
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+        request = Request(f"{self.base_url}{path}", data=body, headers=request_headers, method=method)
+        with urlopen(request, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+

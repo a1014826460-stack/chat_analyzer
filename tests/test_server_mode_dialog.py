@@ -30,6 +30,6 @@ def test_server_mode_dialog_uses_local_license_and_auto_detected_wss_credentials
 
     assert dialog.client.logged_in == ("machine-001", "signed-license")
     assert dialog.client.credentials == ("10001", "accid", "secret")
-    assert dialog.settings.to_dict() == {"enabled": True, "base_url": "http://127.0.0.1:8080"}
+    assert dialog.settings.to_dict() == {"enabled": True}
     assert not hasattr(dialog, "activation_code_edit")
     assert not hasattr(dialog, "wss_user_sig_edit")

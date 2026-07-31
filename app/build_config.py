@@ -13,6 +13,16 @@ IS_ADMIN_VERSION = False
 IS_PRODUCTION = True
 
 CDN_BASE_URL = os.getenv("STARTRACE_CDN_BASE_URL", "").rstrip("/")
+# __BUILD_INJECT_SERVER_API_BASE_URL__ — replaced by tools/build.py during packaging
+_BUILD_SERVER_API_BASE_URL = ""
+
+
+def server_api_base_url() -> str:
+    """Return the build-pinned API endpoint without accepting saved settings."""
+    return (
+        _BUILD_SERVER_API_BASE_URL.strip().rstrip("/")
+        or os.getenv("STARTRACE_SERVER_API_BASE_URL", "http://127.0.0.1:8080").strip().rstrip("/")
+    )
 
 # __BUILD_INJECT_LICENSE_PUBLIC_KEY__ — replaced by tools/build.py during packaging
 _BUILD_PUBLIC_KEY = ""

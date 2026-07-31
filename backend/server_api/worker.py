@@ -13,7 +13,7 @@ from server_api.services.redis_state import acquire_lock, release_lock
 from server_api.workers.crawler import crawl_site
 from server_api.workers.current_period import fetch_current_period
 from server_api.workers.history_sources import fetch_history_records, site_list
-from server_api.workers.sender import ProductionWssSender, expire_pending_orders, process_confirmed_order
+from server_api.workers.sender import ProductionWssSender, expire_non_current_confirmed_orders, expire_pending_orders, process_confirmed_order
 from server_api.workers.strategy_scheduler import schedule_frequency_orders
 
 
@@ -38,24 +38,59 @@ async def run_cycle(
             await release_lock(redis, lock_key)
 
 
+def _is_placeholder_secret(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return True
+    return normalized in {
+        "replace-with-server-ai-key",
+        "replace-with-ai-api-key",
+        "replace-with-openai-api-key",
+        "your-api-key",
+        "your_api_key",
+        "sk-xxxx",
+    } or normalized.startswith("replace-") or normalized.startswith("your-")
+
+
+def _shared_ai_client_from_settings(config=settings):
+    if not config.ai_base_url or not config.ai_model or _is_placeholder_secret(config.ai_api_key):
+        return None
+    from server_api.services.ai_client import SharedAiClient
+
+    return SharedAiClient(
+        provider=config.ai_provider,
+        base_url=config.ai_base_url,
+        model=config.ai_model,
+        api_key=config.ai_api_key,
+        timeout_seconds=getattr(config, "ai_timeout_seconds", 45),
+        max_retries=getattr(config, "ai_max_retries", 2),
+        retry_backoff_seconds=getattr(config, "ai_retry_backoff_seconds", 1),
+    )
+
+
 async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: Callable, history_count: int) -> None:
+    ai_client = _shared_ai_client_from_settings(settings)
+    current_periods: dict[str, str] = {}
     async with session_factory() as session:
         for site in site_list():
             try:
                 await crawl_site(session, site=site, history_count=history_count, fetch_records=fetch_records)
                 current = await asyncio.to_thread(fetch_current_period, site)
                 if current is not None:
+                    current_periods[site] = str(current.period)
                     await schedule_frequency_orders(
                         session,
                         site=site,
                         period=current.period,
                         betting_deadline_at=current.betting_deadline_at,
+                        ai_client=ai_client,
                     )
             except Exception:
                 logger.exception("crawl failed for site=%s", site)
 
     async with session_factory() as session:
         await expire_pending_orders(session)
+        await expire_non_current_confirmed_orders(session, current_periods)
         order_ids = (await session.scalars(select(BetOrder.id).where(BetOrder.status == "confirmed"))).all()
         for order_id in order_ids:
             await process_confirmed_order(

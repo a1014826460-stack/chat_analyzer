@@ -113,12 +113,21 @@ def _embed_release_metadata() -> None:
     original = config_path.read_text("utf-8")
     version = os.environ.get("STARTRACE_VERSION", build_config.APP_VERSION).strip()
     build_id = os.environ.get("STARTRACE_BUILD_ID", build_config.BUILD_ID).strip()
+    server_api_base_url = os.environ.get("STARTRACE_SERVER_API_BASE_URL", "").strip().rstrip("/")
+    requires_server_url = '_BUILD_SERVER_API_BASE_URL = ""' in original
+    if requires_server_url and not server_api_base_url:
+        raise RuntimeError("STARTRACE_SERVER_API_BASE_URL must be set for a packaged client build")
     patched = re.sub(
         r'^APP_VERSION = os\.getenv\("STARTRACE_VERSION", "[^"]*"\)$',
         f'APP_VERSION = "{version}"',
         original,
         flags=re.MULTILINE,
     )
+    if requires_server_url:
+        patched = patched.replace(
+            '_BUILD_SERVER_API_BASE_URL = ""',
+            f'_BUILD_SERVER_API_BASE_URL = {server_api_base_url!r}',
+        )
     patched = re.sub(
         r'^BUILD_ID = os\.getenv\("STARTRACE_BUILD_ID", "[^"]*"\)$',
         f'BUILD_ID = "{build_id}"',

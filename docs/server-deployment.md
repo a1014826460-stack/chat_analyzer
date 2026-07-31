@@ -16,7 +16,7 @@ Compose 启动 PostgreSQL、Redis、一次性 Alembic 迁移、FastAPI API 和�
 ## 生产 Linux
 
 1. 将不含 `.env` 的仓库/发布包复制到服务器，安装 Docker Engine 与 Compose plugin。
-2. 在 `backend/.env` 使用 `backend/deploy/server.env.example` 建立生产密钥；生成新的 PostgreSQL、JWT、凭据加密、管理员和 AI key，绝不复用开发值。
+2. 在 `backend/.env` 使用 `backend/deploy/server.env.example` 建立生产密钥；生成新的 PostgreSQL、JWT、凭据加密、管理员和 AI key，绝不复用开发值。`LICENSE_PUBLIC_KEY_PEM_B64` 必须是桌面普通用户版离线授权公钥的单行 Base64，私钥绝不能上传服务器。
 3. 调整 `docker-compose.yml` 的 API 端口映射：仅在 TLS 反向代理可用时对外暴露。IP 访问必须使用受信任 TLS 证书或客户端固定证书指纹后才允许上传 `user_sig` 和发送下注。
 4. 执行 `sh backend/deploy/deploy.sh`，确认 `migrate` 已成功退出，`api` 的 readiness 为 `ok`，`worker` 处于运行状态。
 5. 通过管理员 API 创建有限期、默认单设备的测试激活码；在客户端“帮助 -> 服务器模式”登录，上传测试 WSS 凭据，并验证待确认订单确认流程。

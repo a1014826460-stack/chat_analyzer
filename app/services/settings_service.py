@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from copy import deepcopy
 
 from app.services.storage_service import JsonStore
 
@@ -9,8 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsService:
-    def __init__(self) -> None:
+    def __init__(self, *, debounce_seconds: float = 0.4) -> None:
         self.store = JsonStore("settings.json")
+        self._debounce_seconds = max(0.0, float(debounce_seconds))
+        self._lock = threading.Lock()
+        self._pending_payload: dict | None = None
+        self._timer: threading.Timer | None = None
 
     def load(self) -> dict:
         data = self.store.load(
@@ -48,7 +54,7 @@ class SettingsService:
                 "proxy_http": "",
                 "proxy_https": "",
                 "auto_bet": {},
-                "server_mode": {"enabled": False, "base_url": "http://127.0.0.1:8080"},
+                "server_mode": {"enabled": True},
             }
         )
 
@@ -62,5 +68,35 @@ class SettingsService:
         return data
 
     def save(self, payload: dict) -> None:
-        self.store.save(payload)
-        logger.debug("保存设置: username=%s", payload.get("username", ""))
+        # UI controls can emit a burst of changes (notably while typing).
+        # Persist only the last snapshot from a worker timer, never the UI thread.
+        snapshot = deepcopy(payload)
+        logger.debug("保存设置: username=%s (已排队)", snapshot.get("username", ""))
+        with self._lock:
+            self._pending_payload = snapshot
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self._debounce_seconds, self._write_pending)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def flush(self) -> None:
+        """Synchronously persist the latest queued snapshot during shutdown."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            payload = self._pending_payload
+            self._pending_payload = None
+        if payload is not None:
+            self.store.save(payload)
+            logger.debug("保存设置: username=%s", payload.get("username", ""))
+
+    def _write_pending(self) -> None:
+        with self._lock:
+            payload = self._pending_payload
+            self._pending_payload = None
+            self._timer = None
+        if payload is not None:
+            self.store.save(payload)
+            logger.debug("保存设置: username=%s", payload.get("username", ""))

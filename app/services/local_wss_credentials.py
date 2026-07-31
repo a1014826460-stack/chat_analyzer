@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.services.account_resolver import DEFAULT_SHARED_PREFS
 from app.services.wuquan_account_mapping import load_shared_preferences, resolve_login_account
 
 
@@ -15,7 +16,7 @@ class LocalWssCredentials:
 
 
 class LocalWssCredentialProvider:
-    def __init__(self, preferences_path: Path) -> None:
+    def __init__(self, preferences_path: Path = DEFAULT_SHARED_PREFS) -> None:
         self._preferences_path = preferences_path
 
     def read(self, account_identifier: str) -> LocalWssCredentials | None:
@@ -25,4 +26,5 @@ class LocalWssCredentialProvider:
             return None
         if account is None or not account.appid or not account.accid or not account.user_sig:
             return None
-        return LocalWssCredentials(account.appid, account.accid, account.user_sig)
+        sdk_appid = account.im_appid or account.appid
+        return LocalWssCredentials(sdk_appid, account.accid, account.user_sig)

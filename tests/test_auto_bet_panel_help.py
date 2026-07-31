@@ -678,3 +678,45 @@ def test_auto_bet_panel_does_not_emit_start_for_empty_groups_or_invalid_odds(mon
     assert messages == [
         "请至少选择一个目标群组\n请填写全部玩法的有效赔率\nAPI Key"
     ]
+
+
+def test_frequency_analysis_panel_uses_stat_card_grid_style():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    assert hasattr(panel, "_frequency_stat_labels")
+    assert len(panel._frequency_stat_labels) >= 10
+    assert panel._frequency_stat_labels[0].styleSheet() == panel._runtime_stat_labels[0].styleSheet()
+
+
+def test_auto_bet_panel_renders_server_frequency_analysis_dict():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    panel.update_frequency_analysis({
+        "site": "pc28",
+        "period": "3462526",
+        "requested_history_count": 50,
+        "sample_count": 48,
+        "number_sample_count": 48,
+        "number_probabilities": {"13": 12.5, "14": 10.4},
+        "play_probabilities": {"小单": 30.0, "大双": 28.0, "小双": 18.0, "大单": 24.0},
+        "excluded_play": "小双",
+        "selected_plays": ["小单", "大双", "大单"],
+        "highest_selected_probability": 30.0,
+        "confidence_threshold": 45,
+        "should_bet": False,
+    })
+
+    text = "\n".join(label.text() for label in panel._frequency_stat_labels)
+    assert "pc28 / 3462526" in text
+    assert "50 / 48" in text
+    assert "12.5%" in text
+    assert "小双" in text
+    assert "小单、大双、大单" in text

@@ -15,6 +15,8 @@ from app.ui.proxy_settings_dialog import ProxySettingsDialog
 
 logger = logging.getLogger(__name__)
 
+RAW_CHAT_HISTORY_LIMIT = 5_000
+
 
 class MainWindowActionsMixin:
     def _group_filter_items(self) -> list[dict[str, object]]:
@@ -329,32 +331,34 @@ class MainWindowActionsMixin:
             if not isinstance(history, list):
                 history = []
                 self.raw_chat_messages = history
-        seen = {
-            (
-                getattr(msg, "ts", None),
-                getattr(msg, "group", ""),
-                getattr(msg, "username", ""),
-                getattr(msg, "sender_id", ""),
-                getattr(msg, "content", ""),
-                getattr(msg, "raw_client_time", 0),
-                getattr(msg, "raw_rand", 0),
-            )
-            for msg in history
-        }
+        seen = getattr(self, "_raw_chat_message_keys", None)
+        if not isinstance(seen, set):
+            seen = {MainWindowActionsMixin._raw_chat_message_key(msg) for msg in history}
+            self._raw_chat_message_keys = seen
         for msg in messages:
-            key = (
-                getattr(msg, "ts", None),
-                getattr(msg, "group", ""),
-                getattr(msg, "username", ""),
-                getattr(msg, "sender_id", ""),
-                getattr(msg, "content", ""),
-                getattr(msg, "raw_client_time", 0),
-                getattr(msg, "raw_rand", 0),
-            )
+            key = MainWindowActionsMixin._raw_chat_message_key(msg)
             if key in seen:
                 continue
             seen.add(key)
             history.append(msg)
+        limit = max(1, int(getattr(self, "raw_chat_history_limit", RAW_CHAT_HISTORY_LIMIT)))
+        overflow = len(history) - limit
+        if overflow > 0:
+            for removed in history[:overflow]:
+                seen.discard(MainWindowActionsMixin._raw_chat_message_key(removed))
+            del history[:overflow]
+
+    @staticmethod
+    def _raw_chat_message_key(msg: object) -> tuple[object, ...]:
+        return (
+            getattr(msg, "ts", None),
+            getattr(msg, "group", ""),
+            getattr(msg, "username", ""),
+            getattr(msg, "sender_id", ""),
+            getattr(msg, "content", ""),
+            getattr(msg, "raw_client_time", 0),
+            getattr(msg, "raw_rand", 0),
+        )
 
     def _messages_for_raw_chat_view(self) -> list[object]:
         history_getter = getattr(self, "_raw_chat_history", None)

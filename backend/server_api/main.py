@@ -66,8 +66,6 @@ def create_app(
         app.state.auth_session_limit = auth_session_limit
         app.state.auth_session_window_seconds = auth_session_window_seconds
         app.state.license_public_key_pem = license_public_key_pem
-        # Only isolated SQLite unit-test apps may exercise retired code-based sessions.
-        app.state.allow_legacy_test_activation = bool(initialize_schema and database_url.startswith("sqlite+"))
         yield
         close = getattr(app.state.redis, "aclose", None)
         if close is not None:

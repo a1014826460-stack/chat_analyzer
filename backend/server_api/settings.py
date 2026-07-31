@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import os
+
+
+def _license_public_key() -> str:
+    encoded = os.getenv("LICENSE_PUBLIC_KEY_PEM_B64", "").strip()
+    if encoded:
+        try:
+            return base64.b64decode(encoded).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+    return os.getenv("LICENSE_PUBLIC_KEY_PEM", "")
 
 
 @dataclass(frozen=True)
@@ -18,11 +29,14 @@ class Settings:
     admin_bootstrap_token: str = os.getenv("ADMIN_BOOTSTRAP_TOKEN", "development-admin-token")
     auth_session_limit: int = int(os.getenv("AUTH_SESSION_LIMIT", "10"))
     auth_session_window_seconds: int = int(os.getenv("AUTH_SESSION_WINDOW_SECONDS", "60"))
-    license_public_key_pem: str = os.getenv("LICENSE_PUBLIC_KEY_PEM", "")
+    license_public_key_pem: str = _license_public_key()
     ai_provider: str = os.getenv("AI_PROVIDER", "openai_compatible")
     ai_base_url: str = os.getenv("AI_BASE_URL", "")
     ai_model: str = os.getenv("AI_MODEL", "")
     ai_api_key: str = os.getenv("AI_API_KEY", "")
+    ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "45"))
+    ai_max_retries: int = int(os.getenv("AI_MAX_RETRIES", "2"))
+    ai_retry_backoff_seconds: float = float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "1"))
 
 
 settings = Settings()

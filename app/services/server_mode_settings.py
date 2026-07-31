@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.build_config import server_api_base_url
+
 
 @dataclass(frozen=True)
 class ServerModeSettings:
-    enabled: bool = False
-    base_url: str = "http://127.0.0.1:8080"
+    enabled: bool = True
+    base_url: str = ""
 
     @classmethod
     def from_dict(cls, data: object) -> "ServerModeSettings":
-        value = data if isinstance(data, dict) else {}
-        base_url = str(value.get("base_url") or cls.base_url).strip().rstrip("/")
-        return cls(enabled=bool(value.get("enabled", False)), base_url=base_url or cls.base_url)
+        # Ordinary clients always use the centrally managed service.  The
+        # legacy switch and URL are deliberately ignored so saved settings
+        # cannot disable online authorization or redirect WSS credentials.
+        del data
+        return cls(enabled=True, base_url=server_api_base_url())
 
     def to_dict(self) -> dict[str, object]:
-        return {"enabled": self.enabled, "base_url": self.base_url}
+        return {"enabled": True}

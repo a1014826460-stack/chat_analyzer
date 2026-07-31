@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server_api.db import ActivationCode, AuditEvent, BetAttempt, BetOrder, User
 from server_api.services.credentials import decrypt_user_sig, get_credentials
+from server_api.services.strategy_events import add_order_event
 from server_api.services.wss_sender import WsMessageSender
 
 
@@ -77,8 +78,50 @@ async def process_confirmed_order(
 async def _finish(session: AsyncSession, order: BetOrder, status: str, error_message: str | None) -> bool:
     order.status = status
     session.add(BetAttempt(order_id=order.id, status=status, error_message=error_message))
+    prefixes = {
+        "sent": "WSS 已发送下注",
+        "failed": "WSS 下注失败",
+        "expired": "下注已过期",
+    }
+    add_order_event(
+        session,
+        order,
+        event_type=status,
+        prefix=prefixes.get(status, "下注状态更新"),
+        detail=error_message,
+    )
     await session.commit()
     return status == "sent"
+
+
+async def expire_non_current_confirmed_orders(
+    session: AsyncSession,
+    current_periods: dict[str, str],
+) -> int:
+    """Expire confirmed orders that do not match the current query period.
+
+    The worker may see confirmed orders left from an older client run or an older
+    draw period. Those orders must never be sent in a later cycle; otherwise the
+    desktop log appears to bet many historical periods at once.
+    """
+    orders = (await session.scalars(
+        select(BetOrder).where(BetOrder.status == "confirmed")
+    )).all()
+    expired = 0
+    for order in orders:
+        current_period = current_periods.get(order.site)
+        if current_period is not None and str(order.period) == str(current_period):
+            continue
+        order.status = "expired"
+        session.add(BetAttempt(
+            order_id=order.id,
+            status="expired",
+            error_message="not current query period",
+        ))
+        expired += 1
+    if expired:
+        await session.commit()
+    return expired
 
 
 async def expire_pending_orders(session: AsyncSession, now: datetime | None = None) -> int:
@@ -99,6 +142,9 @@ async def expire_pending_orders(session: AsyncSession, now: datetime | None = No
             resource_type="bet_order",
             resource_id=str(order.id),
         ))
+        add_order_event(
+            session, order, event_type="expired", prefix="待确认下注已过期", detail="confirmation timed out"
+        )
     if orders:
         await session.commit()
     return len(orders)

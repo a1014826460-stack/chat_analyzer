@@ -4,6 +4,9 @@ import argparse
 import html
 import json
 import re
+import socket
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -282,17 +285,50 @@ def _get_text(url: str, params: dict[str, str] | None = None, headers: dict[str,
         url = f"{url}?{urllib.parse.urlencode(params)}"
     request_headers = {
         "accept": "*/*",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
         "cache-control": "no-cache",
         "pragma": "no-cache",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Microsoft Edge";v="150"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0",
     }
     if headers:
         request_headers.update(headers)
-    request = urllib.request.Request(url, headers=request_headers)
-    with urllib.request.urlopen(request, timeout=12) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        request = urllib.request.Request(url, headers=request_headers)
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                return response.read().decode(charset, errors="replace")
+        except (TimeoutError, socket.timeout, urllib.error.URLError, urllib.error.HTTPError) as exc:
+            last_error = exc
+            if attempt >= 2 or not _is_transient_fetch_error(exc):
+                raise
+            time.sleep(0.3 * (attempt + 1))
+    raise last_error if last_error else RuntimeError(f"failed to fetch {url}")
+
+
+def _is_transient_fetch_error(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "timed out",
+            "timeout",
+            "connection reset",
+            "unexpected_eof",
+            "eof occurred",
+            "temporarily unavailable",
+        )
+    )
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -442,4 +478,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server_api.api.routes.auth import get_session
@@ -20,6 +20,14 @@ class WssCredentialsRequest(BaseModel):
     appid: str = Field(min_length=1, max_length=255)
     accid: str = Field(min_length=1, max_length=255)
     user_sig: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("appid")
+    @classmethod
+    def appid_must_be_numeric_sdk_appid(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized.isdigit():
+            raise ValueError("WSS IM SDK AppID 必须为数字，请同步 imAppid 而不是业务 appid")
+        return normalized
 
 
 def response_payload(row) -> dict[str, object]:

@@ -49,9 +49,53 @@ def test_server_api_client_manages_wss_credentials_and_reads_frequency_analysis(
         raise AssertionError((method, path))
 
     client = ServerApiClient("http://server.test", request=request)
-    client.login("machine-code", "activation-code")
+    client.login_with_local_license("machine-code", "activation-code")
 
     assert client.save_wss_credentials("10001", "accid", "private-sig")["accid_masked"] == "ac***id"
     assert client.frequency_analysis("pc28", history_count=50, confidence_threshold=60)["sample_count"] == 50
     assert calls[1][2] == {"appid": "10001", "accid": "accid", "user_sig": "private-sig"}
     assert calls[1][3]["Authorization"] == "Bearer token"
+
+
+def test_server_api_client_fetches_betting_statistics_with_site_and_window():
+    from app.services.server_api_client import ServerApiClient
+
+    calls = []
+
+    def request(method, path, payload, headers):
+        calls.append((method, path, payload, dict(headers)))
+        return {"runtime_state": {"total_rounds": 1}, "ai_statistics": {"settled_count": 1}}
+
+    client = ServerApiClient("http://server", request=request)
+    client._access_token = "token"
+
+    result = client.betting_statistics("pc28", ai_window=30)
+
+    assert result["runtime_state"]["total_rounds"] == 1
+    assert calls == [("GET", "/v1/bets/statistics?site=pc28&ai_window=30", None, {"Accept": "application/json", "Authorization": "Bearer token"})]
+
+
+
+def test_server_api_client_fetches_betting_statistics_since_run_start():
+    from datetime import datetime
+    from app.services.server_api_client import ServerApiClient
+
+    calls = []
+    client = ServerApiClient("http://server", request=lambda method, path, payload, headers: calls.append(path) or {"runtime_state": {}, "ai_statistics": {}})
+    client._access_token = "token"
+    client.betting_statistics("pc28", ai_window=20, since=datetime(2026, 7, 28, 22, 22, 49))
+
+    assert calls == ["/v1/bets/statistics?site=pc28&ai_window=20&since=2026-07-28T22%3A22%3A49"]
+
+
+def test_server_api_client_fetches_betting_events_since_run_start():
+    from datetime import datetime
+    from app.services.server_api_client import ServerApiClient
+
+    calls = []
+    client = ServerApiClient("http://server", request=lambda method, path, payload, headers: calls.append(path) or {"items": []})
+    client._access_token = "token"
+
+    client.betting_events(after_id=12, limit=50, site="pc28", since=datetime(2026, 7, 28, 22, 22, 49))
+
+    assert calls == ["/v1/bets/events?after_id=12&limit=50&site=pc28&since=2026-07-28T22%3A22%3A49"]

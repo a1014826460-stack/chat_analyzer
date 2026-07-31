@@ -9,6 +9,55 @@ from app.services.draw_result_store import DrawResultStore
 from app.services.history_fetchers import HistoryFetcher, history_fetch_limit, normalize_result_label
 
 
+def test_fetch_pc28_uses_dashboard_api_and_parses_recent_record_countdown(monkeypatch):
+    from app.utils import fetch_date
+
+    calls = []
+
+    def fake_get_json(url, params=None, headers=None):
+        calls.append((url, params, headers))
+        return {
+            "recent_records": [
+                {"draw_number": 3461989, "draw_date": "2026-07-27T05:21:00+08:00"},
+                {"draw_number": 3461988, "draw_date": "2026-07-27T05:17:30+08:00"},
+            ],
+            "countdown": {
+                "countdown_seconds": 89,
+                "next_draw_number": 3461990,
+                "estimated_timestamp": 1785101065000,
+            },
+        }
+
+    monkeypatch.setattr(fetch_date, "_get_json", fake_get_json)
+
+    info = fetch_date.extract_draw_info("pc28", fetch_date.fetch_pc_28_date())
+
+    assert calls == [("https://jnd28-yc.vip/api/dashboard", {"limit": "5"}, {"referer": "https://jnd28-yc.vip/"})]
+    assert info.current_period == "3461989"
+    assert info.next_period == "3461990"
+    assert info.next_countdown == 89
+    assert info.current_time == datetime(2026, 7, 27, 5, 21)
+    assert info.current_time.tzinfo is None
+
+
+def test_parse_ts_converts_offset_timestamp_to_local_naive_datetime():
+    from app.utils.fetch_date import _parse_ts
+
+    parsed = _parse_ts("2026-07-27T05:21:00+08:00")
+
+    assert parsed == datetime(2026, 7, 27, 5, 21)
+    assert parsed.tzinfo is None
+
+
+def test_fetch_pc28_dashboard_requires_recent_records_and_countdown():
+    import pytest
+
+    from app.utils.fetch_date import _parse_pc28
+
+    with pytest.raises(ValueError, match="PC28"):
+        _parse_pc28({"recent_records": [], "countdown": {"countdown_seconds": 30}})
+
+
 def test_auto_bet_tick_uses_next_period_as_the_betting_target():
     from types import SimpleNamespace
 

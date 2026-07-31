@@ -207,6 +207,11 @@ class AutoBetService:
             success=True,
         ))
 
+    def shutdown(self) -> None:
+        """Release the AI worker so a closed desktop process cannot linger."""
+        self.stop()
+        self._ai_executor.shutdown(wait=False, cancel_futures=True)
+
     @property
     def is_running(self) -> bool:
         with self._lock:

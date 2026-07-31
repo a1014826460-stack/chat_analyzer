@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 PLAY_TYPE_OPTIONS = ["大", "小", "单", "双", "大单", "小单", "大双", "小双"]
 SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
+STAT_CARD_STYLE = "background: #f7f9fb; border: 1px solid #dbe3ea; border-radius: 6px; padding: 6px 8px;"
 BET_STRATEGY_OPTIONS = [
     ("\u8d8b\u52bf\u53cd\u6253", "trend_following"),
     ("\u56fa\u5b9a\u500d\u6295", "martingale"),
@@ -105,12 +106,15 @@ class AiConfigDialog(QDialog):
         provider_row.addWidget(self._provider_combo, 1)
         layout.addLayout(provider_row)
 
+        self._local_ai_field_rows: list[QWidget] = []
         for label, attr, placeholder, secret in (
             ("Base URL:", "_base_url_edit", DEFAULT_AI_BASE_URL, False),
             ("模型:", "_model_edit", DEFAULT_AI_MODEL, False),
             ("API Key:", "_api_key_edit", "", True),
         ):
-            row = QHBoxLayout()
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(QLabel(label))
             edit = QLineEdit()
             edit.setPlaceholderText(placeholder)
@@ -125,7 +129,8 @@ class AiConfigDialog(QDialog):
                 self._api_key_visibility_button.setToolTip("显示 API Key")
                 self._api_key_visibility_button.toggled.connect(self._toggle_api_key_visibility)
                 row.addWidget(self._api_key_visibility_button)
-            layout.addLayout(row)
+            self._local_ai_field_rows.append(row_widget)
+            layout.addWidget(row_widget)
 
         self._base_url_edit.setText(DEFAULT_AI_BASE_URL)
         self._model_edit.setText(DEFAULT_AI_MODEL)
@@ -176,6 +181,18 @@ class AiConfigDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def set_server_mode(self, enabled: bool) -> None:
+        """Hide local model credentials when AI calls are hosted by the server."""
+        server_mode = bool(enabled)
+        self.setWindowTitle("策略配置" if server_mode else "AI 配置")
+        for row in getattr(self, "_local_ai_field_rows", []):
+            row.setVisible(not server_mode)
+        self._base_url_edit.setVisible(not server_mode)
+        self._model_edit.setVisible(not server_mode)
+        self._api_key_edit.setVisible(not server_mode)
+        if hasattr(self, "_api_key_visibility_button"):
+            self._api_key_visibility_button.setVisible(not server_mode)
 
     def load_config(self, config: StrategyConfig) -> None:
         index = self._provider_combo.findData(config.ai_provider)
@@ -358,18 +375,50 @@ class AutoBetPanel(QGroupBox):
         )
         self._update_martingale_peak(state)
 
+    def _set_stat_cards(self, labels: list[QLabel], values: list[tuple[str, str, str]]) -> None:
+        for index, label in enumerate(labels):
+            if index < len(values):
+                heading, value, color = values[index]
+                label.setVisible(True)
+                label.setText(f"<small>{heading}</small><br><b style='color:{color}'>{value}</b>")
+            else:
+                label.setVisible(False)
+
     def update_frequency_analysis(self, analysis: object | None) -> None:
         """Render the latest history-frequency snapshot without changing bet settings."""
         if analysis is None:
             self._frequency_analysis_label.setText("暂无可用历史概率分析")
+            if hasattr(self, "_frequency_stat_labels"):
+                self._set_stat_cards(self._frequency_stat_labels, [("概率分析", "暂无数据", "#5f6b73")])
             return
-        number_probabilities = getattr(analysis, "number_probabilities", {})
-        play_probabilities = getattr(analysis, "play_probabilities", {})
-        selected_plays = "、".join(getattr(analysis, "selected_plays", ())) or "-"
-        status = "本期将下注" if getattr(analysis, "should_bet", False) else "本期不下注"
-        period = str(getattr(analysis, "period", "") or "-")
-        analyzed_at = getattr(analysis, "analyzed_at", None)
-        updated_at = analyzed_at.strftime("%H:%M:%S") if isinstance(analyzed_at, datetime) else "-"
+
+        def field(name: str, default: object = None) -> object:
+            if isinstance(analysis, dict):
+                return analysis.get(name, default)
+            return getattr(analysis, name, default)
+
+        number_probabilities = field("number_probabilities", {})
+        play_probabilities = field("play_probabilities", {})
+        if not isinstance(number_probabilities, dict):
+            number_probabilities = {}
+        if not isinstance(play_probabilities, dict):
+            play_probabilities = {}
+        selected_plays = "、".join(str(play) for play in (field("selected_plays", ()) or ())) or "-"
+        should_bet = bool(field("should_bet", False))
+        status = "本期将下注" if should_bet else "本期不下注"
+        status_color = "#198754" if should_bet else "#c0392b"
+        period = str(field("period", "") or "-")
+        analyzed_at = field("analyzed_at", None)
+        updated_at = analyzed_at.strftime("%H:%M:%S") if isinstance(analyzed_at, datetime) else str(field("updated_at", "-") or "-")
+        site = field("site", "-") or "-"
+        requested = field("requested_history_count", field("history_count", 0))
+        sample = field("sample_count", 0)
+        number_sample = field("number_sample_count", 0)
+        thirteen = float(number_probabilities.get(13, number_probabilities.get("13", 0.0)))
+        fourteen = float(number_probabilities.get(14, number_probabilities.get("14", 0.0)))
+        excluded = field("excluded_play", "-") or "-"
+        threshold = field("confidence_threshold", 0)
+        highest = float(field("highest_selected_probability", 0.0))
         play_text = "  ".join(
             f"{play}: {float(play_probabilities.get(play, 0.0)):.1f}%"
             for play in PLAY_TYPE_OPTIONS
@@ -380,22 +429,38 @@ class AutoBetPanel(QGroupBox):
             "13: {thirteen:.1f}%  14: {fourteen:.1f}%\n"
             "{plays}\n"
             "排除：{excluded}  压三门：{selected}  阈值：{threshold}%  最高：{highest:.1f}%  {status}".format(
-                site=getattr(analysis, "site", "-") or "-",
+                site=site,
                 period=period,
                 updated=updated_at,
-                requested=getattr(analysis, "requested_history_count", 0),
-                sample=getattr(analysis, "sample_count", 0),
-                number_sample=getattr(analysis, "number_sample_count", 0),
-                thirteen=float(number_probabilities.get(13, 0.0)),
-                fourteen=float(number_probabilities.get(14, 0.0)),
+                requested=requested,
+                sample=sample,
+                number_sample=number_sample,
+                thirteen=thirteen,
+                fourteen=fourteen,
                 plays=play_text,
-                excluded=getattr(analysis, "excluded_play", "-") or "-",
+                excluded=excluded,
                 selected=selected_plays,
-                threshold=getattr(analysis, "confidence_threshold", 0),
-                highest=float(getattr(analysis, "highest_selected_probability", 0.0)),
+                threshold=threshold,
+                highest=highest,
                 status=status,
             )
         )
+        if hasattr(self, "_frequency_stat_labels"):
+            values = [
+                ("站点 / 目标期", f"{site} / {period}", "#2f5f85"),
+                ("更新时间", updated_at, "#5f6b73"),
+                ("历史 / 实际", f"{requested} / {sample}", "#5f6b73"),
+                ("数值样本", str(number_sample), "#5f6b73"),
+                ("13 概率", f"{thirteen:.1f}%", "#6f42c1"),
+                ("14 概率", f"{fourteen:.1f}%", "#6f42c1"),
+                ("排除玩法", str(excluded), "#c0392b"),
+                ("压三门", selected_plays, "#198754"),
+                ("阈值 / 最高", f"{threshold}% / {highest:.1f}%", "#8a5a00"),
+                ("判断", status, status_color),
+            ]
+            for play in ("小单", "大双", "小双", "大单"):
+                values.append((f"{play} 概率", f"{float(play_probabilities.get(play, 0.0)):.1f}%", "#2f5f85"))
+            self._set_stat_cards(self._frequency_stat_labels, values)
 
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         if hasattr(self, "_runtime_stats_grid"):
@@ -612,6 +677,18 @@ class AutoBetPanel(QGroupBox):
         self._ai_config_dialog.apply_to_config(config)
         return config
 
+    def set_server_mode(self, enabled: bool) -> None:
+        """Hide local model credentials when AI calls are hosted by the server."""
+        server_mode = bool(enabled)
+        self.setWindowTitle("策略配置" if server_mode else "AI 配置")
+        for row in getattr(self, "_local_ai_field_rows", []):
+            row.setVisible(not server_mode)
+        self._base_url_edit.setVisible(not server_mode)
+        self._model_edit.setVisible(not server_mode)
+        self._api_key_edit.setVisible(not server_mode)
+        if hasattr(self, "_api_key_visibility_button"):
+            self._api_key_visibility_button.setVisible(not server_mode)
+
     def load_config(self, config: StrategyConfig) -> None:
         """Apply config to UI fields."""
         self._config = config
@@ -751,6 +828,15 @@ class AutoBetPanel(QGroupBox):
         self._ai_config_button.clicked.connect(self._open_ai_config_dialog)
         layout.addWidget(self._ai_config_button)
 
+        self._server_ai_status_label = QLabel("AI 自动决策：由服务器托管")
+        self._server_ai_status_label.setWordWrap(True)
+        self._server_ai_status_label.setStyleSheet(
+            "background: #eef6ff; border: 1px solid #cfe2ff; "
+            "border-radius: 6px; padding: 6px 8px; color: #2f5f85;"
+        )
+        self._server_ai_status_label.setToolTip("服务器统一配置模型与密钥；客户端只提交策略、确认或跳过订单。")
+        layout.addWidget(self._server_ai_status_label)
+
         # --- Play types ---
         self._play_row_widget = QWidget()
         play_row = QVBoxLayout(self._play_row_widget)
@@ -836,7 +922,25 @@ class AutoBetPanel(QGroupBox):
 
         self._frequency_analysis_box = QGroupBox("概率分析")
         frequency_layout = QVBoxLayout(self._frequency_analysis_box)
+        frequency_layout.setContentsMargins(10, 14, 10, 10)
+        self._frequency_stats_grid = QGridLayout()
+        self._frequency_stats_grid.setContentsMargins(0, 0, 0, 0)
+        self._frequency_stats_grid.setHorizontalSpacing(8)
+        self._frequency_stats_grid.setVerticalSpacing(8)
+        self._frequency_stat_labels: list[QLabel] = []
+        for index in range(14):
+            label = QLabel()
+            label.setMinimumWidth(104)
+            label.setMinimumHeight(50)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            label.setStyleSheet(STAT_CARD_STYLE)
+            label.setTextFormat(Qt.RichText)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._frequency_stat_labels.append(label)
+            self._frequency_stats_grid.addWidget(label, index // 3, index % 3)
+        frequency_layout.addLayout(self._frequency_stats_grid)
         self._frequency_analysis_label = QLabel("暂无可用历史概率分析")
+        self._frequency_analysis_label.setVisible(False)
         self._frequency_analysis_label.setWordWrap(True)
         self._frequency_analysis_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         frequency_layout.addWidget(self._frequency_analysis_label)
@@ -857,10 +961,7 @@ class AutoBetPanel(QGroupBox):
             label.setMinimumWidth(104)
             label.setMinimumHeight(50)
             label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            label.setStyleSheet(
-                "background: #f7f9fb; border: 1px solid #dbe3ea; "
-                "border-radius: 6px; padding: 6px 8px;"
-            )
+            label.setStyleSheet(STAT_CARD_STYLE)
             label.setTextFormat(Qt.RichText)
             self._runtime_stat_labels.append(label)
         stats_layout.addLayout(self._runtime_stats_grid)
@@ -880,7 +981,7 @@ class AutoBetPanel(QGroupBox):
         for index in range(6):
             label = QLabel()
             label.setMinimumWidth(116)
-            label.setStyleSheet("background: #f7f9fb; border: 1px solid #dbe3ea; border-radius: 6px; padding: 6px;")
+            label.setStyleSheet(STAT_CARD_STYLE)
             label.setTextFormat(Qt.RichText)
             self._ai_stat_labels.append(label)
             ai_stats_layout.addWidget(label, index // 3, index % 3)
@@ -903,6 +1004,9 @@ class AutoBetPanel(QGroupBox):
         layout.addWidget(QLabel("运行日志:"))
         self._log_edit = QTextEdit()
         self._log_edit.setReadOnly(True)
+        # Keep the visible document bounded even if a long-running service
+        # emits more status records than its own in-memory log retains.
+        self._log_edit.document().setMaximumBlockCount(500)
         self._log_edit.setMaximumHeight(150)
         self._log_edit.setPlaceholderText("策略运行日志将显示在这里...")
         layout.addWidget(self._log_edit)
@@ -980,7 +1084,15 @@ class AutoBetPanel(QGroupBox):
         self._martingale_row_widget.setVisible(is_martingale)
         self._amount_row_widget.setVisible(not (is_martingale and has_sequence))
         self._martingale_peak_box.setVisible(is_martingale)
-        self._ai_config_button.setVisible(not getattr(self, "_server_mode", False))
+        server_mode = bool(getattr(self, "_server_mode", False))
+        self._ai_config_dialog.set_server_mode(server_mode)
+        self._ai_config_button.setVisible(True)
+        self._ai_config_button.setText("策略配置" if server_mode else "AI 配置")
+        self._ai_config_button.setToolTip(
+            "配置历史期数、置信度、每期确认、止盈止损等策略参数" if server_mode
+            else "配置 AI 类型、Base URL、模型、API Key 和确认方式"
+        )
+        self._server_ai_status_label.setVisible(server_mode)
         self._mode_row_widget.setVisible(True)
         self._play_row_widget.setVisible(True)
 

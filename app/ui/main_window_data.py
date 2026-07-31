@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -133,7 +135,7 @@ class MainWindowDataMixin:
 
     def _resolve_database(self, silent: bool = False) -> None:
         username = self.username_combo.currentText().strip()
-        logger.info("Resolve database requested username=%s silent=%s", username, silent)
+        logger.debug("Resolve database requested username=%s silent=%s", username, silent)
         if not username:
             if not silent:
                 QMessageBox.information(self, "缺少用户名", "请先输入用户名。")
@@ -167,6 +169,8 @@ class MainWindowDataMixin:
             return
         self.resolved_db = resolved
         self._connect_auto_bet_panel()
+        if hasattr(self, "_bootstrap_server_mode"):
+            self._bootstrap_server_mode()
         self.resolved_path_edit.setText(str(resolved.msg_db))
         self.db_status_label.setText(f"已定位 {resolved.account_name} -> {resolved.msg_db}")
         self.status_label.setText("数据库已定位，可以加载消息。")
@@ -174,7 +178,7 @@ class MainWindowDataMixin:
         self._remember_username(username)
         self._load_groups_from_current_source()
         self._save_settings()
-        logger.info("Resolve database succeeded username=%s path=%s", username, resolved.msg_db)
+        logger.debug("Resolve database succeeded username=%s path=%s", username, resolved.msg_db)
 
     def _load_groups_from_current_source(self) -> None:
         source_path = self._current_source_path()
@@ -218,7 +222,7 @@ class MainWindowDataMixin:
         self._refresh_block_rule_group_selector()
         self._refresh_auto_bet_groups()
         MainWindowDataMixin._push_chart_group_filters(self)
-        logger.info("Loaded %d groups from %s", len(groups), source_path)
+        logger.debug("Loaded %d groups from %s", len(groups), source_path)
 
     def _pick_manual_data_source(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -229,11 +233,11 @@ class MainWindowDataMixin:
         )
         if file_path:
             self.manual_db_edit.setText(file_path)
-            logger.info("Manual data source picked: %s", file_path)
+            logger.debug("Manual data source picked: %s", file_path)
 
     def _load_manual_data_source(self) -> None:
         source_path = Path(self.manual_db_edit.text().strip()).expanduser()
-        logger.info("Load manual data source requested path=%s", source_path)
+        logger.debug("Load manual data source requested path=%s", source_path)
         if not source_path.exists():
             QMessageBox.warning(self, "文件不存在", "选择的数据源不存在。")
             if hasattr(self, "_set_status"):
@@ -354,7 +358,7 @@ class MainWindowDataMixin:
             str(group): round(sum(float(value or 0) for value in dict(totals).values()), 2)
             for group, totals in dict(totals_by_group).items()
         }
-        logger.info(
+        logger.debug(
             "Load diagnostics source=%s site=%s username=%s groups=%d group_ids=%d "
             "selected_group_ids=%s period=%s start=%s end=%s cursor=%s/%s "
             "messages=%d matched=%d rows=%d totals_by_group=%d group_amounts=%s",
@@ -423,7 +427,7 @@ class MainWindowDataMixin:
             self._update_chart_data(replace=bool(result.get("replace_chart", False)))
             self._sync_stats_from_accumulated_visual_rows()
         self._sync_chart_status()
-        logger.info("Load messages applied count=%d", len(self.current_messages))
+        logger.debug("Load messages applied count=%d", len(self.current_messages))
 
     def _sync_stats_from_accumulated_visual_rows(self) -> None:
         stats = getattr(self, "current_stats", None)
@@ -619,7 +623,7 @@ class MainWindowDataMixin:
         self._message_load_sequence += 1
         load_seq = self._message_load_sequence
         self.status_label.setText("正在加载消息...")
-        logger.info("Submit message load seq=%s source=%s site=%s", load_seq, source_path, self._active_site)
+        logger.debug("Submit message load seq=%s source=%s site=%s", load_seq, source_path, self._active_site)
         future = self._data_worker.submit(
             self._run_load_pipeline,
             source_path,
@@ -659,7 +663,7 @@ class MainWindowDataMixin:
             logger.debug("Skip auto message refresh; previous load is still running")
             return
         if MainWindowDataMixin._active_site_is_within_lock_threshold(self):
-            logger.info(
+            logger.debug(
                 "Skip auto message refresh; site=%s countdown=%s threshold=%s",
                 getattr(self, "_active_site", "") or "",
                 MainWindowDataMixin._active_site_countdown(self),
@@ -745,26 +749,88 @@ class MainWindowDataMixin:
     # Auto Bet Integration
     # ------------------------------------------------------------------
 
+    def _stable_payload_signature(self, payload: object) -> str:
+        try:
+            return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            return repr(payload)
+
+    def _arm_auto_bet_refresh_burst(self, now: datetime | None = None) -> None:
+        current = now or datetime.now()
+        self._auto_bet_refresh_burst_until = current + timedelta(seconds=20)
+
+    def _auto_bet_panel_refresh_interval_seconds(self, now: datetime | None = None) -> int:
+        current = now or datetime.now()
+        burst_until = getattr(self, "_auto_bet_refresh_burst_until", None)
+        if isinstance(burst_until, datetime) and current <= burst_until:
+            return 2
+        return 10
+
+    def _auto_bet_refresh_due(self, key: str, now: datetime | None = None, *, force: bool = False) -> bool:
+        if force:
+            setattr(self, key, now or datetime.now())
+            return True
+        current = now or datetime.now()
+        last = getattr(self, key, None)
+        interval = MainWindowDataMixin._auto_bet_panel_refresh_interval_seconds(self, current)
+        if isinstance(last, datetime) and (current - last).total_seconds() < interval:
+            return False
+        setattr(self, key, current)
+        return True
+
     def _refresh_auto_bet_frequency_analysis(
         self,
         site: str,
         target_period: str = "",
+        now: datetime | None = None,
+        *,
+        force: bool = False,
     ) -> None:
         """Publish an explicit history-cache analysis update to the auto-bet panel."""
         panel = getattr(self, "auto_bet_panel", None)
         if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
-            client = getattr(self, "server_api_client", None)
-            config = panel.get_config() if panel is not None and hasattr(panel, "get_config") else None
-            if client is None or config is None or not getattr(client, "is_authenticated", False):
+            if getattr(self, "_server_frequency_poll_in_progress", False):
                 return
+            if not MainWindowDataMixin._auto_bet_refresh_due(
+                self, "_server_frequency_last_polled_at", now, force=force
+            ):
+                return
+            client = getattr(self, "server_api_client", None)
+            worker = getattr(self, "_worker", None)
+            config = panel.get_config() if panel is not None and hasattr(panel, "get_config") else None
+            if client is None or worker is None or config is None or not getattr(client, "is_authenticated", False):
+                return
+            self._server_frequency_poll_in_progress = True
+
+            def load_frequency() -> dict[str, object]:
+                try:
+                    return client.frequency_analysis(
+                        site,
+                        history_count=config.ai_history_count,
+                        confidence_threshold=config.ai_confidence_threshold,
+                    )
+                except Exception as exc:
+                    return {"error": exc}
+
             try:
-                panel.update_frequency_analysis(client.frequency_analysis(
-                    site,
-                    history_count=config.ai_history_count,
-                    confidence_threshold=config.ai_confidence_threshold,
-                ))
-            except Exception as exc:
-                logger.debug("Unable to refresh server frequency analysis: %s", exc)
+                future = worker.submit(load_frequency)
+            except Exception:
+                self._server_frequency_poll_in_progress = False
+                logger.debug("Unable to submit server frequency analysis poll", exc_info=True)
+                return
+
+            def forward_result(done_future) -> None:
+                try:
+                    payload = done_future.result()
+                except Exception as exc:
+                    payload = {"error": exc}
+                signal = getattr(self, "_server_frequency_ready", None)
+                if signal is not None and hasattr(signal, "emit"):
+                    signal.emit(payload)
+                else:
+                    self._handle_server_frequency_ready(payload)
+
+            future.add_done_callback(forward_result)
             return
         service = getattr(self, "auto_bet_service", None)
         if (
@@ -775,13 +841,56 @@ class MainWindowDataMixin:
             or not hasattr(panel, "update_frequency_analysis")
         ):
             return
+        if not MainWindowDataMixin._auto_bet_refresh_due(
+            self, "_local_frequency_last_polled_at", now, force=force
+        ):
+            return
         analysis = service.refresh_frequency_analysis(site, target_period=target_period)
+        signature = MainWindowDataMixin._stable_payload_signature(self, analysis)
+        if signature == getattr(self, "_local_frequency_snapshot_signature", ""):
+            return
+        self._local_frequency_snapshot_signature = signature
         panel.update_frequency_analysis(analysis)
 
-    def _on_auto_bet_tick(self) -> None:
+    def _update_local_runtime_and_ai_statistics(self) -> None:
+        service = getattr(self, "auto_bet_service", None)
+        panel = getattr(self, "auto_bet_panel", None)
+        if service is None or panel is None:
+            return
+        if hasattr(panel, "update_runtime_state"):
+            runtime_state = service.runtime_state
+            runtime_signature = MainWindowDataMixin._stable_payload_signature(self, runtime_state)
+            if runtime_signature != getattr(self, "_local_runtime_snapshot_signature", ""):
+                self._local_runtime_snapshot_signature = runtime_signature
+                panel.update_runtime_state(runtime_state)
+        if hasattr(panel, "update_ai_statistics"):
+            store = getattr(service, "_ai_prediction_store", None)
+            if store is not None:
+                cfg = service.config
+                ai_summary = store.accuracy_summary(cfg.site, cfg.ai_accuracy_window)
+                ai_signature = MainWindowDataMixin._stable_payload_signature(self, ai_summary)
+                if ai_signature != getattr(self, "_local_ai_snapshot_signature", ""):
+                    self._local_ai_snapshot_signature = ai_signature
+                    panel.update_ai_statistics(ai_summary)
+
+    def _on_auto_bet_tick(self, now: datetime | None = None) -> None:
         """Called by auto_bet timer to evaluate betting strategy."""
         if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            client = getattr(self, "server_api_client", None)
+            if client is not None and not getattr(client, "is_authenticated", False) and hasattr(self, "_bootstrap_server_mode"):
+                self._bootstrap_server_mode()
             self._refresh_server_pending_bet()
+            self._refresh_server_betting_events()
+            if hasattr(self, "_refresh_server_statistics"):
+                try:
+                    self._refresh_server_statistics(now=now)
+                except TypeError:
+                    self._refresh_server_statistics()
+            if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+                try:
+                    self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""), now=now)
+                except TypeError:
+                    self._refresh_auto_bet_frequency_analysis(getattr(self, "_active_site", ""))
             return
         service = getattr(self, "auto_bet_service", None)
         if service is None or not service.is_running:
@@ -801,19 +910,11 @@ class MainWindowDataMixin:
             period_end_time=getattr(info, "next_time", None),
         )
         if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
-            self._refresh_auto_bet_frequency_analysis(active_site, target_period)
+            self._refresh_auto_bet_frequency_analysis(active_site, target_period, now=now)
         if service.runtime_state.halted:
             self._on_auto_bet_risk_halted(service.runtime_state.halt_reason)
-        panel = getattr(self, "auto_bet_panel", None)
-        if panel is not None and hasattr(panel, "update_runtime_state"):
-            panel.update_runtime_state(service.runtime_state)
-        if panel is not None and hasattr(panel, "update_ai_statistics"):
-            store = getattr(service, "_ai_prediction_store", None)
-            if store is not None:
-                cfg = service.config
-                panel.update_ai_statistics(
-                    store.accuracy_summary(cfg.site, cfg.ai_accuracy_window)
-                )
+        if MainWindowDataMixin._auto_bet_refresh_due(self, "_local_statistics_last_polled_at", now):
+            MainWindowDataMixin._update_local_runtime_and_ai_statistics(self)
 
     def _handle_auto_bet_log_ready(self, record: object) -> None:
         panel = getattr(self, "auto_bet_panel", None)
@@ -824,6 +925,42 @@ class MainWindowDataMixin:
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "show_pending_ai_recommendation"):
             panel.show_pending_ai_recommendation(pending)
+
+    def _reset_server_run_statistics_panels(self) -> None:
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None:
+            return
+        from app.models.auto_bet import AutoBetRuntimeState
+
+        self._server_frequency_snapshot_signature = ""
+        self._server_runtime_snapshot_signature = ""
+        self._server_ai_snapshot_signature = ""
+        if hasattr(panel, "update_runtime_state"):
+            panel.update_runtime_state(AutoBetRuntimeState())
+        if hasattr(panel, "update_ai_statistics"):
+            panel.update_ai_statistics({})
+        if hasattr(panel, "update_frequency_analysis"):
+            panel.update_frequency_analysis(None)
+
+    def _reset_local_run_statistics_snapshots(self) -> None:
+        self._local_frequency_snapshot_signature = ""
+        self._local_runtime_snapshot_signature = ""
+        self._local_ai_snapshot_signature = ""
+        self._local_frequency_last_polled_at = None
+        self._local_statistics_last_polled_at = None
+
+    def _event_created_before_server_run(self, item: dict) -> bool:
+        started_at = getattr(self, "_server_run_started_at", None)
+        if started_at is None:
+            return False
+        raw = str(item.get("created_at", "") or "").strip()
+        if not raw:
+            return False
+        try:
+            created_at = datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return False
+        return created_at < started_at
 
     def _start_server_auto_bet(self) -> None:
         """Server mode leaves crawling, AI, and WSS sending on the backend."""
@@ -837,7 +974,20 @@ class MainWindowDataMixin:
                 QMessageBox.warning(self, "无法启动自动下注", "\n".join(validation_errors))
                 panel.set_running(False)
                 return
-            self.server_api_client.save_strategy({
+            # Server API stores StrategyEvent.created_at as naive UTC. Keep this
+            # cursor in the same timezone so since/event filtering does not hide
+            # valid events on UTC+8 client machines.
+            self._server_run_started_at = datetime.utcnow()
+            MainWindowDataMixin._arm_auto_bet_refresh_burst(self, self._server_run_started_at)
+            MainWindowDataMixin._reset_server_run_statistics_panels(self)
+            try:
+                try:
+                    self._server_event_cursor = int(self.server_api_client.latest_betting_event_id(site=config.site))
+                except TypeError:
+                    self._server_event_cursor = int(self.server_api_client.latest_betting_event_id())
+            except Exception as exc:
+                logger.debug("Unable to initialize server betting-event cursor: %s", exc)
+            self._schedule_server_strategy_save({
                 "enabled": True,
                 "site": config.site,
                 "target_groups": config.target_groups,
@@ -847,7 +997,25 @@ class MainWindowDataMixin:
                 "bet_amount": config.bet_amount,
             })
             panel.set_running(True)
+            if hasattr(panel, "append_log"):
+                from app.models.auto_bet import InjectRecord
+
+                panel.append_log(InjectRecord(
+                    ts=datetime.now(),
+                    group_name="",
+                    group_id="",
+                    play_type="",
+                    amount=0,
+                    success=True,
+                    content="服务端策略已提交，等待本期频率与 AI 决策",
+                    site=config.site,
+                    period="",
+                ))
             self._refresh_server_pending_bet()
+            if hasattr(self, "_refresh_server_statistics"):
+                self._refresh_server_statistics(force=True)
+            if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+                self._refresh_auto_bet_frequency_analysis(config.site, force=True)
             timer = getattr(self, "_auto_bet_timer", None)
             if timer is not None:
                 timer.start()
@@ -857,14 +1025,274 @@ class MainWindowDataMixin:
 
     def _refresh_server_pending_bet(self) -> None:
         panel = getattr(self, "auto_bet_panel", None)
+        if panel is None or getattr(self, "_server_pending_poll_in_progress", False):
+            return
+        client = getattr(self, "server_api_client", None)
+        if client is None or not getattr(client, "is_authenticated", False):
+            return
+        worker = getattr(self, "_worker", None)
+        if worker is None:
+            return
+        self._server_pending_poll_in_progress = True
+
+        def load_pending() -> dict[str, object]:
+            try:
+                return {"items": self.server_api_client.pending_bets()}
+            except Exception as exc:
+                return {"error": exc}
+
+        try:
+            future = worker.submit(load_pending)
+        except Exception:
+            self._server_pending_poll_in_progress = False
+            logger.debug("Unable to submit server pending-bet poll", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                payload = done_future.result()
+            except Exception as exc:
+                payload = {"error": exc}
+            signal = getattr(self, "_server_pending_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(payload)
+            else:
+                self._handle_server_pending_ready(payload)
+
+        future.add_done_callback(forward_result)
+
+    def _refresh_server_betting_events(self) -> None:
+        """Fetch completed server-side evaluations and append them once to the UI log."""
+        if getattr(self, "_server_event_poll_in_progress", False):
+            return
+        client = getattr(self, "server_api_client", None)
+        worker = getattr(self, "_worker", None)
+        if client is None or worker is None or not getattr(client, "is_authenticated", False):
+            return
+        self._server_event_poll_in_progress = True
+        cursor = max(0, int(getattr(self, "_server_event_cursor", 0) or 0))
+        since = getattr(self, "_server_run_started_at", None)
+
+        def load_events() -> dict[str, object]:
+            try:
+                return {
+                    "items": client.betting_events(
+                        after_id=cursor,
+                        site=getattr(self, "_active_site", "") or None,
+                        since=since,
+                    )
+                }
+            except Exception as exc:
+                return {"error": exc}
+
+        try:
+            future = worker.submit(load_events)
+        except Exception:
+            self._server_event_poll_in_progress = False
+            logger.debug("Unable to submit server betting-event poll", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                payload = done_future.result()
+            except Exception as exc:
+                payload = {"error": exc}
+            signal = getattr(self, "_server_betting_events_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(payload)
+            else:
+                self._handle_server_betting_events_ready(payload)
+
+        future.add_done_callback(forward_result)
+
+    def _handle_server_frequency_ready(self, payload: object) -> None:
+        self._server_frequency_poll_in_progress = False
+        if not isinstance(payload, dict) or payload.get("error") is not None:
+            if isinstance(payload, dict) and payload.get("error") is not None:
+                logger.debug("Unable to refresh server frequency analysis: %s", payload.get("error"))
+            return
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "update_frequency_analysis"):
+            signature = MainWindowDataMixin._stable_payload_signature(self, payload)
+            if signature == getattr(self, "_server_frequency_snapshot_signature", ""):
+                return
+            self._server_frequency_snapshot_signature = signature
+            panel.update_frequency_analysis(payload)
+
+    def _refresh_server_statistics(self, now: datetime | None = None, *, force: bool = False) -> None:
+        """Fetch server-side runtime/AI statistics and apply them to the auto-bet panel."""
+        if getattr(self, "_server_statistics_poll_in_progress", False):
+            return
+        if not MainWindowDataMixin._auto_bet_refresh_due(self, "_server_statistics_last_polled_at", now, force=force):
+            return
+        client = getattr(self, "server_api_client", None)
+        worker = getattr(self, "_worker", None)
+        panel = getattr(self, "auto_bet_panel", None)
+        if client is None or worker is None or panel is None or not getattr(client, "is_authenticated", False):
+            return
+        config = panel.get_config() if hasattr(panel, "get_config") else None
+        site = str(getattr(config, "site", getattr(self, "_active_site", "pc28")) or "pc28")
+        ai_window = int(getattr(config, "ai_accuracy_window", 20) or 20)
+        self._server_statistics_poll_in_progress = True
+
+        def load_statistics() -> dict[str, object]:
+            try:
+                return client.betting_statistics(site, ai_window=ai_window, since=getattr(self, "_server_run_started_at", None))
+            except Exception as exc:
+                return {"error": exc}
+
+        try:
+            future = worker.submit(load_statistics)
+        except Exception:
+            self._server_statistics_poll_in_progress = False
+            logger.debug("Unable to submit server statistics poll", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                payload = done_future.result()
+            except Exception as exc:
+                payload = {"error": exc}
+            signal = getattr(self, "_server_statistics_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(payload)
+            else:
+                self._handle_server_statistics_ready(payload)
+
+        future.add_done_callback(forward_result)
+
+    def _handle_server_statistics_ready(self, payload: object) -> None:
+        self._server_statistics_poll_in_progress = False
+        if not isinstance(payload, dict) or payload.get("error") is not None:
+            if isinstance(payload, dict) and payload.get("error") is not None:
+                logger.debug("Unable to refresh server statistics: %s", payload.get("error"))
+            return
+        panel = getattr(self, "auto_bet_panel", None)
         if panel is None:
             return
+        runtime_payload = payload.get("runtime_state")
+        if isinstance(runtime_payload, dict) and hasattr(panel, "update_runtime_state"):
+            from app.models.auto_bet import AutoBetRuntimeState
+
+            runtime_signature = MainWindowDataMixin._stable_payload_signature(self, runtime_payload)
+            if runtime_signature == getattr(self, "_server_runtime_snapshot_signature", ""):
+                runtime_payload = None
+            else:
+                self._server_runtime_snapshot_signature = runtime_signature
+        if isinstance(runtime_payload, dict) and hasattr(panel, "update_runtime_state"):
+            allowed = AutoBetRuntimeState.__dataclass_fields__.keys()
+            state_args = {key: runtime_payload.get(key) for key in allowed if key in runtime_payload}
+            panel.update_runtime_state(AutoBetRuntimeState(**state_args))
+        ai_summary = payload.get("ai_statistics")
+        if isinstance(ai_summary, dict) and hasattr(panel, "update_ai_statistics"):
+            ai_signature = MainWindowDataMixin._stable_payload_signature(self, ai_summary)
+            if ai_signature == getattr(self, "_server_ai_snapshot_signature", ""):
+                return
+            self._server_ai_snapshot_signature = ai_signature
+            panel.update_ai_statistics(ai_summary)
+
+    def _server_event_is_stale_for_current_site(self, site: str, period: str) -> bool:
+        """Hide backfilled strategy events that are clearly older than the active draw context."""
+        if not site or not period:
+            return False
+        draw_infos = getattr(self, "_draw_infos", {})
+        info = draw_infos.get(site) if isinstance(draw_infos, dict) else None
+        if str(getattr(info, "source", "") or "").strip().lower() == "inferred":
+            return False
+        current_period = str(getattr(info, "next_period", "") or "").strip()
+        if not current_period or not current_period.isdigit() or not period.isdigit():
+            return False
         try:
-            items = self.server_api_client.pending_bets()
-        except Exception as exc:
-            logger.debug("Unable to refresh server pending bets: %s", exc)
+            return int(period) < int(current_period)
+        except ValueError:
+            return False
+
+    def _handle_server_betting_events_ready(self, payload: object) -> None:
+        self._server_event_poll_in_progress = False
+        if not isinstance(payload, dict) or payload.get("error") is not None:
             return
-        if not items:
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None or not hasattr(panel, "append_log"):
+            return
+        from app.models.auto_bet import InjectRecord
+
+        cursor = max(0, int(getattr(self, "_server_event_cursor", 0) or 0))
+        activity_sites: set[str] = set()
+        key_activity_types = {
+            "frequency_skip",
+            "ai_error",
+            "ai_skip",
+            "ai_execute",
+            "confirmed",
+            "skipped",
+            "sent",
+            "failed",
+            "expired",
+        }
+        for item in payload.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            event_id = int(item.get("id", 0) or 0)
+            if event_id <= cursor:
+                continue
+            if isinstance(item, dict) and MainWindowDataMixin._event_created_before_server_run(self, item):
+                cursor = event_id
+                continue
+            event_type = str(item.get("event_type", "") or "")
+            site = str(item.get("site", "") or "")
+            period = str(item.get("period", "") or "")
+            message = str(item.get("message", "") or "服务器策略事件")
+            decision_event_types = {"frequency_skip", "ai_error", "ai_skip", "ai_execute"}
+            if MainWindowDataMixin._server_event_is_stale_for_current_site(self, site, period):
+                cursor = event_id
+                continue
+            event_key = (site, period, event_type, message)
+            seen_keys = getattr(self, "_server_event_seen_keys", None)
+            if seen_keys is None:
+                seen_keys = set()
+                self._server_event_seen_keys = seen_keys
+            if event_type in decision_event_types and event_key in seen_keys:
+                cursor = event_id
+                continue
+            if event_type in decision_event_types:
+                seen_keys.add(event_key)
+                if len(seen_keys) > 1000:
+                    self._server_event_seen_keys = set(list(seen_keys)[-500:])
+            panel.append_log(InjectRecord(
+                ts=datetime.now(),
+                group_name="",
+                group_id="",
+                play_type="",
+                amount=0,
+                success=event_type not in {"ai_error"},
+                content=message,
+                error="",
+                site=site,
+                period=period,
+            ))
+            if event_type in key_activity_types:
+                activity_sites.add(site)
+            cursor = event_id
+        self._server_event_cursor = cursor
+        if activity_sites:
+            MainWindowDataMixin._arm_auto_bet_refresh_burst(self)
+            if hasattr(self, "_refresh_server_statistics"):
+                self._refresh_server_statistics(force=True)
+            if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
+                for site in sorted(activity_sites):
+                    self._refresh_auto_bet_frequency_analysis(site, force=True)
+
+    def _handle_server_pending_ready(self, payload: object) -> None:
+        self._server_pending_poll_in_progress = False
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None or not isinstance(payload, dict):
+            return
+        error = payload.get("error")
+        if error is not None:
+            logger.debug("Unable to refresh server pending bets: %s", error)
+            return
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
             panel.show_pending_server_bet(None)
             return
         item = items[0]
@@ -876,27 +1304,116 @@ class MainWindowDataMixin:
             reason="等待服务器确认下注", created_at=datetime.now(),
         ), order_id=int(item["id"]))
 
-    def _confirm_server_pending_bet(self) -> None:
-        panel = getattr(self, "auto_bet_panel", None)
-        bet_id = getattr(panel, "server_pending_bet_id", None) if panel is not None else None
-        if not bet_id:
+    def _schedule_server_strategy_save(self, payload: dict[str, object]) -> None:
+        """Coalesce UI configuration bursts into background API writes."""
+        self._server_strategy_pending_payload = dict(payload)
+        if getattr(self, "_server_strategy_save_in_progress", False):
             return
+        timer = getattr(self, "_server_strategy_timer", None)
+        if timer is not None:
+            timer.cancel()
+        delay = max(0.0, float(getattr(self, "server_strategy_debounce_seconds", 0.4)))
+        timer = threading.Timer(delay, lambda: MainWindowDataMixin._submit_pending_server_strategy_save(self))
+        timer.daemon = True
+        self._server_strategy_timer = timer
+        timer.start()
+
+    def _submit_pending_server_strategy_save(self) -> None:
+        self._server_strategy_timer = None
+        if getattr(self, "_server_strategy_save_in_progress", False):
+            return
+        if not getattr(self, "_server_strategy_pending_payload", None):
+            return
+        worker = getattr(self, "_worker", None)
+        if worker is None:
+            return
+        self._server_strategy_save_in_progress = True
+
+        def save_latest() -> dict[str, object]:
+            request_payload = dict(getattr(self, "_server_strategy_pending_payload", {}) or {})
+            self._server_strategy_pending_payload = None
+            try:
+                self.server_api_client.save_strategy(request_payload)
+                return {"ok": True}
+            except Exception as exc:
+                return {"error": exc}
+
         try:
-            self.server_api_client.confirm_bet(bet_id)
-            self._refresh_server_pending_bet()
-        except Exception as exc:
-            logger.warning("Unable to confirm server bet: %s", exc)
+            future = worker.submit(save_latest)
+        except Exception:
+            self._server_strategy_save_in_progress = False
+            logger.debug("Unable to submit server strategy save", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                result = done_future.result()
+            except Exception as exc:
+                result = {"error": exc}
+            signal = getattr(self, "_server_strategy_save_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(result)
+            else:
+                self._handle_server_strategy_save_ready(result)
+
+        future.add_done_callback(forward_result)
+
+    def _handle_server_strategy_save_ready(self, result: object) -> None:
+        self._server_strategy_save_in_progress = False
+        if isinstance(result, dict) and result.get("error") is not None:
+            logger.warning("Unable to save server auto-bet strategy: %s", result["error"])
+        if getattr(self, "_server_strategy_pending_payload", None):
+            MainWindowDataMixin._schedule_server_strategy_save(self, self._server_strategy_pending_payload)
+
+    def _confirm_server_pending_bet(self) -> None:
+        MainWindowDataMixin._submit_server_order_action(self, "confirm_bet")
 
     def _skip_server_pending_bet(self) -> None:
+        MainWindowDataMixin._submit_server_order_action(self, "skip_bet")
+
+    def _submit_server_order_action(self, action: str) -> None:
         panel = getattr(self, "auto_bet_panel", None)
         bet_id = getattr(panel, "server_pending_bet_id", None) if panel is not None else None
-        if not bet_id:
+        if not bet_id or getattr(self, "_server_order_action_in_progress", False):
             return
+        worker = getattr(self, "_worker", None)
+        if worker is None:
+            return
+        self._server_order_action_in_progress = True
+
+        def run_action() -> dict[str, object]:
+            try:
+                getattr(self.server_api_client, action)(bet_id)
+                return {"ok": True, "action": action}
+            except Exception as exc:
+                return {"error": exc, "action": action}
+
         try:
-            self.server_api_client.skip_bet(bet_id)
-            self._refresh_server_pending_bet()
-        except Exception as exc:
-            logger.warning("Unable to skip server bet: %s", exc)
+            future = worker.submit(run_action)
+        except Exception:
+            self._server_order_action_in_progress = False
+            logger.debug("Unable to submit server order action", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                result = done_future.result()
+            except Exception as exc:
+                result = {"error": exc, "action": action}
+            signal = getattr(self, "_server_order_action_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(result)
+            else:
+                MainWindowDataMixin._handle_server_order_action_ready(self, result)
+
+        future.add_done_callback(forward_result)
+
+    def _handle_server_order_action_ready(self, result: object) -> None:
+        self._server_order_action_in_progress = False
+        if isinstance(result, dict) and result.get("error") is not None:
+            logger.warning("Unable to perform server order action: %s", result["error"])
+            return
+        MainWindowDataMixin._refresh_server_pending_bet(self)
 
     def _on_confirm_ai_bet(self) -> None:
         if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
@@ -954,8 +1471,7 @@ class MainWindowDataMixin:
             self.settings["auto_bet"] = config.to_dict()
             self.settings_service.save(self.settings)
             if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
-                try:
-                    self.server_api_client.save_strategy({
+                self._schedule_server_strategy_save({
                         "enabled": config.enabled,
                         "site": config.site,
                         "target_groups": config.target_groups,
@@ -964,8 +1480,6 @@ class MainWindowDataMixin:
                         "require_confirmation": config.ai_require_confirmation,
                         "bet_amount": config.bet_amount,
                     })
-                except Exception as exc:
-                    logger.warning("Unable to save server auto-bet strategy: %s", exc)
 
     def _on_auto_bet_start(self) -> None:
         """Start the auto bet engine."""
@@ -975,6 +1489,8 @@ class MainWindowDataMixin:
         service = getattr(self, "auto_bet_service", None)
         if service is None:
             return
+        MainWindowDataMixin._arm_auto_bet_refresh_burst(self)
+        MainWindowDataMixin._reset_local_run_statistics_snapshots(self)
         validation_errors = service.config.start_validation_errors()
         if validation_errors:
             panel = getattr(self, "auto_bet_panel", None)
@@ -1074,7 +1590,7 @@ class MainWindowDataMixin:
         store.ensure_data(svc_cfg.site, min_count=history_count)
         service.set_result_provider(store)
         if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
-            self._refresh_auto_bet_frequency_analysis(svc_cfg.site)
+            self._refresh_auto_bet_frequency_analysis(svc_cfg.site, force=True)
         if hasattr(service, "set_ai_prediction_store"):
             prediction_store = AiPredictionStore(Path(user_data_dir()) / "ai_predictions.db")
             service.set_ai_prediction_store(prediction_store)
@@ -1084,15 +1600,7 @@ class MainWindowDataMixin:
             if panel is not None:
                 panel.set_running(False)
             return
-        panel = getattr(self, "auto_bet_panel", None)
-        if panel is not None and hasattr(panel, "update_runtime_state"):
-            panel.update_runtime_state(service.runtime_state)
-        if panel is not None and hasattr(panel, "update_ai_statistics"):
-            prediction_store = getattr(service, "_ai_prediction_store", None)
-            if prediction_store is not None:
-                panel.update_ai_statistics(
-                    prediction_store.accuracy_summary(svc_cfg.site, svc_cfg.ai_accuracy_window)
-                )
+        MainWindowDataMixin._update_local_runtime_and_ai_statistics(self)
         timer = getattr(self, "_auto_bet_timer", None)
         if timer is not None:
             timer.start()

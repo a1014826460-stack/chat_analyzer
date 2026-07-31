@@ -43,7 +43,7 @@ python -m venv .venv
 管理员模式并输出调试日志：
 
 ```powershell
-.\.venv\Scripts\python.exe app\main.py --admin --debug
+.\.venv\Scripts\python.exe app\main.py --debug
 ```
 
 ## 测试

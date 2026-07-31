@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from server_api.db import BetAttempt, BetOrder, WssCredential, create_engine, create_schema, create_session_factory
+from server_api.db import BetAttempt, BetOrder, StrategyEvent, WssCredential, create_engine, create_schema, create_session_factory
 from server_api.services.auth import create_activation_code, open_session
 from server_api.services.credentials import save_credentials
 
@@ -48,6 +48,9 @@ def test_sender_decrypts_credentials_only_for_confirmed_order_and_records_succes
             assert (await session.get(BetOrder, order.id)).status == "sent"
             attempts = (await session.scalars(select(BetAttempt).where(BetAttempt.order_id == order.id))).all()
             assert [(attempt.status, attempt.error_message) for attempt in attempts] == [("sent", None)]
+            events = (await session.scalars(select(StrategyEvent).where(StrategyEvent.user_id == user.id))).all()
+            assert [(event.event_type, event.period) for event in events] == [("sent", "200")]
+            assert "group-1" in events[0].message and "大10" in events[0].message
         await engine.dispose()
 
     asyncio.run(scenario())
@@ -104,6 +107,9 @@ def test_sender_refuses_revoked_user_before_decrypting_credentials():
             assert (await session.get(BetOrder, order.id)).status == "failed"
             attempt = await session.scalar(select(BetAttempt).where(BetAttempt.order_id == order.id))
             assert attempt.error_message == "authorization is inactive"
+            event = await session.scalar(select(StrategyEvent).where(StrategyEvent.user_id == user.id))
+            assert event.event_type == "failed"
+            assert "authorization is inactive" in event.message
         await engine.dispose()
 
     asyncio.run(scenario())
@@ -161,6 +167,9 @@ def test_sender_refuses_order_after_betting_deadline_before_decrypting_credentia
             assert (await session.get(BetOrder, order.id)).status == "expired"
             attempt = await session.scalar(select(BetAttempt).where(BetAttempt.order_id == order.id))
             assert attempt.error_message == "betting window closed"
+            event = await session.scalar(select(StrategyEvent).where(StrategyEvent.user_id == user.id))
+            assert event.event_type == "expired"
+            assert "betting window closed" in event.message
         await engine.dispose()
 
     asyncio.run(scenario())
