@@ -268,6 +268,8 @@ class AutoBetPanel(QGroupBox):
     ai_confirm_clicked = Signal()
     ai_skip_clicked = Signal()
     ai_history_clicked = Signal()
+    runtime_log_filters_changed = Signal()
+    runtime_log_load_more_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("自动下注", parent)
@@ -332,6 +334,55 @@ class AutoBetPanel(QGroupBox):
         if record.error:
             line += f"  ({record.error})"
         self._log_edit.append(line)
+
+    def runtime_log_refresh_interval_seconds(self) -> int:
+        """Return zero when automatic server-log refresh is disabled."""
+        return int(self._runtime_log_interval_combo.currentData() or 0)
+
+    def runtime_log_filters(self) -> dict[str, object]:
+        level = str(self._runtime_log_level_combo.currentData() or "")
+        keyword = self._runtime_log_keyword_edit.text().strip()
+        return {"level": level or None, "keyword": keyword or None, "limit": 50}
+
+    def runtime_log_before_id(self) -> int | None:
+        return self._runtime_log_next_before_id
+
+    def runtime_log_row_count(self) -> int:
+        return self._runtime_log_row_count
+
+    def reset_runtime_log_pagination(self) -> None:
+        self._runtime_log_next_before_id = None
+
+    def apply_runtime_log_page(self, payload: dict[str, object], *, replace: bool) -> None:
+        """Render one bounded server page without disturbing local event history."""
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return
+        if replace:
+            self._log_edit.clear()
+            self._runtime_log_row_count = 0
+        for item in items[:50]:
+            if not isinstance(item, dict):
+                continue
+            created_at = str(item.get("created_at", ""))[:19].replace("T", " ")
+            level = str(item.get("level", "INFO"))
+            category = str(item.get("category", ""))
+            message = str(item.get("message", ""))
+            suffix = ""
+            if item.get("request_url"):
+                suffix += f" url={item['request_url']}"
+            if item.get("duration_ms") is not None:
+                suffix += f" {item['duration_ms']}ms"
+            if item.get("status_code") is not None:
+                suffix += f" HTTP {item['status_code']}"
+            self._log_edit.append(f"{created_at} [{level}] [{category}] {message}{suffix}")
+            self._runtime_log_row_count += 1
+        next_before = payload.get("next_before_id") if isinstance(payload, dict) else None
+        self._runtime_log_next_before_id = int(next_before) if next_before else None
+        has_more = bool(payload.get("has_more")) if isinstance(payload, dict) else False
+        self._runtime_log_load_more_button.setEnabled(has_more)
+        self._runtime_log_load_more_button.setVisible(has_more)
+        self._runtime_log_status_label.setText("" if items else "没有匹配的运行日志")
 
     def _display_group_name(self, record: InjectRecord) -> str:
         group_id = str(getattr(record, "group_id", "") or "").strip()
@@ -1002,6 +1053,27 @@ class AutoBetPanel(QGroupBox):
 
         # --- Run log ---
         layout.addWidget(QLabel("运行日志:"))
+        runtime_log_filters = QHBoxLayout()
+        runtime_log_filters.addWidget(QLabel("级别:"))
+        self._runtime_log_level_combo = QComboBox()
+        self._runtime_log_level_combo.addItem("全部", "")
+        for level in ("DEBUG", "INFO", "WARN", "ERROR"):
+            self._runtime_log_level_combo.addItem(level, level)
+        runtime_log_filters.addWidget(self._runtime_log_level_combo)
+        runtime_log_filters.addWidget(QLabel("关键词:"))
+        self._runtime_log_keyword_edit = QLineEdit()
+        self._runtime_log_keyword_edit.setPlaceholderText("搜索日志")
+        self._runtime_log_keyword_edit.editingFinished.connect(self._on_runtime_log_filters_changed)
+        runtime_log_filters.addWidget(self._runtime_log_keyword_edit, 1)
+        runtime_log_filters.addWidget(QLabel("刷新:"))
+        self._runtime_log_interval_combo = QComboBox()
+        for label, seconds in (("关闭", 0), ("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("60 秒", 60)):
+            self._runtime_log_interval_combo.addItem(label, seconds)
+        self._runtime_log_interval_combo.setCurrentIndex(1)
+        self._runtime_log_level_combo.currentIndexChanged.connect(self._on_runtime_log_filters_changed)
+        self._runtime_log_interval_combo.currentIndexChanged.connect(self._on_runtime_log_filters_changed)
+        runtime_log_filters.addWidget(self._runtime_log_interval_combo)
+        layout.addLayout(runtime_log_filters)
         self._log_edit = QTextEdit()
         self._log_edit.setReadOnly(True)
         # Keep the visible document bounded even if a long-running service
@@ -1010,7 +1082,21 @@ class AutoBetPanel(QGroupBox):
         self._log_edit.setMaximumHeight(150)
         self._log_edit.setPlaceholderText("策略运行日志将显示在这里...")
         layout.addWidget(self._log_edit)
+        runtime_log_actions = QHBoxLayout()
+        self._runtime_log_load_more_button = QPushButton("加载更多")
+        self._runtime_log_load_more_button.clicked.connect(self.runtime_log_load_more_clicked.emit)
+        self._runtime_log_load_more_button.setVisible(False)
+        runtime_log_actions.addWidget(self._runtime_log_load_more_button)
+        self._runtime_log_status_label = QLabel()
+        runtime_log_actions.addWidget(self._runtime_log_status_label, 1)
+        layout.addLayout(runtime_log_actions)
+        self._runtime_log_next_before_id: int | None = None
+        self._runtime_log_row_count = 0
         self._sync_strategy_visibility()
+
+    def _on_runtime_log_filters_changed(self) -> None:
+        self.reset_runtime_log_pagination()
+        self.runtime_log_filters_changed.emit()
 
     # ------------------------------------------------------------------
     # Slots

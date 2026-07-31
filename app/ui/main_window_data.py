@@ -881,6 +881,7 @@ class MainWindowDataMixin:
                 self._bootstrap_server_mode()
             self._refresh_server_pending_bet()
             self._refresh_server_betting_events()
+            self._refresh_server_runtime_logs(now=now)
             if hasattr(self, "_refresh_server_statistics"):
                 try:
                     self._refresh_server_statistics(now=now)
@@ -920,6 +921,72 @@ class MainWindowDataMixin:
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "append_log"):
             panel.append_log(record)
+
+    def _refresh_server_runtime_logs(self, now: datetime | None = None, *, load_more: bool = False, force: bool = False) -> None:
+        """Load one authenticated, bounded page for the auto-bet runtime log."""
+        panel = getattr(self, "auto_bet_panel", None)
+        client = getattr(self, "server_api_client", None)
+        worker = getattr(self, "_worker", None)
+        if panel is None or client is None or worker is None or not panel.isVisible() or not getattr(client, "is_authenticated", False):
+            return
+        if getattr(self, "_server_runtime_logs_poll_in_progress", False):
+            return
+        if not load_more:
+            interval = panel.runtime_log_refresh_interval_seconds()
+            if not interval:
+                return
+            current = now or datetime.now()
+            last = getattr(self, "_server_runtime_logs_last_polled_at", None)
+            if not force and isinstance(last, datetime) and (current - last).total_seconds() < interval:
+                return
+            self._server_runtime_logs_last_polled_at = current
+        before_id = panel.runtime_log_before_id() if load_more else None
+        filters = panel.runtime_log_filters()
+        self._server_runtime_logs_poll_in_progress = True
+
+        def load_logs() -> dict[str, object]:
+            try:
+                return client.runtime_logs(before_id=before_id, **filters)
+            except Exception as exc:
+                return {"error": exc, "load_more": load_more}
+
+        try:
+            future = worker.submit(load_logs)
+        except Exception:
+            self._server_runtime_logs_poll_in_progress = False
+            logger.debug("Unable to submit server runtime-log poll", exc_info=True)
+            return
+
+        def forward_result(done_future) -> None:
+            try:
+                payload = done_future.result()
+            except Exception as exc:
+                payload = {"error": exc, "load_more": load_more}
+            if isinstance(payload, dict):
+                payload["load_more"] = load_more
+            signal = getattr(self, "_server_runtime_logs_ready", None)
+            if signal is not None and hasattr(signal, "emit"):
+                signal.emit(payload)
+            else:
+                self._handle_server_runtime_logs_ready(payload)
+
+        future.add_done_callback(forward_result)
+
+    def _handle_server_runtime_logs_ready(self, payload: object) -> None:
+        self._server_runtime_logs_poll_in_progress = False
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is None or not isinstance(payload, dict):
+            return
+        if payload.get("error") is not None:
+            panel._runtime_log_status_label.setText(f"日志刷新失败：{payload['error']}")
+            return
+        panel.apply_runtime_log_page(payload, replace=not bool(payload.get("load_more")))
+
+    def _on_runtime_log_filters_changed(self) -> None:
+        self._refresh_server_runtime_logs(force=True)
+
+    def _on_runtime_log_load_more_clicked(self) -> None:
+        self._refresh_server_runtime_logs(load_more=True)
 
     def _handle_ai_pending_ready(self, pending: object) -> None:
         panel = getattr(self, "auto_bet_panel", None)
@@ -1683,6 +1750,8 @@ class MainWindowDataMixin:
         panel.ai_confirm_clicked.connect(self._on_confirm_ai_bet)
         panel.ai_skip_clicked.connect(self._on_skip_ai_bet)
         panel.ai_history_clicked.connect(self._on_show_ai_history)
+        panel.runtime_log_filters_changed.connect(self._on_runtime_log_filters_changed)
+        panel.runtime_log_load_more_clicked.connect(self._on_runtime_log_load_more_clicked)
         self.auto_bet_service.set_log_callback(self._auto_bet_log_ready.emit)
         self.auto_bet_service.set_ai_pending_callback(self._ai_pending_ready.emit)
 

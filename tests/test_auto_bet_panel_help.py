@@ -199,6 +199,21 @@ def test_auto_bet_panel_log_uses_stable_bet_separator_without_question_mark():
     assert "\u4e0b\u6ce8\uff1a\u5927100\u5c0f100" in text
 
 
+def test_auto_bet_panel_runtime_log_controls_default_to_five_seconds_and_page_results():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    assert panel.runtime_log_refresh_interval_seconds() == 5
+    panel.apply_runtime_log_page({"items": [{"id": 2, "level": "INFO", "message": "one"}], "next_before_id": 2, "has_more": True}, replace=True)
+    panel.apply_runtime_log_page({"items": [{"id": 1, "level": "ERROR", "message": "two"}], "next_before_id": 1, "has_more": True}, replace=False)
+
+    assert panel.runtime_log_row_count() == 2
+    assert panel.runtime_log_before_id() == 1
+
+
 def test_auto_bet_panel_shows_target_group_lock_hint_while_running():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel

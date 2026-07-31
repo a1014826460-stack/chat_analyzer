@@ -99,3 +99,14 @@ def test_server_api_client_fetches_betting_events_since_run_start():
     client.betting_events(after_id=12, limit=50, site="pc28", since=datetime(2026, 7, 28, 22, 22, 49))
 
     assert calls == ["/v1/bets/events?after_id=12&limit=50&site=pc28&since=2026-07-28T22%3A22%3A49"]
+
+
+def test_server_api_client_fetches_runtime_logs_with_filters_and_cursor():
+    calls = []
+    client = ServerApiClient("http://server", request=lambda method, path, payload, headers: calls.append(path) or {"items": [{"id": 19}]})
+    client._access_token = "token"
+
+    page = client.runtime_logs(level="ERROR", keyword="timeout", before_id=20, limit=50)
+
+    assert page["items"] == [{"id": 19}]
+    assert calls == ["/v1/runtime-logs?limit=50&level=ERROR&keyword=timeout&before_id=20"]

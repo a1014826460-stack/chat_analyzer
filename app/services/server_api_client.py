@@ -102,6 +102,28 @@ class ServerApiClient:
             path = f"{path}?{urlencode({'site': str(site)})}"
         return int(self._call("GET", path, authenticated=True).get("latest_id", 0) or 0)
 
+    def runtime_logs(
+        self,
+        *,
+        level: str | None = None,
+        category: str | None = None,
+        keyword: str | None = None,
+        start_at=None,
+        end_at=None,
+        before_id: int | None = None,
+        limit: int = 50,
+    ) -> dict:
+        from urllib.parse import urlencode
+
+        query_args: dict[str, object] = {"limit": min(max(1, int(limit)), 100)}
+        for name, value in (("level", level), ("category", category), ("keyword", keyword), ("before_id", before_id)):
+            if value not in (None, ""):
+                query_args[name] = value
+        for name, value in (("start_at", start_at), ("end_at", end_at)):
+            if value is not None:
+                query_args[name] = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        return self._call("GET", f"/v1/runtime-logs?{urlencode(query_args)}", authenticated=True)
+
     def confirm_bet(self, bet_id: int) -> dict:
         return self._call("POST", f"/v1/bets/{int(bet_id)}/confirm", authenticated=True)
 
