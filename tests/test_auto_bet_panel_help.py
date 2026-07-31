@@ -207,6 +207,7 @@ def test_auto_bet_panel_runtime_log_controls_default_to_five_seconds_and_page_re
     panel = AutoBetPanel()
 
     assert panel.runtime_log_refresh_interval_seconds() == 5
+    assert panel.runtime_log_filters()["start_at"] < panel.runtime_log_filters()["end_at"]
     panel.apply_runtime_log_page({"items": [{"id": 2, "level": "INFO", "message": "one"}], "next_before_id": 2, "has_more": True}, replace=True)
     panel.apply_runtime_log_page({"items": [{"id": 1, "level": "ERROR", "message": "two"}], "next_before_id": 1, "has_more": True}, replace=False)
 

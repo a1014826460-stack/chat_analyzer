@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QDialog,
     QDialogButtonBox,
+    QDateTimeEdit,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -343,7 +344,13 @@ class AutoBetPanel(QGroupBox):
     def runtime_log_filters(self) -> dict[str, object]:
         level = str(self._runtime_log_level_combo.currentData() or "")
         keyword = self._runtime_log_keyword_edit.text().strip()
-        return {"level": level or None, "keyword": keyword or None, "limit": 50}
+        return {
+            "level": level or None,
+            "keyword": keyword or None,
+            "start_at": self._runtime_log_start_edit.dateTime().toPython(),
+            "end_at": self._runtime_log_end_edit.dateTime().toPython(),
+            "limit": 50,
+        }
 
     def runtime_log_before_id(self) -> int | None:
         return self._runtime_log_next_before_id
@@ -1073,6 +1080,19 @@ class AutoBetPanel(QGroupBox):
         self._runtime_log_keyword_edit.setPlaceholderText("搜索日志")
         self._runtime_log_keyword_edit.editingFinished.connect(self._on_runtime_log_filters_changed)
         runtime_log_filters.addWidget(self._runtime_log_keyword_edit, 1)
+        runtime_log_filters.addWidget(QLabel("时间:"))
+        self._runtime_log_start_edit = QDateTimeEdit()
+        self._runtime_log_start_edit.setDisplayFormat("MM-dd HH:mm")
+        self._runtime_log_start_edit.setCalendarPopup(True)
+        self._runtime_log_start_edit.setDateTime(QDateTime.currentDateTime().addSecs(-24 * 3600))
+        self._runtime_log_start_edit.editingFinished.connect(self._on_runtime_log_filters_changed)
+        runtime_log_filters.addWidget(self._runtime_log_start_edit)
+        self._runtime_log_end_edit = QDateTimeEdit()
+        self._runtime_log_end_edit.setDisplayFormat("MM-dd HH:mm")
+        self._runtime_log_end_edit.setCalendarPopup(True)
+        self._runtime_log_end_edit.setDateTime(QDateTime.currentDateTime())
+        self._runtime_log_end_edit.editingFinished.connect(self._on_runtime_log_filters_changed)
+        runtime_log_filters.addWidget(self._runtime_log_end_edit)
         runtime_log_filters.addWidget(QLabel("刷新:"))
         self._runtime_log_interval_combo = QComboBox()
         for label, seconds in (("关闭", 0), ("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("60 秒", 60)):

@@ -25,5 +25,6 @@ Compose 启动 PostgreSQL、Redis、一次性 Alembic 迁移、FastAPI API 和�
 
 - 每日导出 PostgreSQL 卷并验证恢复；Redis 是会话撤销和锁缓存，不是事实来源。
 - 使用 Docker 日志轮转或集中日志；日志禁止记录激活码、JWT、`user_sig`、AI key 与管理员令牌。
-- 监控 `/health/live` 与 `/health/ready`；后者同时检查 PostgreSQL 和 Redis。
+- 监控 `/health/live` 与 `/health/ready`；后者同时检查 PostgreSQL 和 Redis，必须由反向代理限制为运维网段，不能直接公开。
+- 执行 Alembic `head` 后会创建 `runtime_log_events`；自动下注面板按默认 5 秒间隔以 JWT 分页读取日志。worker 记录 CPU、内存和服务周期，不记录密钥或 URL 查询参数。
 - 轮换 `JWT_SECRET`、`CREDENTIAL_ENCRYPTION_KEY` 和 AI key 时按维护窗口重新登录客户端；凭据加密密钥轮换须先执行数据重加密迁移。

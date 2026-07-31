@@ -10,6 +10,7 @@ from sqlalchemy import select
 from server_api.db import BetOrder, DrawResult, create_engine, create_session_factory
 from server_api.settings import settings
 from server_api.services.redis_state import acquire_lock, release_lock
+from server_api.services.runtime_logs import RuntimeLogService
 from server_api.workers.crawler import crawl_site
 from server_api.workers.current_period import fetch_current_period
 from server_api.workers.history_sources import fetch_history_records, site_list
@@ -99,6 +100,25 @@ async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: C
                 encryption_secret=settings.credential_encryption_secret,
                 sender_factory=sender_factory,
             )
+        try:
+            import os
+            import psutil
+
+            process = psutil.Process()
+            await RuntimeLogService(session).write(
+                level="INFO",
+                category="system",
+                message="worker cycle completed",
+                details={
+                    "pid": os.getpid(),
+                    "cpu_percent": process.cpu_percent(interval=None),
+                    "memory_bytes": process.memory_info().rss,
+                },
+                service_name="worker",
+            )
+            await session.commit()
+        except Exception:
+            logger.exception("unable to write worker runtime metrics")
 
 
 async def run_forever(poll_seconds: float = 5.0) -> None:
