@@ -69,6 +69,10 @@ def test_worker_cycle_crawls_sites_and_sends_only_confirmed_orders(monkeypatch):
             await session.commit()
 
         monkeypatch.setattr("server_api.worker.site_list", lambda: ["pc28"])
+        monkeypatch.setattr(
+            "server_api.worker.fetch_current_period",
+            lambda site: type("Current", (), {"period": "300", "betting_deadline_at": None})(),
+        )
         await run_cycle(
             factory,
             fetch_records=lambda site, count: [{"site": site, "period": "302", "sum": 14}],
