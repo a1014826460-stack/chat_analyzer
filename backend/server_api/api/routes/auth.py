@@ -11,6 +11,7 @@ from server_api.services.auth import AuthorizationError, create_activation_code,
 from server_api.dependencies import bearer
 from server_api.services.auth_guard import require_active_token
 from server_api.services.redis_state import allow_fixed_window, revoke_token
+from server_api.services.runtime_logs import RuntimeLogService
 
 
 router = APIRouter()
@@ -77,6 +78,15 @@ async def create_session(payload: SessionRequest, request: Request, session: Ses
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     token = issue_access_token(user_id=user.id, device_id=device.id, jwt_secret=request.app.state.jwt_secret)
+    await RuntimeLogService(session).write(
+        user_id=user.id,
+        level="INFO",
+        category="user_action",
+        message="用户登录成功",
+        details={"device_id": device.id},
+        service_name="api",
+    )
+    await session.commit()
     return {"access_token": token, "token_type": "bearer", "user_id": user.id, "device_id": device.id, "authorization_id": authorization.id}
 
 

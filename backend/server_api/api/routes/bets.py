@@ -13,6 +13,7 @@ from server_api.db import AuditEvent, BetAttempt, BetOrder, StrategyEvent
 from server_api.dependencies import current_user_id
 from server_api.services.strategy_events import add_order_event
 from server_api.services.bet_statistics import betting_statistics
+from server_api.services.runtime_logs import RuntimeLogService
 
 
 router = APIRouter()
@@ -35,6 +36,18 @@ def serialize(row: BetOrder) -> dict[str, object]:
 
 async def audit(session: AsyncSession, user_id: int, action: str, bet_id: int) -> None:
     session.add(AuditEvent(user_id=user_id, action=action, resource_type="bet_order", resource_id=str(bet_id)))
+    await RuntimeLogService(session).write(
+        user_id=user_id,
+        level="INFO",
+        category="user_action",
+        message={
+            "bet_created": "已创建下注订单",
+            "bet_confirmed": "已确认下注订单",
+            "bet_skipped": "已跳过下注订单",
+            "bet_expired": "下注订单已过期",
+        }.get(action, action),
+        details={"bet_id": bet_id, "action": action},
+    )
 
 
 @router.post("/v1/bets", status_code=status.HTTP_201_CREATED)

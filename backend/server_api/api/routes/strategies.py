@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server_api.api.routes.auth import get_session
 from server_api.db import AutoBetStrategy
 from server_api.dependencies import current_user_id
+from server_api.services.runtime_logs import RuntimeLogService
 
 
 router = APIRouter()
@@ -60,6 +61,13 @@ async def put_auto_bet_strategy(payload: AutoBetStrategyRequest, session: Sessio
         for key, value in values.items():
             setattr(row, key, value)
         row.updated_at = datetime.utcnow()
+    await RuntimeLogService(session).write(
+        user_id=user_id,
+        level="INFO",
+        category="user_action",
+        message="自动下注策略已保存",
+        details={"enabled": payload.enabled, "site": payload.site},
+    )
     await session.commit()
     await session.refresh(row)
     return serialize(row)

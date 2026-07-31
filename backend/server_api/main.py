@@ -11,6 +11,7 @@ from server_api.api.routes.integrations import router as integrations_router
 from server_api.api.routes.draws import router as draws_router
 from server_api.api.routes.bets import router as bets_router
 from server_api.api.routes.strategies import router as strategies_router
+from server_api.api.routes.runtime_logs import router as runtime_logs_router
 from server_api.db import create_engine, create_session_factory
 from server_api.services.redis_state import InMemoryRedis
 from server_api.settings import settings
@@ -78,6 +79,7 @@ def create_app(
     application.include_router(draws_router)
     application.include_router(bets_router)
     application.include_router(strategies_router)
+    application.include_router(runtime_logs_router)
 
     @application.get("/health/live")
     def liveness() -> dict[str, str]:

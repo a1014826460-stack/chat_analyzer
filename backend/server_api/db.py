@@ -135,6 +135,25 @@ class StrategyEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class RuntimeLogEvent(Base):
+    """Sanitized operational events rendered in the desktop auto-bet panel."""
+
+    __tablename__ = "runtime_log_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    level: Mapped[str] = mapped_column(String(8), index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    message: Mapped[str] = mapped_column(String(1024))
+    details_json: Mapped[str] = mapped_column(String, default="{}")
+    request_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exception_traceback: Mapped[str | None] = mapped_column(String, nullable=True)
+    service_name: Mapped[str] = mapped_column(String(64), default="api")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 def create_engine(database_url: str) -> AsyncEngine:
     return create_async_engine(database_url, future=True)
 
