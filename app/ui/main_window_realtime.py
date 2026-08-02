@@ -43,7 +43,20 @@ class MainWindowRealtimeMixin:
         client = self.server_api_client
         infos: dict[str, DrawInfo] = {}
         for site in site_list():
-            payload = client.current_draw(site)
+            try:
+                payload = client.current_draw(site)
+            except Exception as exc:
+                previous = getattr(self, "_draw_infos", {}).get(site, DrawInfo(current_period=""))
+                infos[site] = DrawInfo(
+                    current_period=previous.current_period,
+                    next_period=previous.next_period,
+                    next_time=previous.next_time,
+                    next_countdown=previous.next_countdown,
+                    source="unavailable",
+                    last_api_success_at=previous.last_api_success_at,
+                )
+                logger.warning("[%s] current draw is temporarily unavailable: %s", site_label(site), exc)
+                continue
             next_time = None
             raw_next_time = str(payload.get("next_time") or "")
             if raw_next_time:
@@ -68,7 +81,7 @@ class MainWindowRealtimeMixin:
                 self._update_site_card_widgets(site, self._draw_infos.get(site, DrawInfo(current_period="")))
             self._refresh_site_card_selection()
             if hasattr(self, "site_status_label"):
-                self.site_status_label.setText("线路数据已加载")
+                self.site_status_label.setText(self._site_cards_status_text())
             return
 
         while self.site_cards_layout.count():
@@ -85,7 +98,15 @@ class MainWindowRealtimeMixin:
         self._refresh_site_card_selection()
 
         if hasattr(self, "site_status_label"):
-            self.site_status_label.setText("线路数据已加载")
+            self.site_status_label.setText(self._site_cards_status_text())
+
+    def _site_cards_status_text(self) -> str:
+        unavailable_count = sum(
+            info.source == "unavailable" for info in getattr(self, "_draw_infos", {}).values()
+        )
+        if unavailable_count:
+            return f"线路数据已加载；{unavailable_count} 条当前期暂不可用，已保留上次数据"
+        return "线路数据已加载"
 
     def _update_site_card_widgets(self, site: str, info: DrawInfo) -> None:
         widgets = self._site_card_widgets.get(site, {})
@@ -95,6 +116,11 @@ class MainWindowRealtimeMixin:
         widgets["period"].setText(f"当前: {info.current_period or '-'}")
         widgets["next"].setText(f"下期: {info.next_period or '-'}")
         widgets["countdown"].setText(f"倒计时: {self._format_countdown(info.next_countdown)}")
+        notice = widgets.get("notice")
+        if isinstance(notice, QLabel):
+            unavailable = info.source == "unavailable"
+            notice.setVisible(unavailable)
+            notice.setText("当前期暂不可用，保留上次数据" if unavailable else "")
         frame = widgets.get("frame")
         if isinstance(frame, QFrame):
             self._apply_site_card_selection_style(site, frame)
@@ -138,6 +164,11 @@ class MainWindowRealtimeMixin:
         period_lbl = QLabel(f"当前: {info.current_period or '-'}")
         next_lbl = QLabel(f"下期: {info.next_period or '-'}")
         countdown_lbl = QLabel(f"倒计时: {self._format_countdown(info.next_countdown)}")
+        unavailable = info.source == "unavailable"
+        notice_lbl = QLabel("当前期暂不可用，保留上次数据" if unavailable else "")
+        notice_lbl.setStyleSheet(f"color: {THEME['c4']}; font-weight: 600;")
+        notice_lbl.setWordWrap(True)
+        notice_lbl.setVisible(unavailable)
         open_btn = QPushButton("切换")
         open_btn.setMaximumWidth(58)
         open_btn.clicked.connect(lambda checked=False, value=site: self._select_site(value))
@@ -150,6 +181,7 @@ class MainWindowRealtimeMixin:
         layout.addWidget(period_lbl)
         layout.addWidget(next_lbl)
         layout.addWidget(countdown_lbl)
+        layout.addWidget(notice_lbl)
         return frame, {
             "frame": frame,
             "name": name_lbl,
@@ -157,6 +189,7 @@ class MainWindowRealtimeMixin:
             "period": period_lbl,
             "next": next_lbl,
             "countdown": countdown_lbl,
+            "notice": notice_lbl,
         }
 
     def _refresh_site_card_selection(self) -> None:

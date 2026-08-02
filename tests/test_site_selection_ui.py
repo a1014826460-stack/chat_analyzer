@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QGridLayout, QWidget
 
 from app.models import DrawInfo
 from app.ui.main_window_realtime import MainWindowRealtimeMixin
+from app.services.server_api_client import ServerApiError
 
 
 def test_main_window_restores_only_a_known_last_selected_site(monkeypatch):
@@ -49,6 +50,23 @@ def test_render_site_cards_marks_active_site_visually(monkeypatch):
     assert inactive_frame.property("activeSite") is False
     assert "border: 2px" in active_frame.styleSheet()
     assert "background" in active_frame.styleSheet()
+
+
+def test_render_site_cards_marks_unavailable_period_without_discarding_previous_data(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr("app.ui.main_window_realtime.site_list", lambda: ["pc28", "macao"])
+    monkeypatch.setattr("app.ui.main_window_realtime.site_label", lambda site: site)
+
+    window = DummyRealtimeWindow()
+    window._draw_infos["macao"] = DrawInfo(
+        current_period="2",
+        next_period="3",
+        source="unavailable",
+    )
+    window._render_site_cards()
+
+    assert window._site_card_widgets["macao"]["notice"].text() == "当前期暂不可用，保留上次数据"
+    assert "暂不可用" in window.site_status_label.text()
 
 
 
@@ -162,3 +180,46 @@ def test_local_advance_catches_up_only_for_elapsed_intervals():
     assert advanced.next_period == "104"
     assert advanced.start_time == boundary + timedelta(seconds=420)
     assert advanced.next_time == boundary + timedelta(seconds=630)
+
+
+def test_server_draw_fetch_keeps_other_sites_when_one_current_period_is_unavailable(monkeypatch):
+    class Client:
+        def current_draw(self, site):
+            if site == "macao":
+                raise ServerApiError("服务器请求失败 (503): 当前期数据暂不可用")
+            return {"next_period": "1002", "next_time": "2026-08-02T12:03:00"}
+
+    class Window(MainWindowRealtimeMixin):
+        server_api_client = Client()
+        _draw_infos = {"macao": DrawInfo(current_period="1000", next_period="1001")}
+
+    monkeypatch.setattr("app.ui.main_window_realtime.site_list", lambda: ["pc28", "macao"])
+
+    payload = Window()._fetch_server_draw_infos()
+
+    assert payload["pc28"].next_period == "1002"
+    assert payload["macao"].next_period == "1001"
+    assert payload["macao"].source == "unavailable"
+
+
+def test_primary_modules_start_as_a_single_expanded_accordion():
+    from app.ui.auto_bet_panel import AutoBetPanel
+    from app.ui.collapsible_section import CollapsibleSection, ModuleAccordion
+
+    app = QApplication.instance() or QApplication([])
+    site = CollapsibleSection("线路选择", expanded=True)
+    account = CollapsibleSection("账号与数据源")
+    blocked = CollapsibleSection("屏蔽名单")
+    auto_bet = AutoBetPanel()
+    auto_bet.set_expanded(False)
+    accordion = ModuleAccordion(site, account, blocked, auto_bet)
+
+    assert site.is_expanded()
+    assert not account.is_expanded()
+    assert not blocked.is_expanded()
+    assert not auto_bet.is_expanded()
+
+    auto_bet.set_expanded(True)
+
+    assert not site.is_expanded()
+    assert auto_bet.is_expanded()

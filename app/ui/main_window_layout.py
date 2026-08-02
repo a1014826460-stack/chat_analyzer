@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from app.ui.chart_window import ChartWindow
 from app.ui.auto_bet_panel import AutoBetPanel
-from app.ui.collapsible_section import CollapsibleSection
+from app.ui.collapsible_section import CollapsibleSection, ModuleAccordion
 from app.ui.main_window_theme import THEME
 
 
@@ -88,43 +88,24 @@ class MainWindowLayoutMixin:
         left.setSpacing(10)
         self.main_splitter.addWidget(left_scroll)
 
-        site_frame = QFrame()
-        site_frame.setObjectName("siteFrame")
-        self._configure_left_section(site_frame)
-        site_layout = QVBoxLayout(site_frame)
-        site_layout.setContentsMargins(10, 10, 10, 8)
-        site_layout.setSpacing(6)
-        site_title = QLabel("线路选择")
-        site_title.setObjectName("headingLabel")
-        site_layout.addWidget(site_title)
-        self.site_basic_section = CollapsibleSection("基础配置", expanded=True)
-        self.site_advanced_section = CollapsibleSection("高级配置", expanded=False)
-        self.site_actions_section = CollapsibleSection("操作", expanded=False)
-        site_layout.addWidget(self.site_basic_section)
-        site_layout.addWidget(self.site_advanced_section)
-        site_layout.addWidget(self.site_actions_section)
+        self.site_module_section = CollapsibleSection("线路选择", expanded=True)
+        self._configure_left_section(self.site_module_section)
+        site_layout = self.site_module_section.content_layout()
         self.site_cards_layout = QGridLayout()
-        self.site_basic_section.content_layout().addLayout(self.site_cards_layout)
+        site_layout.addLayout(self.site_cards_layout)
         self.site_status_label = QLabel("正在加载线路数据...")
-        self.site_basic_section.content_layout().addWidget(self.site_status_label)
-        self.site_advanced_section.content_layout().addWidget(QLabel("线路刷新状态与代理配置会在此保留显示。"))
+        site_layout.addWidget(self.site_status_label)
         refresh_sites_button = QPushButton("刷新线路")
         refresh_sites_button.clicked.connect(getattr(self, "_refresh_site_cards", lambda: None))
-        self.site_actions_section.content_layout().addWidget(refresh_sites_button)
-        left.addWidget(site_frame)
+        site_layout.addWidget(refresh_sites_button)
+        left.addWidget(self.site_module_section)
 
-        account_box = QGroupBox("账号与数据源")
-        account_outer_layout = QVBoxLayout(account_box)
-        self.account_basic_section = CollapsibleSection("基础配置", expanded=True)
-        self.account_advanced_section = CollapsibleSection("高级配置", expanded=False)
-        self.account_actions_section = CollapsibleSection("操作", expanded=False)
-        account_outer_layout.addWidget(self.account_basic_section)
-        account_outer_layout.addWidget(self.account_advanced_section)
-        account_outer_layout.addWidget(self.account_actions_section)
-        account_basic_content = self.account_basic_section.content_widget()
+        self.account_module_section = CollapsibleSection("账号与数据源")
+        self._configure_left_section(self.account_module_section)
         account_basic_grid = QWidget()
         account_layout = QGridLayout(account_basic_grid)
-        self.account_basic_section.content_layout().addWidget(account_basic_grid)
+        account_content = self.account_module_section.content_layout()
+        account_content.addWidget(account_basic_grid)
         account_layout.setColumnStretch(1, 1)
         account_layout.setColumnMinimumWidth(1, 160)
         self.username_combo = QComboBox()
@@ -146,9 +127,8 @@ class MainWindowLayoutMixin:
         account_layout.addWidget(self.db_status_label, 2, 0, 1, 3)
         resolve_again_button = QPushButton("重新自动定位数据库")
         resolve_again_button.clicked.connect(self._resolve_database)
-        self.account_actions_section.content_layout().addWidget(resolve_again_button)
-        left.addWidget(account_box)
-        self._configure_left_section(account_box)
+        account_content.addWidget(resolve_again_button)
+        left.addWidget(self.account_module_section)
 
         self.fallback_box = QGroupBox("手动数据源")
         fallback_layout = QGridLayout(self.fallback_box)
@@ -167,7 +147,7 @@ class MainWindowLayoutMixin:
         fallback_layout.addWidget(self.manual_db_edit, 0, 1)
         fallback_layout.addWidget(browse_manual_btn, 0, 2)
         fallback_layout.addWidget(use_manual_btn, 1, 2)
-        self.account_advanced_section.content_layout().addWidget(self.fallback_box)
+        account_content.addWidget(self.fallback_box)
 
         filter_box = QGroupBox("筛选条件")
         filter_layout = QVBoxLayout(filter_box)
@@ -215,16 +195,9 @@ class MainWindowLayoutMixin:
         left.addWidget(filter_box)
         self._configure_left_section(filter_box)
 
-        block_box = QGroupBox("屏蔽名单")
-        block_outer_layout = QVBoxLayout(block_box)
-        self.block_basic_section = CollapsibleSection("基础配置", expanded=True)
-        self.block_advanced_section = CollapsibleSection("高级配置", expanded=False)
-        self.block_actions_section = CollapsibleSection("操作", expanded=False)
-        block_outer_layout.addWidget(self.block_basic_section)
-        block_outer_layout.addWidget(self.block_advanced_section)
-        block_outer_layout.addWidget(self.block_actions_section)
-        block_content = self.block_basic_section.content_widget()
-        block_layout = self.block_basic_section.content_layout()
+        self.block_module_section = CollapsibleSection("屏蔽名单")
+        self._configure_left_section(self.block_module_section)
+        block_layout = self.block_module_section.content_layout()
         global_row = QHBoxLayout()
         global_row.addWidget(QLabel("全局"))
         block_layout.addLayout(global_row)
@@ -275,18 +248,23 @@ class MainWindowLayoutMixin:
             min_height=120,
         )
         block_layout.addWidget(self.block_rule_summary_view)
-        self.block_advanced_section.content_layout().addWidget(QLabel("全局名单、群组规则和摘要会在折叠状态下保持原有内容。"))
         apply_block_button = QPushButton("应用当前屏蔽规则")
         apply_block_button.clicked.connect(self._apply_block_rule_from_editor)
-        self.block_actions_section.content_layout().addWidget(apply_block_button)
-        left.addWidget(block_box)
-        self._configure_left_section(block_box)
+        block_layout.addWidget(apply_block_button)
+        left.addWidget(self.block_module_section)
 
         # --- Auto Bet Panel ---
         self.auto_bet_panel = AutoBetPanel()
+        self.auto_bet_panel.set_expanded(False)
         self.auto_bet_panel.setVisible(False)  # hidden until DB is resolved
         left.addWidget(self.auto_bet_panel)
         self._configure_left_section(self.auto_bet_panel)
+        self.primary_module_accordion = ModuleAccordion(
+            self.site_module_section,
+            self.account_module_section,
+            self.block_module_section,
+            self.auto_bet_panel,
+        )
 
         action_box = QGroupBox("状态")
         action_layout = QVBoxLayout(action_box)
