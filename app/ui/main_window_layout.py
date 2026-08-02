@@ -85,7 +85,8 @@ class MainWindowLayoutMixin:
         left_container = QWidget()
         left_scroll.setWidget(left_container)
         left = QVBoxLayout(left_container)
-        left.setSpacing(10)
+        # Keep collapsed primary-module headers visually grouped.
+        left.setSpacing(3)
         self.main_splitter.addWidget(left_scroll)
 
         self.site_module_section = CollapsibleSection("线路选择", expanded=True)
@@ -149,8 +150,9 @@ class MainWindowLayoutMixin:
         fallback_layout.addWidget(use_manual_btn, 1, 2)
         account_content.addWidget(self.fallback_box)
 
-        filter_box = QGroupBox("筛选条件")
-        filter_layout = QVBoxLayout(filter_box)
+        self.filter_module_section = CollapsibleSection("筛选条件")
+        self._configure_left_section(self.filter_module_section)
+        filter_layout = self.filter_module_section.content_layout()
         self.advanced_time_toggle = QPushButton("+ 高级时间筛选")
         self.advanced_time_toggle.setObjectName("toggleBtn")
         self.advanced_time_toggle.clicked.connect(self._toggle_advanced_time)
@@ -192,8 +194,7 @@ class MainWindowLayoutMixin:
         group_bar.addWidget(clear_btn)
         group_bar.addStretch(1)
         filter_layout.addLayout(group_bar)
-        left.addWidget(filter_box)
-        self._configure_left_section(filter_box)
+        left.addWidget(self.filter_module_section)
 
         self.block_module_section = CollapsibleSection("屏蔽名单")
         self._configure_left_section(self.block_module_section)
@@ -262,6 +263,7 @@ class MainWindowLayoutMixin:
         self.primary_module_accordion = ModuleAccordion(
             self.site_module_section,
             self.account_module_section,
+            self.filter_module_section,
             self.block_module_section,
             self.auto_bet_panel,
         )

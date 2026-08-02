@@ -223,3 +223,32 @@ def test_primary_modules_start_as_a_single_expanded_accordion():
 
     assert not site.is_expanded()
     assert auto_bet.is_expanded()
+
+
+def test_primary_module_accordion_includes_filter_conditions():
+    from app.ui.collapsible_section import CollapsibleSection, ModuleAccordion
+
+    app = QApplication.instance() or QApplication([])
+    site = CollapsibleSection("线路选择", expanded=True)
+    account = CollapsibleSection("账号与数据源")
+    filters = CollapsibleSection("筛选条件")
+    blocked = CollapsibleSection("屏蔽名单")
+    auto_bet = CollapsibleSection("自动下注")
+    accordion = ModuleAccordion(site, account, filters, blocked, auto_bet)
+
+    filters.set_expanded(True)
+
+    assert not site.is_expanded()
+    assert not account.is_expanded()
+    assert filters.is_expanded()
+    assert not blocked.is_expanded()
+    assert not auto_bet.is_expanded()
+
+
+def test_analysis_left_primary_modules_use_compact_spacing_and_filter_module_source():
+    from pathlib import Path
+
+    source = Path("app/ui/main_window_layout.py").read_text(encoding="utf-8")
+
+    assert "left.setSpacing(3)" in source
+    assert 'self.filter_module_section = CollapsibleSection("筛选条件")' in source

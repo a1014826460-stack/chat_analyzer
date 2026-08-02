@@ -39,6 +39,7 @@ def test_module_accordion_expands_one_primary_module_without_recreating_content(
     assert field.text() == "retained"
     assert "border-radius" in account.header_button().styleSheet()
     assert account._content_animation.duration() > 0
+    assert "background: #ffffff" in account.content_widget().styleSheet()
 
 
 def test_auto_bet_panel_is_a_primary_collapsible_module():
@@ -50,3 +51,10 @@ def test_auto_bet_panel_is_a_primary_collapsible_module():
     assert isinstance(panel, CollapsibleSection)
     assert panel.header_button().text() == "自动下注"
     assert panel.is_expanded()
+
+
+def test_primary_module_card_uses_compact_header_to_content_spacing():
+    app = QApplication.instance() or QApplication([])
+    section = CollapsibleSection("线路选择", expanded=True)
+
+    assert section.layout().spacing() == 3

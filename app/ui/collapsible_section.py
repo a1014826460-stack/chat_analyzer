@@ -30,12 +30,17 @@ class CollapsibleSection(QWidget):
         )
         self._button.toggled.connect(self.set_expanded)
         self._content = QWidget()
+        self._content.setObjectName("primaryModuleContent")
+        self._content.setStyleSheet(
+            f"QWidget#primaryModuleContent {{ background: {THEME['panel']}; "
+            f"border: 1px solid {THEME['border']}; border-radius: 12px; }}"
+        )
         content_layout = QVBoxLayout(self._content)
         content_layout.setContentsMargins(8, 8, 8, 4)
         content_layout.setSpacing(6)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(3)
         layout.addWidget(self._button)
         layout.addWidget(self._content)
         self._arrow_animation = QPropertyAnimation(self, b"arrow_rotation", self)
