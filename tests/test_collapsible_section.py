@@ -58,3 +58,12 @@ def test_primary_module_card_uses_compact_header_to_content_spacing():
     section = CollapsibleSection("线路选择", expanded=True)
 
     assert section.layout().spacing() == 3
+
+
+def test_collapsed_primary_module_uses_only_its_header_height():
+    app = QApplication.instance() or QApplication([])
+    section = CollapsibleSection("筛选条件")
+
+    assert section.minimumHeight() == 0
+    assert section.minimumSizeHint().height() <= section.header_button().sizeHint().height()
+    assert section.sizeHint().height() <= section.header_button().sizeHint().height()

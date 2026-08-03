@@ -41,6 +41,13 @@ class MainWindowLayoutMixin:
         widget.setMinimumHeight(min_height)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+    def _configure_primary_module(self, widget: CollapsibleSection) -> None:
+        """Allow collapsed modules to shrink to their header instead of 150px."""
+        widget.setMinimumWidth(LEFT_SECTION_MIN_WIDTH)
+        widget.setMaximumWidth(LEFT_SECTION_MAX_WIDTH)
+        widget.setMinimumHeight(0)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
     def _configure_left_control(
         self,
         widget: QWidget,
@@ -90,7 +97,7 @@ class MainWindowLayoutMixin:
         self.main_splitter.addWidget(left_scroll)
 
         self.site_module_section = CollapsibleSection("线路选择", expanded=True)
-        self._configure_left_section(self.site_module_section)
+        self._configure_primary_module(self.site_module_section)
         site_layout = self.site_module_section.content_layout()
         self.site_cards_layout = QGridLayout()
         site_layout.addLayout(self.site_cards_layout)
@@ -102,7 +109,7 @@ class MainWindowLayoutMixin:
         left.addWidget(self.site_module_section)
 
         self.account_module_section = CollapsibleSection("账号与数据源")
-        self._configure_left_section(self.account_module_section)
+        self._configure_primary_module(self.account_module_section)
         account_basic_grid = QWidget()
         account_layout = QGridLayout(account_basic_grid)
         account_content = self.account_module_section.content_layout()
@@ -151,7 +158,7 @@ class MainWindowLayoutMixin:
         account_content.addWidget(self.fallback_box)
 
         self.filter_module_section = CollapsibleSection("筛选条件")
-        self._configure_left_section(self.filter_module_section)
+        self._configure_primary_module(self.filter_module_section)
         filter_layout = self.filter_module_section.content_layout()
         self.advanced_time_toggle = QPushButton("+ 高级时间筛选")
         self.advanced_time_toggle.setObjectName("toggleBtn")
@@ -197,7 +204,7 @@ class MainWindowLayoutMixin:
         left.addWidget(self.filter_module_section)
 
         self.block_module_section = CollapsibleSection("屏蔽名单")
-        self._configure_left_section(self.block_module_section)
+        self._configure_primary_module(self.block_module_section)
         block_layout = self.block_module_section.content_layout()
         global_row = QHBoxLayout()
         global_row.addWidget(QLabel("全局"))
@@ -259,7 +266,7 @@ class MainWindowLayoutMixin:
         self.auto_bet_panel.set_expanded(False)
         self.auto_bet_panel.setVisible(False)  # hidden until DB is resolved
         left.addWidget(self.auto_bet_panel)
-        self._configure_left_section(self.auto_bet_panel)
+        self._configure_primary_module(self.auto_bet_panel)
         self.primary_module_accordion = ModuleAccordion(
             self.site_module_section,
             self.account_module_section,

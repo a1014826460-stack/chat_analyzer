@@ -252,3 +252,4 @@ def test_analysis_left_primary_modules_use_compact_spacing_and_filter_module_sou
 
     assert "left.setSpacing(3)" in source
     assert 'self.filter_module_section = CollapsibleSection("筛选条件")' in source
+    assert "def _configure_primary_module" in source

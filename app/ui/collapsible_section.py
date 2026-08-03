@@ -1,8 +1,8 @@
 """State-preserving animated disclosure containers for primary modules."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, Qt, Signal
-from PySide6.QtWidgets import QToolButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QSize, Qt, Signal
+from PySide6.QtWidgets import QLayout, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 from app.ui.main_window_theme import THEME
 
@@ -41,8 +41,10 @@ class CollapsibleSection(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(3)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
         layout.addWidget(self._button)
         layout.addWidget(self._content)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self._arrow_animation = QPropertyAnimation(self, b"arrow_rotation", self)
         self._arrow_animation.setDuration(160)
         self._arrow_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -64,6 +66,16 @@ class CollapsibleSection(QWidget):
 
     def is_expanded(self) -> bool:
         return self._expanded
+
+    def sizeHint(self) -> QSize:
+        if not self._expanded:
+            return self._button.sizeHint()
+        return super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        if not self._expanded:
+            return self._button.minimumSizeHint()
+        return super().minimumSizeHint()
 
     def get_arrow_rotation(self) -> float:
         return self._arrow_rotation
@@ -103,6 +115,7 @@ class CollapsibleSection(QWidget):
         self._content_animation.setStartValue(start_height)
         self._content_animation.setEndValue(end_height)
         self._content_animation.start()
+        self.updateGeometry()
         self._arrow_animation.stop()
         self._arrow_animation.setStartValue(self._arrow_rotation)
         self._arrow_animation.setEndValue(90.0 if expanded else 0.0)
