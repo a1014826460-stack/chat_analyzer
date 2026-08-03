@@ -48,6 +48,13 @@ class MainWindowLayoutMixin:
         widget.setMinimumHeight(0)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
+    def _configure_left_status(self, widget: QWidget) -> None:
+        """Keep the status card compact instead of consuming scroll-area slack."""
+        widget.setMinimumWidth(LEFT_SECTION_MIN_WIDTH)
+        widget.setMaximumWidth(LEFT_SECTION_MAX_WIDTH)
+        widget.setMinimumHeight(0)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
     def _configure_left_control(
         self,
         widget: QWidget,
@@ -284,7 +291,7 @@ class MainWindowLayoutMixin:
         action_layout.addWidget(self.status_title)
         action_layout.addWidget(self.status_label)
         left.addWidget(action_box)
-        self._configure_left_section(action_box)
+        self._configure_left_status(action_box)
 
         right_container = QWidget()
         right_container.setMinimumWidth(360)

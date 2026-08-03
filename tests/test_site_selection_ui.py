@@ -253,3 +253,12 @@ def test_analysis_left_primary_modules_use_compact_spacing_and_filter_module_sou
     assert "left.setSpacing(3)" in source
     assert 'self.filter_module_section = CollapsibleSection("筛选条件")' in source
     assert "def _configure_primary_module" in source
+
+
+def test_status_card_uses_non_expanding_vertical_size_policy():
+    from pathlib import Path
+
+    source = Path("app/ui/main_window_layout.py").read_text(encoding="utf-8")
+
+    assert "def _configure_left_status" in source
+    assert "self._configure_left_status(action_box)" in source

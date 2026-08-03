@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, QSize, Qt, Signal
-from PySide6.QtWidgets import QLayout, QSizePolicy, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 from app.ui.main_window_theme import THEME
 
@@ -41,7 +41,6 @@ class CollapsibleSection(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(3)
-        layout.setSizeConstraint(QLayout.SetFixedSize)
         layout.addWidget(self._button)
         layout.addWidget(self._content)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)

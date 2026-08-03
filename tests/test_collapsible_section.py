@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QSizePolicy, QVBoxLayout, QWidget
 
 from app.ui.collapsible_section import CollapsibleSection
 
@@ -67,3 +67,25 @@ def test_collapsed_primary_module_uses_only_its_header_height():
     assert section.minimumHeight() == 0
     assert section.minimumSizeHint().height() <= section.header_button().sizeHint().height()
     assert section.sizeHint().height() <= section.header_button().sizeHint().height()
+
+
+def test_primary_modules_keep_a_uniform_width_despite_different_content_sizes():
+    app = QApplication.instance() or QApplication([])
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    modules = []
+    for title, content in (("线路选择", "短"), ("账号与数据源", "很长的内容" * 40)):
+        section = CollapsibleSection(title)
+        section.content_layout().addWidget(QLabel(content))
+        section.setMinimumWidth(360)
+        section.setMaximumWidth(440)
+        section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        layout.addWidget(section)
+        modules.append(section)
+
+    container.resize(440, 300)
+    container.show()
+    app.processEvents()
+
+    assert modules[0].width() == modules[1].width()
+    assert 360 <= modules[0].width() <= 440
