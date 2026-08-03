@@ -218,11 +218,13 @@ class ChartWindow(QWidget):
         logger.debug("Chart rows updated: %d rows", len(rows))
 
     def replace_rows(self, rows: list[dict[str, object]]) -> None:
-        self._period_rows = []
-        self._period_row_indexes = {}
-        self._group_selection_initialized = False
-        self._reset_layers()
-        self._last_period_key = None
+        incoming_period_key = self._period_key_for(rows)
+        if incoming_period_key != self._last_period_key:
+            self._period_rows = []
+            self._period_row_indexes = {}
+            self._group_selection_initialized = False
+            self._reset_layers()
+            self._last_period_key = None
         self.set_rows(rows)
 
     def update_activity(self, rows: list[dict[str, object]]) -> None:
@@ -402,7 +404,11 @@ class ChartWindow(QWidget):
         self.bar_chart.set_layers([], self._last_totals)
 
     def _period_key(self) -> tuple[str, ...]:
-        return tuple(sorted({str(row.get("period", "")).strip() for row in self._period_rows if str(row.get("period", "")).strip()}))
+        return self._period_key_for(self._period_rows)
+
+    @staticmethod
+    def _period_key_for(rows: list[dict[str, object]]) -> tuple[str, ...]:
+        return tuple(sorted({str(row.get("period", "")).strip() for row in rows if str(row.get("period", "")).strip()}))
 
     def _filtered_rows(self) -> list[dict[str, object]]:
         selected = self.selected_groups()

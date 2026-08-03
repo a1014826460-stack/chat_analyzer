@@ -6662,6 +6662,52 @@ def test_chart_window_keeps_current_period_history_across_incremental_set_rows()
     chart.close()
 
 
+def test_chart_window_does_not_reset_layers_or_stats_when_same_period_is_reloaded() -> None:
+    import os
+    from datetime import datetime
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.chart_window import THEME_COLORS, ChartWindow
+
+    app = QApplication.instance() or QApplication([])
+    chart = ChartWindow()
+    chart._stack_timer.stop()
+    first_rows = [
+        {
+            "time": datetime(2026, 8, 3, 10, 0, 0),
+            "group": "一群",
+            "bettor": "甲",
+            "period": "1040954",
+            "play": "大",
+            "amount": 100.0,
+        }
+    ]
+    second_rows = [
+        {
+            "time": datetime(2026, 8, 3, 10, 0, 5),
+            "group": "一群",
+            "bettor": "乙",
+            "period": "1040954",
+            "play": "小",
+            "amount": 30.0,
+        }
+    ]
+
+    chart.set_rows(first_rows)
+    chart.update_activity(first_rows)
+    chart.replace_rows(second_rows)
+    chart.update_activity(second_rows)
+
+    assert [layer.color for layer in chart.bar_chart.layers] == THEME_COLORS[:2]
+    assert chart.bar_chart.current_totals["大"] == 100.0
+    assert chart.bar_chart.current_totals["小"] == 30.0
+    assert "甲" in chart.stats_text_view.toPlainText()
+    assert "乙" in chart.stats_text_view.toPlainText()
+    chart.close()
+
+
 def test_chart_window_stats_text_shows_newest_first_and_preserves_scroll_position() -> None:
     import os
     from datetime import datetime
