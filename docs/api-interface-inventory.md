@@ -1,6 +1,6 @@
 # 对外 API 接口清单
 
-最后审计：2026-08-01。调用链中的 `JWT` 表示 `current_user_id` 依赖（包含签名、过期和 Redis 吊销校验）；`ADMIN` 表示 `X-Admin-Token`。
+最后审计：2026-08-04。调用链中的 `JWT` 表示 `current_user_id` 依赖（包含签名、过期和 Redis 吊销校验）；`ADMIN` 表示 `X-Admin-Token`。
 
 ## FastAPI 入站 REST
 
@@ -20,10 +20,10 @@
 | API-012 | `POST /v1/bets/{id}/confirm|skip|expire` | 面板操作 -> bets 路由 -> sender 队列 | JWT；路径整数、条件状态转换 | 服务端中转；操作写日志。 |
 | API-013 | `GET /v1/bets/statistics|events|events/latest` | 面板轮询 -> bets 路由 -> 订单/事件库 | JWT；分页/站点/日期范围 | 服务端终点。 |
 | API-014 | `GET /v1/audit-events` | 桌面 -> bets 路由 -> 审计库 | JWT；用户隔离 | 服务端终点。 |
-| API-015 | `GET /v1/runtime-logs` | 自动下注面板 -> `ServerApiClient.runtime_logs` -> runtime_logs 路由 | JWT；级别/分类枚举、关键字≤200、时间顺序、游标、limit 1-100 | 服务端终点；返回当前用户的脱敏日志。 |
+| API-015 | `GET /v1/runtime-logs` | 自动下注面板 -> `ServerApiClient.runtime_logs` -> runtime_logs 路由 | JWT；级别/分类枚举、关键字≤200、时间顺序、游标、limit 1-100 | 服务端终点；时间统一以显式 UTC 传输、桌面按北京时间显示/筛选；返回当前用户事件及 `user_id IS NULL` 的脱敏全局服务事件，不返回其他用户事件。策略日志以保存的群名快照附带 `【群组名】【站点 期号】` 上下文。 |
 | API-016 | `GET /health/live` | 负载均衡 -> FastAPI | 无鉴权；固定状态 | 明确运维例外，无业务数据。 |
 | API-017 | `GET /health/ready` | 受限反向代理运维网段 -> FastAPI -> PostgreSQL/Redis | 反向代理 IP 限制；不返回依赖详情 | 明确运维例外。 |
-| API-018 | `GET /v1/draws/{site}/current` | 桌面线路卡片/开奖时钟 -> `ServerApiClient.current_draw` -> draws 路由 -> 共享开奖库 | JWT；site 固定枚举 | 服务端中转；桌面无第三方回退。 |
+| API-018 | `GET /v1/draws/{site}/current` | 桌面线路卡片/开奖时钟 -> `ServerApiClient.current_draw` -> draws 路由 -> 注册开奖源 | JWT；site 固定四站 allowlist；源不可用返回 503 | FastAPI 实时中转；同时返回已开奖的 `current_period` 和唯一允许下注的 `next_period`。桌面无第三方回退，worker 只用 `next_period` 创建和发送订单。 |
 | API-019 | `GET /v1/updates/manifest` | 桌面更新检查 -> `ServerApiClient.update_manifest` -> updates 路由 -> 只读发布目录 `latest.json` | JWT；清单必须为对象，包含合法文件名、正整数大小、64 位 SHA-256 和非空签名；桌面继续执行 Ed25519 验签 | 服务端受控分发。 |
 | API-020 | `GET /v1/updates/files/{file_name}` | 桌面更新下载 -> `ServerApiClient.download_update_file` -> updates 路由 -> 只读发布目录 | JWT；路径解析防穿越；文件名必须等于当前清单引用文件；桌面按签名大小分块落盘并校验 SHA-256 | 服务端二进制代理，无任意 URL/SSRF 输入。 |
 
@@ -31,7 +31,7 @@
 
 | ID | 协议/调用链 | 鉴权和校验 | 中转结论 |
 | --- | --- | --- | --- |
-| OUT-001 | worker -> `history_sources`/`current_period` -> 已注册的 PC28/澳门/澳洲/挪威开奖 HTTPS 源 | 站点来自固定 allowlist；响应解析与超时/重试 | 必须由 worker 中转；客户端不得直连。 |
+| OUT-001 | FastAPI/worker -> `history_sources`/`current_period` -> 已注册的 PC28/澳门/澳洲/挪威开奖 HTTPS 源 | 站点来自固定 allowlist；响应解析与超时/重试；worker 写入脱敏耗时与异常日志 | 必须由服务端中转；客户端不得直连。历史由 worker 入库，当前期由 API-018 实时代理。 |
 | OUT-002 | worker -> `SharedAiClient` -> 服务器环境配置的 AI HTTPS 源 | AI URL/Key 只来自服务端配置；严格 JSON 响应校验 | 必须由 worker 中转。 |
 | OUT-003 | sender worker -> Tencent Cloud Chat REST/WSS | 用户加密 userSig 只在 sender 临时解密；订单授权/状态复核 | 服务端可发送路径；单独审计。 |
 

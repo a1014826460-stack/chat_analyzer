@@ -62,6 +62,7 @@ class MainWindow(
     _server_strategy_save_ready = Signal(object)
     _server_order_action_ready = Signal(object)
     _server_runtime_logs_ready = Signal(object)
+    _server_ai_history_ready = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -151,6 +152,7 @@ class MainWindow(
         self._server_strategy_save_ready.connect(self._handle_server_strategy_save_ready)
         self._server_order_action_ready.connect(self._handle_server_order_action_ready)
         self._server_runtime_logs_ready.connect(self._handle_server_runtime_logs_ready)
+        self._server_ai_history_ready.connect(self._handle_server_ai_history_ready)
         self._auto_bet_timer = QTimer(self)
         self._auto_bet_timer.setInterval(2000)
         self._auto_bet_timer.timeout.connect(self._on_auto_bet_tick)

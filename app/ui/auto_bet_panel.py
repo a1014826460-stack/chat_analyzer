@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
@@ -203,6 +204,7 @@ class AutoBetPanel(CollapsibleSection):
     ai_history_clicked = Signal()
     runtime_log_filters_changed = Signal()
     runtime_log_load_more_clicked = Signal()
+    _BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         # Standalone callers retain the historical visible panel behavior.
@@ -276,12 +278,14 @@ class AutoBetPanel(CollapsibleSection):
 
     def runtime_log_filters(self) -> dict[str, object]:
         level = str(self._runtime_log_level_combo.currentData() or "")
+        category = str(self._runtime_log_category_combo.currentData() or "")
         keyword = self._runtime_log_keyword_edit.text().strip()
         return {
             "level": level or None,
+            "category": category or None,
             "keyword": keyword or None,
-            "start_at": self._runtime_log_start_edit.dateTime().toPython(),
-            "end_at": self._runtime_log_end_edit.dateTime().toPython(),
+            "start_at": self._runtime_log_start_edit.dateTime().toPython().replace(tzinfo=self._BEIJING_TZ),
+            "end_at": self._runtime_log_end_edit.dateTime().toPython().replace(tzinfo=self._BEIJING_TZ),
             "limit": 50,
         }
 
@@ -305,7 +309,7 @@ class AutoBetPanel(CollapsibleSection):
         for item in items[:50]:
             if not isinstance(item, dict):
                 continue
-            created_at = str(item.get("created_at", ""))[:19].replace("T", " ")
+            created_at = self._format_runtime_log_time(item.get("created_at", ""))
             level = str(item.get("level", "INFO"))
             category = str(item.get("category", ""))
             message = str(item.get("message", ""))
@@ -324,6 +328,16 @@ class AutoBetPanel(CollapsibleSection):
         self._runtime_log_load_more_button.setEnabled(has_more)
         self._runtime_log_load_more_button.setVisible(has_more)
         self._runtime_log_status_label.setText("" if items else "没有匹配的运行日志")
+
+    @classmethod
+    def _format_runtime_log_time(cls, raw: object) -> str:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(cls._BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return str(raw)[:19].replace("T", " ")
 
     def _display_group_name(self, record: InjectRecord) -> str:
         group_id = str(getattr(record, "group_id", "") or "").strip()
@@ -537,6 +551,14 @@ class AutoBetPanel(CollapsibleSection):
             return "暂无 AI 预测记录。"
         lines = []
         for record in records:
+            if isinstance(record, dict):
+                created_at = str(record.get("created_at", "") or "-").replace("T", " ")[:19]
+                site = str(record.get("site", "-") or "-")
+                period = str(record.get("period", "-") or "-")
+                event_type = str(record.get("event_type", "AI") or "AI")
+                message = str(record.get("message", "-") or "-")
+                lines.append(f"{created_at} [{site} {period}] {event_type}\n{message}")
+                continue
             action = "预测 " + record.play_type if record.action == "bet" else "跳过本期"
             actual = record.actual_result or "待开奖"
             if record.actual_result:
@@ -989,6 +1011,18 @@ class AutoBetPanel(CollapsibleSection):
         for level in ("DEBUG", "INFO", "WARN", "ERROR"):
             self._runtime_log_level_combo.addItem(level, level)
         runtime_log_filters.addWidget(self._runtime_log_level_combo)
+        runtime_log_filters.addWidget(QLabel("分类:"))
+        self._runtime_log_category_combo = QComboBox()
+        for label, category in (
+            ("下注与结算", "strategy"),
+            ("全部", ""),
+            ("用户操作", "user_action"),
+            ("系统", "system"),
+            ("第三方", "third_party"),
+            ("异常", "exception"),
+        ):
+            self._runtime_log_category_combo.addItem(label, category)
+        runtime_log_filters.addWidget(self._runtime_log_category_combo)
         runtime_log_filters.addWidget(QLabel("关键词:"))
         self._runtime_log_keyword_edit = QLineEdit()
         self._runtime_log_keyword_edit.setPlaceholderText("搜索日志")
@@ -1013,6 +1047,7 @@ class AutoBetPanel(CollapsibleSection):
             self._runtime_log_interval_combo.addItem(label, seconds)
         self._runtime_log_interval_combo.setCurrentIndex(1)
         self._runtime_log_level_combo.currentIndexChanged.connect(self._on_runtime_log_filters_changed)
+        self._runtime_log_category_combo.currentIndexChanged.connect(self._on_runtime_log_filters_changed)
         self._runtime_log_interval_combo.currentIndexChanged.connect(self._on_runtime_log_filters_changed)
         runtime_log_filters.addWidget(self._runtime_log_interval_combo)
         layout.addLayout(runtime_log_filters)

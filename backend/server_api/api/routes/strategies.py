@@ -24,6 +24,7 @@ class AutoBetStrategyRequest(BaseModel):
     enabled: bool = False
     site: str = Field(default="pc28", min_length=1, max_length=32)
     target_groups: list[str] = Field(default_factory=list, max_length=100)
+    target_group_names: dict[str, str] = Field(default_factory=dict, max_length=100)
     history_count: int = Field(default=50, ge=1, le=500)
     confidence_threshold: int = Field(default=45, ge=0, le=100)
     require_confirmation: bool = True
@@ -37,6 +38,7 @@ def serialize(row: AutoBetStrategy | None) -> dict[str, object]:
         "enabled": row.enabled,
         "site": row.site,
         "target_groups": json.loads(row.target_groups_json),
+        "target_group_names": json.loads(row.target_group_names_json or "{}"),
         "history_count": row.history_count,
         "confidence_threshold": row.confidence_threshold,
         "require_confirmation": row.require_confirmation,
@@ -53,21 +55,32 @@ async def get_auto_bet_strategy(session: Session, user_id: UserId):
 async def put_auto_bet_strategy(payload: AutoBetStrategyRequest, session: Session, user_id: UserId):
     row = await session.scalar(select(AutoBetStrategy).where(AutoBetStrategy.user_id == user_id))
     values = payload.model_dump()
-    values["target_groups_json"] = json.dumps(values.pop("target_groups"), ensure_ascii=False, separators=(",", ":"))
+    target_groups = values.pop("target_groups")
+    target_group_names = values.pop("target_group_names")
+    values["target_groups_json"] = json.dumps(target_groups, ensure_ascii=False, separators=(",", ":"))
+    values["target_group_names_json"] = json.dumps(
+        {str(group_id): str(target_group_names.get(str(group_id), group_id)).strip() for group_id in target_groups},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     if row is None:
         row = AutoBetStrategy(user_id=user_id, **values)
         session.add(row)
+        changed = True
     else:
-        for key, value in values.items():
-            setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
-    await RuntimeLogService(session).write(
-        user_id=user_id,
-        level="INFO",
-        category="user_action",
-        message="自动下注策略已保存",
-        details={"enabled": payload.enabled, "site": payload.site},
-    )
+        changed = any(getattr(row, key) != value for key, value in values.items())
+        if changed:
+            for key, value in values.items():
+                setattr(row, key, value)
+            row.updated_at = datetime.utcnow()
+    if changed:
+        await RuntimeLogService(session).write(
+            user_id=user_id,
+            level="INFO",
+            category="user_action",
+            message="自动下注策略已保存",
+            details={"enabled": payload.enabled, "site": payload.site},
+        )
     await session.commit()
     await session.refresh(row)
     return serialize(row)

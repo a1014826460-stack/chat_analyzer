@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import json
 
 from server_api.api.routes.auth import get_session
 from server_api.dependencies import current_user_id
-from server_api.services.runtime_logs import LOG_CATEGORIES, LOG_LEVELS, RuntimeLogService, serialize_runtime_log
+from server_api.db import AutoBetStrategy
+from server_api.services.runtime_logs import LOG_CATEGORIES, LOG_LEVELS, RuntimeLogService, format_runtime_log_for_display
 
 
 router = APIRouter()
@@ -20,7 +23,10 @@ def _parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="时间格式必须为 ISO 8601") from exc
 
@@ -51,8 +57,13 @@ async def get_runtime_logs(
         before_id=before_id,
         limit=limit,
     )
+    strategy = await session.scalar(select(AutoBetStrategy).where(AutoBetStrategy.user_id == user_id))
+    try:
+        group_name_map = json.loads(strategy.target_group_names_json or "{}") if strategy else {}
+    except (TypeError, ValueError):
+        group_name_map = {}
     return {
-        "items": [serialize_runtime_log(row) for row in rows],
+        "items": [format_runtime_log_for_display(row, group_name_map=group_name_map) for row in rows],
         "next_before_id": rows[-1].id if has_more and rows else None,
         "has_more": has_more,
     }

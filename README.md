@@ -64,6 +64,33 @@ python -m venv .venv
 
 `backend/` 提供 FastAPI、PostgreSQL、Redis 和 worker。它统一执行站点开奖/历史抓取、频率分析、在线授权、WSS 凭据加密与服务端发送；客户端通过“帮助 -> 服务器模式”使用机器码和服务端激活码登录，JWT 仅保留在内存。
 
+### 本地开发重启 FastAPI
+
+修改 FastAPI 代码后，在项目根目录使用以下 PowerShell 7 命令重建镜像并只重启 `api` 服务：
+
+```powershell
+Set-Location backend
+docker compose up --build --force-recreate -d --wait api
+Invoke-WebRequest http://127.0.0.1:8080/health/ready
+```
+
+如果只需重启进程且代码与镜像均未变化，可执行：
+
+```powershell
+Set-Location backend
+docker compose restart api
+```
+
+`docker compose restart api` 不会重建镜像，因此修改了 `backend/server_api/` 后必须使用第一组命令。
+
+修改 worker、开奖抓取、自动下注发送或结算代码后，需要同时重建 API 和 worker：
+
+```powershell
+Set-Location backend
+docker compose up --build --force-recreate -d --wait api worker
+Invoke-WebRequest http://127.0.0.1:8080/health/ready
+```
+
 本地启动与生产部署说明见 [`docs/server-deployment.md`](docs/server-deployment.md)。
 
 手工诊断脚本位于 `tools/diagnostics/`，不属于自动化测试套件。它们可能访问本地客户端、数据库或外部服务，应按脚本说明单独运行。

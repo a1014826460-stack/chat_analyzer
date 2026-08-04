@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from server_api.main import create_app
+from server_api.db import StrategyEvent
 from license_test_utils import LicenseSigner
 
 
@@ -23,7 +24,7 @@ def test_bet_order_is_idempotent_owned_and_confirmed_once(tmp_path):
     with TestClient(app) as client:
         owner = _headers(client, signer, "bet-machine-owner")
         other = _headers(client, signer, "bet-machine-other")
-        payload = {"site": "pc28", "period": "1001", "group_id": "group-1", "play_type": "大", "amount": 10}
+        payload = {"site": "pc28", "period": "1001", "group_id": "group-1", "group_name": "测试一群", "play_type": "大", "amount": 10}
         created = client.post("/v1/bets", headers=owner, json=payload)
         duplicate = client.post("/v1/bets", headers=owner, json=payload)
         assert created.status_code == 201
@@ -38,7 +39,9 @@ def test_bet_order_is_idempotent_owned_and_confirmed_once(tmp_path):
         assert [event["action"] for event in events] == ["bet_created", "bet_confirmed"]
         strategy_events = client.get("/v1/bets/events", headers=owner).json()["items"]
         assert [(event["event_type"], event["period"]) for event in strategy_events] == [("confirmed", "1001")]
-        assert "group-1" in strategy_events[0]["message"] and "大10" in strategy_events[0]["message"]
+        assert "测试一群" in strategy_events[0]["message"] and "大10" in strategy_events[0]["message"]
+        runtime_messages = [item["message"] for item in client.get("/v1/runtime-logs", headers=owner).json()["items"]]
+        assert any(message.startswith("【测试一群】【pc28 1001】已确认下注订单：玩法 大10") for message in runtime_messages)
 
 
 def test_concurrent_confirmation_has_exactly_one_winner(tmp_path):
@@ -287,4 +290,36 @@ def test_betting_events_can_be_filtered_since_run_start(tmp_path):
         )
 
         assert response.status_code == 200
-        assert [(item["period"], item["message"]) for item in response.json()["items"]] == [("current", "本次")]
+    assert [(item["period"], item["message"]) for item in response.json()["items"]] == [("current", "本次")]
+
+
+def test_ai_prediction_history_is_authenticated_user_scoped_and_newest_first(tmp_path):
+    signer = LicenseSigner()
+    app = create_app(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
+        jwt_secret="x" * 32,
+        license_public_key_pem=signer.public_key_pem,
+        initialize_schema=True,
+    )
+    with TestClient(app) as client:
+        owner = _headers(client, signer, "ai-history-owner")
+        _headers(client, signer, "ai-history-other")
+
+        async def seed() -> None:
+            async with app.state.session_factory() as session:
+                session.add_all([
+                    StrategyEvent(user_id=1, site="pc28", period="1001", event_type="ai_skip", message="older AI decision"),
+                    StrategyEvent(user_id=1, site="pc28", period="1002", event_type="ai_execute", message="latest AI decision"),
+                    StrategyEvent(user_id=2, site="pc28", period="1003", event_type="ai_execute", message="other user"),
+                    StrategyEvent(user_id=1, site="macao", period="1004", event_type="sent", message="not an AI decision"),
+                ])
+                await session.commit()
+
+        asyncio.run(seed())
+        response = client.get("/v1/bets/ai-history?site=pc28&limit=10", headers=owner)
+
+        assert response.status_code == 200
+        assert [(item["period"], item["message"]) for item in response.json()["items"]] == [
+            ("1002", "latest AI decision"),
+            ("1001", "older AI decision"),
+        ]

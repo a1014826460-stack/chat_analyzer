@@ -59,14 +59,24 @@ class ServerApiClient:
     def wss_credentials(self) -> dict:
         return self._call("GET", "/v1/integrations/wss-credentials", authenticated=True)
 
-    def frequency_analysis(self, site: str, *, history_count: int, confidence_threshold: int) -> dict:
+    def frequency_analysis(
+        self,
+        site: str,
+        *,
+        history_count: int,
+        confidence_threshold: int,
+        target_period: str = "",
+    ) -> dict:
         from urllib.parse import urlencode
 
-        query = urlencode({
+        query_args = {
             "site": site,
             "history_count": int(history_count),
             "confidence_threshold": int(confidence_threshold),
-        })
+        }
+        if target_period:
+            query_args["target_period"] = str(target_period)
+        query = urlencode(query_args)
         return self._call("GET", f"/v1/analysis/frequency?{query}", authenticated=True)
 
     def current_draw(self, site: str) -> dict:
@@ -169,6 +179,12 @@ class ServerApiClient:
         if site:
             path = f"{path}?{urlencode({'site': str(site)})}"
         return int(self._call("GET", path, authenticated=True).get("latest_id", 0) or 0)
+
+    def ai_prediction_history(self, site: str, *, limit: int = 100) -> list[dict]:
+        from urllib.parse import urlencode
+
+        query = urlencode({"site": str(site), "limit": min(max(1, int(limit)), 200)})
+        return list(self._call("GET", f"/v1/bets/ai-history?{query}", authenticated=True).get("items", []))
 
     def runtime_logs(
         self,

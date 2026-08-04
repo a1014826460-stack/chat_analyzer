@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -18,6 +18,54 @@ LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARN", "ERROR"})
 LOG_CATEGORIES = frozenset({"user_action", "system", "exception", "third_party", "strategy"})
 _SECRET_KEY = re.compile(r"(?:authorization|password|secret|token|api[_-]?key|user[_-]?sig|signature|sig)", re.I)
 _SECRET_VALUE = re.compile(r"(?i)(?:bearer\s+|api[_-]?key[=:]\s*|token[=:]\s*)[^\s,;]+")
+_STRATEGY_CONTEXT = re.compile(r"^【[^】]*】【[^】]*】")
+_LEGACY_SENT_CONTEXT = re.compile(r"^WSS 已发送下注：【群组\s*[^】]*】【[^】]*期号\s*[^】]*】")
+_LEGACY_SITE_PERIOD = re.compile(r"站点\s*([^，,]+)[，,]\s*期号\s*([^，,]+)")
+_LEGACY_BRACKET_PERIOD = re.compile(r"【([^】]+)\s+期号\s+([^】]+)】")
+
+
+def format_strategy_context(*, group_names: list[str] | tuple[str, ...] | None, site: str, period: str) -> str:
+    labels = [str(name).strip() for name in (group_names or []) if str(name).strip()]
+    group_label = "、".join(dict.fromkeys(labels)) or "未命名群组"
+    return f"【{group_label}】【{str(site).strip()} {str(period).strip()}】"
+
+
+def format_runtime_log_for_display(row: RuntimeLogEvent, *, group_name_map: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Return a display-safe row, repairing legacy strategy-log context on read."""
+    payload = serialize_runtime_log(row)
+    if row.category != "strategy":
+        return payload
+    details = payload["details"] if isinstance(payload["details"], Mapping) else {}
+    message = str(payload["message"])
+    site = str(details.get("site") or "").strip()
+    period = str(details.get("period") or "").strip()
+    legacy_match = _LEGACY_BRACKET_PERIOD.search(message)
+    if legacy_match:
+        site = site or legacy_match.group(1).strip()
+        period = period or legacy_match.group(2).strip()
+    plain_match = _LEGACY_SITE_PERIOD.search(message)
+    if plain_match:
+        site = site or plain_match.group(1).strip()
+        period = period or plain_match.group(2).strip()
+    group_map = {str(key): str(value).strip() for key, value in dict(group_name_map or {}).items() if str(value).strip()}
+    group_id = str(details.get("group_id") or "").strip()
+    raw_group_names = details.get("group_names") if isinstance(details.get("group_names"), list) else []
+    group_names = [
+        str(value).strip()
+        for value in raw_group_names
+        if str(value).strip() and str(value).strip() != "未命名群组"
+    ]
+    if group_id and group_id in group_map:
+        group_names = [group_map[group_id]]
+    elif not group_names and group_map:
+        group_names = list(dict.fromkeys(group_map.values()))
+    elif not group_names:
+        group_names = [str(value).strip() for value in raw_group_names if str(value).strip()]
+    body = _STRATEGY_CONTEXT.sub("", message).strip()
+    body = _LEGACY_SENT_CONTEXT.sub("WSS 已发送下注：", body).strip()
+    if site and period:
+        payload["message"] = f"{format_strategy_context(group_names=group_names, site=site, period=period)}{body}"
+    return payload
 
 
 def sanitize_url(value: str | None) -> str | None:
@@ -93,7 +141,7 @@ class RuntimeLogService:
         before_id: int | None = None,
         limit: int = 50,
     ) -> tuple[list[RuntimeLogEvent], bool]:
-        conditions = [RuntimeLogEvent.user_id == user_id]
+        conditions = [or_(RuntimeLogEvent.user_id == user_id, RuntimeLogEvent.user_id.is_(None))]
         if level:
             conditions.append(RuntimeLogEvent.level == level)
         if category:
@@ -114,6 +162,7 @@ class RuntimeLogService:
 
 
 def serialize_runtime_log(row: RuntimeLogEvent) -> dict[str, Any]:
+    created_at = row.created_at.replace(tzinfo=timezone.utc)
     return {
         "id": row.id,
         "level": row.level,
@@ -125,5 +174,5 @@ def serialize_runtime_log(row: RuntimeLogEvent) -> dict[str, Any]:
         "status_code": row.status_code,
         "exception_traceback": row.exception_traceback,
         "service_name": row.service_name,
-        "created_at": row.created_at.isoformat(),
+        "created_at": created_at.isoformat(),
     }

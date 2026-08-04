@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server_api.db import BetOrder, StrategyEvent
+from server_api.services.runtime_logs import format_strategy_context
 
 
 def format_amount(value: float) -> str:
@@ -18,7 +19,10 @@ def add_order_event(
     prefix: str,
     detail: str | None = None,
 ) -> None:
-    message = f"{prefix}：群组 {order.group_id}，玩法 {order.play_type}{format_amount(order.amount)}"
+    message = (
+        f"{format_strategy_context(group_names=[order.group_name], site=order.site, period=order.period)}"
+        f"{prefix}：玩法 {order.play_type}{format_amount(order.amount)}"
+    )
     if detail:
         message += f"，{detail}"
     session.add(StrategyEvent(

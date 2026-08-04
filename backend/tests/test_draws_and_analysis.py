@@ -35,12 +35,15 @@ def test_shared_draw_upsert_history_and_frequency_analysis(tmp_path):
         history = client.get("/v1/draws/pc28/history?limit=20", headers=headers)
         assert [item["period"] for item in history.json()["items"]] == ["1", "2", "3", "4"]
 
-        analysis = client.get("/v1/analysis/frequency?site=pc28&history_count=20", headers=headers)
+        analysis = client.get("/v1/analysis/frequency?site=pc28&history_count=20&target_period=5", headers=headers)
         payload = analysis.json()
         assert payload["sample_count"] == 4
         assert payload["number_probabilities"] == {"13": 25.0, "14": 25.0}
         assert payload["excluded_play"] == "小单"
         assert payload["selected_plays"] == ["大双", "小双", "大单"]
+        assert payload["period"] == "5"
+        assert payload["requested_history_count"] == 20
+        assert payload["updated_at"]
 
 
 def test_current_draw_endpoint_is_authenticated_and_proxies_the_registered_source(tmp_path, monkeypatch):
@@ -55,7 +58,11 @@ def test_current_draw_endpoint_is_authenticated_and_proxies_the_registered_sourc
     )
     monkeypatch.setattr(
         "server_api.api.routes.draws.fetch_current_period",
-        lambda site: CurrentPeriod(period="20260731001", betting_deadline_at=datetime(2026, 7, 31, 12, 0)),
+        lambda site: CurrentPeriod(
+            period="20260731002",
+            current_period="20260731001",
+            betting_deadline_at=datetime(2026, 7, 31, 12, 0),
+        ),
     )
     with TestClient(app) as client:
         assert client.get("/v1/draws/pc28/current").status_code == 401
@@ -65,6 +72,28 @@ def test_current_draw_endpoint_is_authenticated_and_proxies_the_registered_sourc
     assert response.status_code == 200
     assert response.json() == {
         "site": "pc28",
-        "next_period": "20260731001",
-        "next_time": "2026-07-31T12:00:00",
+        "current_period": "20260731001",
+        "next_period": "20260731002",
+        "next_time": "2026-07-31T12:00:00+00:00",
     }
+
+
+def test_current_draw_endpoint_rejects_unknown_site_before_fetch(tmp_path, monkeypatch):
+    signer = LicenseSigner()
+    app = create_app(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
+        license_public_key_pem=signer.public_key_pem,
+        initialize_schema=True,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "server_api.api.routes.draws.fetch_current_period",
+        lambda site: calls.append(site),
+    )
+
+    with TestClient(app) as client:
+        headers = _user_headers(client, signer)
+        response = client.get("/v1/draws/unknown/current", headers=headers)
+
+    assert response.status_code == 422
+    assert calls == []

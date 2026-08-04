@@ -17,6 +17,16 @@ CALIBRATION_RETRY_DELAY_SEC = 5
 CALIBRATION_MAX_RETRIES = 3
 
 
+def _parse_server_draw_time(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
 class MainWindowRealtimeMixin:
     @staticmethod
     def _last_selected_site_from_settings(settings: dict[str, object]) -> str:
@@ -61,11 +71,11 @@ class MainWindowRealtimeMixin:
             raw_next_time = str(payload.get("next_time") or "")
             if raw_next_time:
                 try:
-                    next_time = datetime.fromisoformat(raw_next_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                    next_time = _parse_server_draw_time(raw_next_time)
                 except ValueError:
                     next_time = None
             infos[site] = DrawInfo(
-                current_period="",
+                current_period=str(payload.get("current_period") or ""),
                 next_period=str(payload.get("next_period") or ""),
                 next_time=next_time,
                 next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else 0,
@@ -362,9 +372,9 @@ class MainWindowRealtimeMixin:
     def _fetch_server_draw_info(self, site: str) -> DrawInfo:
         payload = self.server_api_client.current_draw(site)
         raw_next_time = str(payload.get("next_time") or "")
-        next_time = datetime.fromisoformat(raw_next_time.replace("Z", "+00:00")).replace(tzinfo=None) if raw_next_time else None
+        next_time = _parse_server_draw_time(raw_next_time)
         return DrawInfo(
-            current_period="",
+            current_period=str(payload.get("current_period") or ""),
             next_period=str(payload.get("next_period") or ""),
             next_time=next_time,
             next_countdown=max(0, int((next_time - datetime.now()).total_seconds())) if next_time else 0,
@@ -498,9 +508,13 @@ class MainWindowRealtimeMixin:
 
     def _is_stale_draw_info(self, site: str, info: DrawInfo) -> bool:
         current = self._draw_infos.get(site)
-        if current is None or not current.current_period or not info.current_period:
+        if current is None:
             return False
-        return self._compare_period_text(info.current_period, current.current_period) < 0
+        current_query_period = MainWindowRealtimeMixin._default_query_period(self, current)
+        incoming_query_period = MainWindowRealtimeMixin._default_query_period(self, info)
+        if not current_query_period or not incoming_query_period:
+            return False
+        return self._compare_period_text(incoming_query_period, current_query_period) < 0
 
     def _schedule_calibration_retry(self, site: str) -> bool:
         retry_count = self._draw_retry_count(site) + 1

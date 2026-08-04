@@ -47,6 +47,9 @@ def test_frequency_qualified_strategy_uses_ai_to_decide_whether_to_create_all_th
             assert {row.play_type for row in orders} == {"小单", "大双", "大单"}
             assert events[-1].event_type == "ai_execute"
             assert "75" in events[-1].message
+            from server_api.services.runtime_logs import RuntimeLogService
+            runtime_rows, _ = await RuntimeLogService(session).page_for_user(user_id=7)
+            assert any(row.category == "strategy" and "AI 执行" in row.message for row in runtime_rows)
         await engine.dispose()
 
     asyncio.run(scenario())

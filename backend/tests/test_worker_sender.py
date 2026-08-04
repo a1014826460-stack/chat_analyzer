@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from server_api.db import BetAttempt, BetOrder, StrategyEvent, WssCredential, create_engine, create_schema, create_session_factory
 from server_api.services.auth import create_activation_code, open_session
 from server_api.services.credentials import save_credentials
+
+
+def test_group_bet_runtime_message_combines_plays_and_includes_site_period():
+    from server_api.workers.sender import build_group_bet_runtime_message
+
+    message = build_group_bet_runtime_message([
+        SimpleNamespace(group_id="207191791", site="pc28", period="3465231", play_type="大单", amount=10, status="sent"),
+        SimpleNamespace(group_id="207191791", site="pc28", period="3465231", play_type="大双", amount=10, status="sent"),
+        SimpleNamespace(group_id="207191791", site="pc28", period="3465231", play_type="小单", amount=10, status="sent"),
+    ])
+
+    assert message == "【未命名群组】【pc28 3465231】WSS 已发送下注：【下注玩法 大单10、大双10、小单10】"
 
 
 def test_sender_decrypts_credentials_only_for_confirmed_order_and_records_success():
@@ -34,7 +47,7 @@ def test_sender_decrypts_credentials_only_for_confirmed_order_and_records_succes
                 session, user_id=user.id, appid="10001", accid="accid", user_sig="private-sig", encryption_secret="s" * 32
             )
             order = BetOrder(
-                user_id=user.id, site="pc28", period="200", group_id="group-1", play_type="大", amount=10, status="confirmed"
+                user_id=user.id, site="pc28", period="200", group_id="group-1", group_name="测试一群", play_type="大", amount=10, status="confirmed"
             )
             session.add(order)
             await session.commit()
@@ -50,7 +63,10 @@ def test_sender_decrypts_credentials_only_for_confirmed_order_and_records_succes
             assert [(attempt.status, attempt.error_message) for attempt in attempts] == [("sent", None)]
             events = (await session.scalars(select(StrategyEvent).where(StrategyEvent.user_id == user.id))).all()
             assert [(event.event_type, event.period) for event in events] == [("sent", "200")]
-            assert "group-1" in events[0].message and "大10" in events[0].message
+            assert "测试一群" in events[0].message and "大10" in events[0].message
+            from server_api.services.runtime_logs import RuntimeLogService
+            runtime_rows, _ = await RuntimeLogService(session).page_for_user(user_id=user.id)
+            assert any(row.category == "strategy" and "WSS 已发送下注" in row.message for row in runtime_rows)
         await engine.dispose()
 
     asyncio.run(scenario())
@@ -135,6 +151,31 @@ def test_expire_pending_orders_marks_only_orders_past_confirmation_deadline():
             assert await expire_pending_orders(session) == 1
             statuses = (await session.scalars(select(BetOrder.status).order_by(BetOrder.period))).all()
             assert statuses == ["expired", "pending_confirmation"]
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_expiring_non_current_confirmed_order_records_runtime_result():
+    from server_api.services.runtime_logs import RuntimeLogService
+    from server_api.workers.sender import expire_non_current_confirmed_orders
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            code = await create_activation_code(session, activation_code="NONCURRENT-CODE", expires_in_seconds=3600)
+            user, _ = await open_session(session, machine_code="noncurrent-machine", activation_code="NONCURRENT-CODE")
+            session.add(BetOrder(
+                user_id=user.id, site="pc28", period="401", group_id="group", play_type="大", amount=1,
+                status="confirmed",
+            ))
+            await session.commit()
+
+            assert await expire_non_current_confirmed_orders(session, {"pc28": "402"}) == 1
+            runtime_rows, _ = await RuntimeLogService(session).page_for_user(user_id=user.id)
+            assert any(row.category == "strategy" and "下注已过期" in row.message for row in runtime_rows)
         await engine.dispose()
 
     asyncio.run(scenario())

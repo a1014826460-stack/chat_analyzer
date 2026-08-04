@@ -4,7 +4,7 @@ import asyncio
 
 from sqlalchemy import select
 
-from server_api.db import DrawResult, create_engine, create_schema, create_session_factory
+from server_api.db import DrawResult, RuntimeLogEvent, create_engine, create_schema, create_session_factory
 
 
 def test_crawler_worker_normalizes_and_upserts_shared_draws():
@@ -75,11 +75,11 @@ def test_worker_cycle_crawls_sites_and_sends_only_confirmed_orders(monkeypatch):
         )
         await run_cycle(
             factory,
-            fetch_records=lambda site, count: [{"site": site, "period": "302", "sum": 14}],
+            fetch_records=lambda site, count: [{"site": site, "period": "299", "sum": 14}],
             sender_factory=RecordingSender,
         )
         async with factory() as session:
-            rows = (await session.scalars(select(DrawResult).where(DrawResult.period == "302"))).all()
+            rows = (await session.scalars(select(DrawResult).where(DrawResult.period == "299"))).all()
             orders = (await session.scalars(select(BetOrder).order_by(BetOrder.period))).all()
             assert len(rows) == 1
             assert [order.status for order in orders] == ["sent", "pending_confirmation"]
@@ -107,5 +107,146 @@ def test_worker_cycle_returns_without_work_when_redis_lock_is_owned():
 
         await run_cycle(factory, fetch_records=fetch_records, redis=redis)
         assert called is False
+
+    asyncio.run(scenario())
+
+
+def test_worker_cycle_never_sends_target_period_at_or_before_latest_draw(monkeypatch):
+    from server_api.worker import run_cycle
+
+    class RecordingSender:
+        sends: list[tuple[str, str, float]] = []
+
+        def __init__(self, *_: str) -> None:
+            pass
+
+        async def send_group_bet(self, group_id: str, play_type: str, amount: float) -> bool:
+            type(self).sends.append((group_id, play_type, amount))
+            return True
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            from server_api.db import BetOrder
+            from server_api.services.auth import create_activation_code, open_session
+            from server_api.services.credentials import save_credentials
+
+            await create_activation_code(session, activation_code="STALE-CODE", expires_in_seconds=3600)
+            user, _ = await open_session(session, machine_code="stale-machine", activation_code="STALE-CODE")
+            await save_credentials(
+                session,
+                user_id=user.id,
+                appid="10001",
+                accid="accid",
+                user_sig="sig",
+                encryption_secret="development-credential-encryption-secret",
+            )
+            session.add(BetOrder(
+                user_id=user.id,
+                site="pc28",
+                period="301",
+                group_id="group",
+                play_type="大",
+                amount=2,
+                status="confirmed",
+            ))
+            await session.commit()
+
+        monkeypatch.setattr("server_api.worker.site_list", lambda: ["pc28"])
+        monkeypatch.setattr(
+            "server_api.worker.fetch_current_period",
+            lambda site: type(
+                "Current",
+                (),
+                {"current_period": "300", "period": "301", "betting_deadline_at": None},
+            )(),
+        )
+        await run_cycle(
+            factory,
+            fetch_records=lambda site, count: [{"site": site, "period": "302", "sum": 14}],
+            sender_factory=RecordingSender,
+        )
+
+        async with factory() as session:
+            from server_api.db import BetOrder
+
+            order = await session.scalar(select(BetOrder))
+            assert order.status == "expired"
+            assert RecordingSender.sends == []
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_worker_cycle_records_sanitized_third_party_draw_sync_metrics(monkeypatch):
+    import json
+
+    from server_api.worker import run_cycle
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        monkeypatch.setattr("server_api.worker.site_list", lambda: ["macao"])
+        monkeypatch.setattr(
+            "server_api.worker.fetch_current_period",
+            lambda site: type("Current", (), {"period": "1065639", "betting_deadline_at": None})(),
+        )
+
+        await run_cycle(
+            factory,
+            fetch_records=lambda site, count: [{"site": site, "period": "1065638", "sum": 21}],
+        )
+
+        async with factory() as session:
+            row = await session.scalar(select(RuntimeLogEvent).where(RuntimeLogEvent.category == "third_party"))
+            assert row is not None
+            assert row.user_id is None
+            assert row.level == "DEBUG"
+            assert row.status_code == 200
+            assert row.duration_ms is not None and row.duration_ms >= 0
+            assert row.request_url == "https://macao.zhifu.qpon/api/openApi/lottery/draw"
+            details = json.loads(row.details_json)
+            assert details["site"] == "macao"
+            assert details["records_written"] == 1
+            assert details["current_period"] == "1065639"
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_worker_cycle_records_exception_and_continues_with_other_sites(monkeypatch):
+    from server_api.worker import run_cycle
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        monkeypatch.setattr("server_api.worker.site_list", lambda: ["pc28", "macao"])
+        monkeypatch.setattr(
+            "server_api.worker.fetch_current_period",
+            lambda site: type("Current", (), {"period": f"{site}-current", "betting_deadline_at": None})(),
+        )
+
+        def fetch_records(site: str, count: int):
+            if site == "pc28":
+                raise RuntimeError("upstream token=raw-secret")
+            return [{"site": site, "period": "1065638", "sum": 21}]
+
+        await run_cycle(factory, fetch_records=fetch_records)
+
+        async with factory() as session:
+            rows = (await session.scalars(select(RuntimeLogEvent).order_by(RuntimeLogEvent.id))).all()
+            failed = next(row for row in rows if row.category == "exception")
+            succeeded = next(row for row in rows if row.category == "third_party")
+            assert failed.level == "ERROR"
+            assert failed.request_url == "https://jnd28-yc.vip/api/dashboard"
+            assert failed.exception_traceback and "RuntimeError" in failed.exception_traceback
+            assert "raw-secret" not in failed.exception_traceback
+            assert "PC28" in failed.message
+            assert "澳门" in succeeded.message
+        await engine.dispose()
 
     asyncio.run(scenario())

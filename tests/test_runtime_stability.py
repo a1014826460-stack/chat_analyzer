@@ -156,19 +156,22 @@ def test_server_strategy_save_is_coalesced_and_never_calls_http_from_the_ui_hand
             return SimpleNamespace(add_done_callback=lambda _: None)
 
     window = SimpleNamespace(
+        auto_bet_panel=SimpleNamespace(_group_names={"g1": "测试一群"}),
         _worker=Worker(),
         server_api_client=SimpleNamespace(save_strategy=lambda payload: saved.append(payload)),
         _server_strategy_save_in_progress=False,
         server_strategy_debounce_seconds=60,
     )
 
-    MainWindowDataMixin._schedule_server_strategy_save(window, {"history_count": 50})
-    MainWindowDataMixin._schedule_server_strategy_save(window, {"history_count": 100})
+    MainWindowDataMixin._schedule_server_strategy_save(window, {"history_count": 50, "target_groups": ["g1"]})
+    MainWindowDataMixin._schedule_server_strategy_save(window, {"history_count": 100, "target_groups": ["g1"]})
 
     assert len(submitted) == 0
     assert saved == []
     MainWindowDataMixin._submit_pending_server_strategy_save(window)
     assert len(submitted) == 1
+    submitted[0]()
+    assert saved == [{"history_count": 100, "target_groups": ["g1"], "target_group_names": {"g1": "测试一群"}}]
 
 
 def test_server_auto_bet_stop_persists_disabled_strategy_and_reverts_ui_on_failure():
@@ -553,6 +556,71 @@ def test_handle_server_frequency_ready_updates_probability_cards():
     assert calls == [payload]
 
 
+def test_server_frequency_poll_uses_current_draw_period_for_dynamic_probability_cards():
+    from types import SimpleNamespace
+    from app.models.auto_bet import StrategyConfig
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = []
+
+    class Worker:
+        def submit(self, callback):
+            calls.append(callback())
+            return SimpleNamespace(add_done_callback=lambda _: None)
+
+    panel = SimpleNamespace(get_config=lambda: StrategyConfig(site="pc28", ai_history_count=50, ai_confidence_threshold=45))
+    window = SimpleNamespace(
+        server_mode_settings=SimpleNamespace(enabled=True),
+        auto_bet_panel=panel,
+        server_api_client=SimpleNamespace(
+            is_authenticated=True,
+            frequency_analysis=lambda *args, **kwargs: calls.append((args, kwargs)) or {},
+        ),
+        _worker=Worker(),
+        _draw_infos={"pc28": SimpleNamespace(next_period="3463001")},
+        _server_frequency_poll_in_progress=False,
+    )
+
+    MainWindowDataMixin._refresh_auto_bet_frequency_analysis(window, "pc28", force=True)
+
+    assert calls[-2] == (("pc28",), {"history_count": 50, "confidence_threshold": 45, "target_period": "3463001"})
+
+
+def test_server_mode_ai_history_loads_from_api_without_disabling_the_running_panel():
+    from types import SimpleNamespace
+    from app.models.auto_bet import StrategyConfig
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    shown = []
+
+    class Future:
+        def __init__(self, result):
+            self._result = result
+        def result(self):
+            return self._result
+        def add_done_callback(self, callback):
+            callback(self)
+
+    class Worker:
+        def submit(self, callback):
+            return Future(callback())
+
+    panel = SimpleNamespace(
+        get_config=lambda: StrategyConfig(site="pc28"),
+        show_ai_history=shown.append,
+    )
+    window = SimpleNamespace(
+        server_mode_settings=SimpleNamespace(enabled=True),
+        auto_bet_panel=panel,
+        server_api_client=SimpleNamespace(is_authenticated=True, ai_prediction_history=lambda site, limit: [{"site": site}]),
+        _worker=Worker(),
+    )
+
+    MainWindowDataMixin._on_show_ai_history(window)
+
+    assert shown == [[{"site": "pc28"}]]
+
+
 def test_server_event_handler_hides_events_created_before_current_run_start():
     from datetime import datetime
     from types import SimpleNamespace
@@ -749,6 +817,29 @@ def test_server_event_handler_reenters_high_frequency_refresh_on_key_activity():
     ]})
 
     assert calls == [("log", "AI 执行"), ("statistics", True), ("frequency", "pc28", True)]
+
+
+def test_server_owned_runtime_log_does_not_duplicate_strategy_event_in_local_log():
+    from types import SimpleNamespace
+    from app.ui.main_window_data import MainWindowDataMixin
+
+    calls = []
+    window = SimpleNamespace(
+        server_mode_settings=SimpleNamespace(enabled=True),
+        auto_bet_panel=SimpleNamespace(append_log=lambda record: calls.append(("log", record.content))),
+        _server_event_poll_in_progress=True,
+        _server_event_cursor=0,
+        _server_event_seen_keys=set(),
+        _refresh_server_runtime_logs=lambda force=False: calls.append(("runtime_logs", force)),
+        _refresh_server_statistics=lambda force=False: calls.append(("statistics", force)),
+        _refresh_auto_bet_frequency_analysis=lambda site, force=False: calls.append(("frequency", site, force)),
+    )
+
+    MainWindowDataMixin._handle_server_betting_events_ready(window, {"items": [
+        {"id": 1, "site": "pc28", "period": "3462600", "event_type": "ai_execute", "message": "AI 执行"},
+    ]})
+
+    assert calls == [("runtime_logs", True), ("statistics", True), ("frequency", "pc28", True)]
 
 
 @pytest.mark.skip(reason="desktop local auto-bet polling was removed; server polling has separate coverage")

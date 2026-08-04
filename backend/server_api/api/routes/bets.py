@@ -25,29 +25,73 @@ class BetRequest(BaseModel):
     site: str = Field(min_length=1, max_length=32)
     period: str = Field(min_length=1, max_length=64)
     group_id: str = Field(min_length=1, max_length=255)
+    group_name: str = Field(default="未命名群组", min_length=1, max_length=255)
     play_type: str = Field(min_length=1, max_length=16)
     amount: float = Field(gt=0)
     confirmation_timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
 
 
 def serialize(row: BetOrder) -> dict[str, object]:
-    return {"id": row.id, "site": row.site, "period": row.period, "group_id": row.group_id, "play_type": row.play_type, "amount": row.amount, "status": row.status, "confirmation_deadline_at": row.confirmation_deadline_at.isoformat() if row.confirmation_deadline_at else None}
+    return {"id": row.id, "site": row.site, "period": row.period, "group_id": row.group_id, "group_name": row.group_name, "play_type": row.play_type, "amount": row.amount, "status": row.status, "confirmation_deadline_at": row.confirmation_deadline_at.isoformat() if row.confirmation_deadline_at else None}
 
 
-async def audit(session: AsyncSession, user_id: int, action: str, bet_id: int) -> None:
-    session.add(AuditEvent(user_id=user_id, action=action, resource_type="bet_order", resource_id=str(bet_id)))
+async def audit(session: AsyncSession, user_id: int, action: str, order: BetOrder) -> None:
+    session.add(AuditEvent(user_id=user_id, action=action, resource_type="bet_order", resource_id=str(order.id)))
+    action_message = {
+        "bet_created": "已创建下注订单",
+        "bet_confirmed": "已确认下注订单",
+        "bet_skipped": "已跳过下注订单",
+        "bet_expired": "下注订单已过期",
+    }.get(action, action)
     await RuntimeLogService(session).write(
         user_id=user_id,
         level="INFO",
         category="user_action",
-        message={
-            "bet_created": "已创建下注订单",
-            "bet_confirmed": "已确认下注订单",
-            "bet_skipped": "已跳过下注订单",
-            "bet_expired": "下注订单已过期",
-        }.get(action, action),
-        details={"bet_id": bet_id, "action": action},
+        message=(
+            f"【{order.group_name or order.group_id}】【{order.site} {order.period}】"
+            f"{action_message}：玩法 {order.play_type}{order.amount:g}"
+        ),
+        details={
+            "bet_id": order.id,
+            "action": action,
+            "site": order.site,
+            "period": order.period,
+            "group_id": order.group_id,
+            "group_name": order.group_name,
+            "play_type": order.play_type,
+            "amount": order.amount,
+        },
     )
+
+
+@router.get("/v1/bets/ai-history")
+async def ai_prediction_history(
+    session: Session,
+    user_id: UserId,
+    site: str = Query(..., min_length=1, max_length=32),
+    limit: int = Query(100, ge=1, le=200),
+):
+    events = (await session.scalars(
+        select(StrategyEvent)
+        .where(
+            StrategyEvent.user_id == user_id,
+            StrategyEvent.site == site,
+            StrategyEvent.event_type.in_(("ai_execute", "ai_skip", "ai_error")),
+        )
+        .order_by(StrategyEvent.id.desc())
+        .limit(limit)
+    )).all()
+    return {"items": [
+        {
+            "id": event.id,
+            "site": event.site,
+            "period": event.period,
+            "event_type": event.event_type,
+            "message": event.message,
+            "created_at": event.created_at.isoformat(),
+        }
+        for event in events
+    ]}
 
 
 @router.post("/v1/bets", status_code=status.HTTP_201_CREATED)
@@ -66,7 +110,7 @@ async def create_bet(payload: BetRequest, response: Response, session: Session, 
     row = BetOrder(user_id=user_id, **data)
     session.add(row)
     await session.flush()
-    await audit(session, user_id, "bet_created", row.id)
+    await audit(session, user_id, "bet_created", row)
     await session.commit()
     await session.refresh(row)
     return serialize(row)
@@ -89,7 +133,7 @@ async def confirm_bet(bet_id: int, session: Session, user_id: UserId):
     if updated.rowcount != 1:
         await session.rollback()
         raise HTTPException(status_code=409, detail="订单状态不允许确认")
-    await audit(session, user_id, "bet_confirmed", row.id)
+    await audit(session, user_id, "bet_confirmed", row)
     add_order_event(session, row, event_type="confirmed", prefix="客户端已确认下注")
     await session.commit()
     await session.refresh(row)
@@ -120,7 +164,7 @@ async def _transition_pending_order(
     if updated.rowcount != 1:
         await session.rollback()
         raise HTTPException(status_code=409, detail="订单状态不允许此操作")
-    await audit(session, user_id, audit_action, bet_id)
+    await audit(session, user_id, audit_action, row)
     add_order_event(session, row, event_type=status_value, prefix=event_prefix)
     await session.commit()
     await session.refresh(row)

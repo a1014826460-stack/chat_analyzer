@@ -207,12 +207,41 @@ def test_auto_bet_panel_runtime_log_controls_default_to_five_seconds_and_page_re
     panel = AutoBetPanel()
 
     assert panel.runtime_log_refresh_interval_seconds() == 5
-    assert panel.runtime_log_filters()["start_at"] < panel.runtime_log_filters()["end_at"]
+    filters = panel.runtime_log_filters()
+    assert filters["category"] == "strategy"
+    assert filters["start_at"] < filters["end_at"]
+    panel._runtime_log_category_combo.setCurrentIndex(
+        panel._runtime_log_category_combo.findData("exception")
+    )
+    assert panel.runtime_log_filters()["category"] == "exception"
     panel.apply_runtime_log_page({"items": [{"id": 2, "level": "INFO", "message": "one"}], "next_before_id": 2, "has_more": True}, replace=True)
     panel.apply_runtime_log_page({"items": [{"id": 1, "level": "ERROR", "message": "two"}], "next_before_id": 1, "has_more": True}, replace=False)
 
     assert panel.runtime_log_row_count() == 2
     assert panel.runtime_log_before_id() == 1
+
+
+def test_auto_bet_panel_renders_server_utc_runtime_logs_as_beijing_time():
+    from PySide6.QtWidgets import QApplication
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoBetPanel()
+
+    panel.apply_runtime_log_page({
+        "items": [{
+            "id": 1,
+            "created_at": "2026-08-04T00:08:52+00:00",
+            "level": "INFO",
+            "category": "strategy",
+            "message": "【测试一群】【pc28 3465235】频率未达阈值",
+        }],
+        "has_more": False,
+    }, replace=True)
+
+    assert panel._log_edit.toPlainText() == (
+        "2026-08-04 08:08:52 [INFO] [strategy] 【测试一群】【pc28 3465235】频率未达阈值"
+    )
 
 
 def test_auto_bet_panel_shows_target_group_lock_hint_while_running():
@@ -492,6 +521,22 @@ def test_auto_bet_panel_formats_recent_ai_prediction_history():
     assert "置信度 78/100" in text
     assert "实际 大双" in text
     assert "方向命中 / 精确未中" in text
+
+
+def test_auto_bet_panel_formats_server_owned_ai_prediction_history():
+    from app.ui.auto_bet_panel import AutoBetPanel
+
+    text = AutoBetPanel.format_ai_history([{
+        "created_at": "2026-08-03T15:46:34",
+        "site": "pc28",
+        "period": "1001",
+        "event_type": "ai_execute",
+        "message": "AI 执行（置信度 78/100）：方向占优",
+    }])
+
+    assert "[pc28 1001]" in text
+    assert "AI 执行" in text
+    assert "方向占优" in text
 
 
 def test_ai_status_log_shows_site_period_and_group_names():

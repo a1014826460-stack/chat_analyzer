@@ -808,6 +808,9 @@ class MainWindowDataMixin:
                         site,
                         history_count=config.ai_history_count,
                         confidence_threshold=config.ai_confidence_threshold,
+                        target_period=target_period or str(
+                            getattr(getattr(self, "_draw_infos", {}).get(site), "next_period", "") or ""
+                        ),
                     )
                 except Exception as exc:
                     return {"error": exc}
@@ -1300,24 +1303,30 @@ class MainWindowDataMixin:
                 seen_keys.add(event_key)
                 if len(seen_keys) > 1000:
                     self._server_event_seen_keys = set(list(seen_keys)[-500:])
-            panel.append_log(InjectRecord(
-                ts=datetime.now(),
-                group_name="",
-                group_id="",
-                play_type="",
-                amount=0,
-                success=event_type not in {"ai_error"},
-                content=message,
-                error="",
-                site=site,
-                period=period,
-            ))
+            # Server-mode event rows are already persisted as runtime logs. Keep
+            # this legacy append path only for non-server callers to avoid two
+            # render paths showing the same operational event.
+            if not bool(getattr(getattr(self, "server_mode_settings", None), "enabled", False)):
+                panel.append_log(InjectRecord(
+                    ts=datetime.now(),
+                    group_name="",
+                    group_id="",
+                    play_type="",
+                    amount=0,
+                    success=event_type not in {"ai_error"},
+                    content=message,
+                    error="",
+                    site=site,
+                    period=period,
+                ))
             if event_type in key_activity_types:
                 activity_sites.add(site)
             cursor = event_id
         self._server_event_cursor = cursor
         if activity_sites:
             MainWindowDataMixin._arm_auto_bet_refresh_burst(self)
+            if hasattr(self, "_refresh_server_runtime_logs"):
+                self._refresh_server_runtime_logs(force=True)
             if hasattr(self, "_refresh_server_statistics"):
                 self._refresh_server_statistics(force=True)
             if hasattr(self, "_refresh_auto_bet_frequency_analysis"):
@@ -1348,7 +1357,16 @@ class MainWindowDataMixin:
 
     def _schedule_server_strategy_save(self, payload: dict[str, object]) -> None:
         """Coalesce UI configuration bursts into background API writes."""
-        self._server_strategy_pending_payload = dict(payload)
+        enriched = dict(payload)
+        target_groups = [str(group_id) for group_id in enriched.get("target_groups", [])]
+        panel = getattr(self, "auto_bet_panel", None)
+        names = getattr(panel, "_group_names", {}) if panel is not None else {}
+        if isinstance(names, dict):
+            enriched["target_group_names"] = {
+                group_id: str(names.get(group_id, group_id)).strip() or group_id
+                for group_id in target_groups
+            }
+        self._server_strategy_pending_payload = enriched
         if getattr(self, "_server_strategy_save_in_progress", False):
             return
         timer = getattr(self, "_server_strategy_timer", None)
@@ -1506,13 +1524,52 @@ class MainWindowDataMixin:
             service.skip_ai_bet(*pending_key)
 
     def _on_show_ai_history(self) -> None:
-        service = getattr(self, "auto_bet_service", None)
         panel = getattr(self, "auto_bet_panel", None)
+        if panel is None or not hasattr(panel, "show_ai_history"):
+            return
+        if getattr(self, "server_mode_settings", None) and self.server_mode_settings.enabled:
+            client = getattr(self, "server_api_client", None)
+            worker = getattr(self, "_worker", None)
+            config = panel.get_config() if hasattr(panel, "get_config") else None
+            if client is None or worker is None or config is None or not getattr(client, "is_authenticated", False):
+                return
+
+            def load_history() -> list[dict]:
+                return client.ai_prediction_history(config.site, limit=100)
+
+            try:
+                future = worker.submit(load_history)
+            except Exception:
+                logger.debug("Unable to submit server AI history request", exc_info=True)
+                return
+
+            def forward_result(done_future) -> None:
+                try:
+                    records = done_future.result()
+                except Exception as exc:
+                    records = {"error": exc}
+                signal = getattr(self, "_server_ai_history_ready", None)
+                if signal is not None and hasattr(signal, "emit"):
+                    signal.emit(records)
+                else:
+                    MainWindowDataMixin._handle_server_ai_history_ready(self, records)
+
+            future.add_done_callback(forward_result)
+            return
+        service = getattr(self, "auto_bet_service", None)
         store = getattr(service, "_ai_prediction_store", None) if service is not None else None
-        if panel is None or store is None or not hasattr(panel, "show_ai_history"):
+        if store is None:
             return
         cfg = service.config
         panel.show_ai_history(store.recent_records(cfg.site, 100))
+
+    def _handle_server_ai_history_ready(self, records: object) -> None:
+        if isinstance(records, dict) and records.get("error") is not None:
+            logger.debug("Unable to load server AI history: %s", records["error"])
+            return
+        panel = getattr(self, "auto_bet_panel", None)
+        if panel is not None and hasattr(panel, "show_ai_history") and isinstance(records, list):
+            panel.show_ai_history(records)
 
     def _on_auto_bet_config_changed(self, config: object) -> None:
         """Save auto bet config to settings."""
@@ -1672,3 +1729,17 @@ class MainWindowDataMixin:
             self._on_auto_bet_config_changed(config)
         if service is not None and hasattr(service, "set_group_names"):
             service.set_group_names({group_id: group_name for group_id, group_name in groups})
+        if (
+            groups
+            and getattr(getattr(self, "server_mode_settings", None), "enabled", False)
+            and hasattr(self, "_schedule_server_strategy_save")
+        ):
+            self._schedule_server_strategy_save({
+                "enabled": config.enabled,
+                "site": config.site,
+                "target_groups": config.target_groups,
+                "history_count": config.ai_history_count,
+                "confidence_threshold": config.ai_confidence_threshold,
+                "require_confirmation": config.ai_require_confirmation,
+                "bet_amount": config.bet_amount,
+            })

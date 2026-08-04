@@ -5815,6 +5815,82 @@ def test_main_window_stale_calibration_response_retries_without_rollback() -> No
     assert dummy._refreshing_sites == set()
 
 
+def test_main_window_converts_server_utc_draw_deadline_to_local_time() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    raw_deadline = "2026-08-03T22:15:00+00:00"
+    dummy = SimpleNamespace(
+        server_api_client=SimpleNamespace(
+            current_draw=lambda site: {
+                "current_period": "3465219",
+                "next_period": "3465220",
+                "next_time": raw_deadline,
+            }
+        )
+    )
+
+    info = MainWindowRealtimeMixin._fetch_server_draw_info(dummy, "pc28")
+
+    expected = datetime.fromisoformat(raw_deadline).astimezone().replace(tzinfo=None)
+    assert info.next_time == expected
+    assert info.current_period == "3465219"
+    assert info.next_period == "3465220"
+
+
+def test_main_window_stale_calibration_next_period_retries_without_clearing_chart() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.models import DrawInfo
+    from app.ui.main_window_realtime import MainWindowRealtimeMixin
+
+    chart_replacements: list[list[dict]] = []
+    current = DrawInfo(
+        current_period="3465209",
+        next_period="3465210",
+        next_countdown=200,
+        source="inferred",
+    )
+    dummy = SimpleNamespace(
+        _active_site="pc28",
+        _draw_infos={"pc28": current},
+        _refreshing_sites={"pc28"},
+        _draw_retry_counts={},
+        _draw_calibration_due_at={},
+        _last_message_cursor={"pc28": (123, 456)},
+        _stats_locked=False,
+        _awaiting_next_period=False,
+        current_messages=[{"period": "3465210"}],
+        current_visual_rows=[{"period": "3465210"}],
+        chart_window=SimpleNamespace(replace_rows=lambda rows: chart_replacements.append(rows)),
+        _update_site_card_widgets=lambda site, info: None,
+        _refresh_active_site_info=lambda: None,
+        _sync_chart_status=lambda: None,
+    )
+    _bind_realtime_countdown_helpers(dummy)
+
+    stale_future = SimpleNamespace(
+        result=lambda: DrawInfo(
+            current_period="",
+            next_period="3465209",
+            next_countdown=5,
+            source="api",
+        )
+    )
+
+    MainWindowRealtimeMixin._handle_single_draw_info_loaded(dummy, "pc28", None, stale_future)
+
+    assert dummy._draw_infos["pc28"] is current
+    assert dummy._last_message_cursor == {"pc28": (123, 456)}
+    assert chart_replacements == []
+    assert dummy._draw_retry_counts == {"pc28": 1}
+    assert dummy._draw_calibration_due_at["pc28"] > datetime.now()
+    assert dummy._refreshing_sites == set()
+
+
 def test_main_window_stale_calibration_after_three_retries_keeps_inferred_issue() -> None:
     from types import SimpleNamespace
 

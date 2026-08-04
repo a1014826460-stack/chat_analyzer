@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import traceback
 from collections.abc import Callable
 
 from sqlalchemy import select
@@ -11,14 +13,54 @@ from server_api.db import BetOrder, DrawResult, create_engine, create_session_fa
 from server_api.settings import settings
 from server_api.services.redis_state import acquire_lock, release_lock
 from server_api.services.runtime_logs import RuntimeLogService
+from server_api.services.bet_settlements import settle_new_draws
 from server_api.workers.crawler import crawl_site
 from server_api.workers.current_period import fetch_current_period
 from server_api.workers.history_sources import fetch_history_records, site_list
-from server_api.workers.sender import ProductionWssSender, expire_non_current_confirmed_orders, expire_pending_orders, process_confirmed_order
+from server_api.workers.sender import (
+    ProductionWssSender,
+    expire_non_current_confirmed_orders,
+    expire_pending_orders,
+    process_confirmed_order,
+    write_group_bet_runtime_logs,
+)
 from server_api.workers.strategy_scheduler import schedule_frequency_orders
 
 
 logger = logging.getLogger(__name__)
+
+
+_DRAW_SOURCE_URLS = {
+    "pc28": "https://jnd28-yc.vip/api/dashboard",
+    "macao": "https://macao.zhifu.qpon/api/openApi/lottery/draw",
+    "australia": "https://gaga28.com/api/ajax2.php",
+    "norway": "https://p17-qq-server.vqimpic.cc/v1/selfapi/lottery",
+}
+_SITE_LABELS = {"pc28": "PC28", "macao": "澳门", "australia": "澳洲", "norway": "挪威"}
+
+
+async def _latest_draw_period(session, site: str) -> str:
+    periods = (await session.scalars(
+        select(DrawResult.period).where(DrawResult.site == site)
+    )).all()
+    if not periods:
+        return ""
+    numeric = [str(period) for period in periods if str(period).isdigit()]
+    if numeric:
+        return max(numeric, key=lambda value: int(value))
+    return max(str(period) for period in periods)
+
+
+def _is_future_period(target_period: str, latest_draw_period: str) -> bool:
+    target = str(target_period or "").strip()
+    latest = str(latest_draw_period or "").strip()
+    if not target:
+        return False
+    if not latest:
+        return True
+    if target.isdigit() and latest.isdigit():
+        return int(target) > int(latest)
+    return target > latest
 
 
 async def run_cycle(
@@ -74,22 +116,80 @@ async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: C
     current_periods: dict[str, str] = {}
     async with session_factory() as session:
         for site in site_list():
+            started = time.perf_counter()
             try:
-                await crawl_site(session, site=site, history_count=history_count, fetch_records=fetch_records)
+                records_written = await crawl_site(
+                    session,
+                    site=site,
+                    history_count=history_count,
+                    fetch_records=fetch_records,
+                )
                 current = await asyncio.to_thread(fetch_current_period, site)
                 if current is not None:
-                    current_periods[site] = str(current.period)
-                    await schedule_frequency_orders(
-                        session,
-                        site=site,
-                        period=current.period,
-                        betting_deadline_at=current.betting_deadline_at,
-                        ai_client=ai_client,
-                    )
-            except Exception:
+                    latest_draw_period = await _latest_draw_period(session, site)
+                    if _is_future_period(str(current.period), latest_draw_period):
+                        current_periods[site] = str(current.period)
+                        await schedule_frequency_orders(
+                            session,
+                            site=site,
+                            period=current.period,
+                            betting_deadline_at=current.betting_deadline_at,
+                            ai_client=ai_client,
+                        )
+                    else:
+                        await RuntimeLogService(session).write(
+                            level="WARN",
+                            category="strategy",
+                            message=(
+                                f"{_SITE_LABELS.get(site, site)} 目标期已过期："
+                                f"下一期 {current.period}，最新已开奖 {latest_draw_period}，拒绝下注"
+                            ),
+                            details={
+                                "site": site,
+                                "target_period": str(current.period),
+                                "latest_draw_period": latest_draw_period,
+                            },
+                            service_name="period_guard",
+                        )
+                await RuntimeLogService(session).write(
+                    level="DEBUG",
+                    category="third_party",
+                    message=f"{_SITE_LABELS.get(site, site)} 外部开奖同步成功",
+                    details={
+                        "site": site,
+                        "operation": "draw_sync",
+                        "records_written": records_written,
+                        "current_period": str(current.period) if current is not None else "",
+                    },
+                    request_url=_DRAW_SOURCE_URLS.get(site),
+                    duration_ms=round((time.perf_counter() - started) * 1000),
+                    status_code=200,
+                    service_name="draw_crawler",
+                )
+                await session.commit()
+            except Exception as exc:
+                trace = traceback.format_exc()
                 logger.exception("crawl failed for site=%s", site)
+                try:
+                    await session.rollback()
+                    await RuntimeLogService(session).write(
+                        level="ERROR",
+                        category="exception",
+                        message=f"{_SITE_LABELS.get(site, site)} 外部开奖同步失败：{exc}",
+                        details={"site": site, "operation": "draw_sync"},
+                        request_url=_DRAW_SOURCE_URLS.get(site),
+                        duration_ms=round((time.perf_counter() - started) * 1000),
+                        status_code=getattr(exc, "code", None),
+                        exception_traceback=trace,
+                        service_name="draw_crawler",
+                    )
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    logger.exception("unable to write draw sync failure log for site=%s", site)
 
     async with session_factory() as session:
+        await settle_new_draws(session)
         await expire_pending_orders(session)
         await expire_non_current_confirmed_orders(session, current_periods)
         order_ids = (await session.scalars(select(BetOrder.id).where(BetOrder.status == "confirmed"))).all()
@@ -99,7 +199,9 @@ async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: C
                 order_id=order_id,
                 encryption_secret=settings.credential_encryption_secret,
                 sender_factory=sender_factory,
+                emit_runtime_log=False,
             )
+        await write_group_bet_runtime_logs(session, order_ids)
         try:
             import os
             import psutil
