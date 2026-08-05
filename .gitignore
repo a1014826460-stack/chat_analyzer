@@ -91,3 +91,6 @@ Thumbs.db
 # Local worktree directories
 .worktrees/
 worktrees/
+
+# Local linked worktrees
+.worktrees/
