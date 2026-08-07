@@ -123,21 +123,42 @@ def _shared_ai_client_from_settings(config=settings):
     )
 
 
+def _build_shared_ai_client(config=settings, saved_ai=None):
+    """Return a usable SharedAiClient when AI decisions are enabled, else None.
+
+    None means the worker falls back to algorithm-only betting. A caller that
+    enabled AI decisions should treat None as degraded mode and log it.
+    """
+    if not getattr(config, "ai_decision_enabled", False):
+        return None
+    if saved_ai is not None:
+        from server_api.services.ai_client import SharedAiClient
+
+        return SharedAiClient(
+            provider=saved_ai.provider,
+            base_url=saved_ai.base_url,
+            model=saved_ai.model,
+            api_key=saved_ai.api_key,
+            timeout_seconds=getattr(config, "ai_timeout_seconds", 45),
+            max_retries=getattr(config, "ai_max_retries", 2),
+            retry_backoff_seconds=getattr(config, "ai_retry_backoff_seconds", 1),
+        )
+    return _shared_ai_client_from_settings(config)
+
+
 async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: Callable, history_count: int) -> None:
     current_periods: dict[str, str] = {}
     async with session_factory() as session:
         ai_client = None
         if getattr(settings, "ai_decision_enabled", False):
             from server_api.services.ai_settings import load_ai_configuration
-            from server_api.services.ai_client import SharedAiClient
 
             saved_ai = await load_ai_configuration(session, encryption_secret=settings.credential_encryption_secret)
-            ai_client = (
-                SharedAiClient(provider=saved_ai.provider, base_url=saved_ai.base_url, model=saved_ai.model, api_key=saved_ai.api_key,
-                               timeout_seconds=settings.ai_timeout_seconds, max_retries=settings.ai_max_retries,
-                               retry_backoff_seconds=settings.ai_retry_backoff_seconds)
-                if saved_ai is not None else _shared_ai_client_from_settings(settings)
-            )
+            ai_client = _build_shared_ai_client(settings, saved_ai)
+            if ai_client is None:
+                logger.warning(
+                    "AI 决策已启用但无法构造 AI 客户端（配置缺失或解密失败），将使用纯算法下注"
+                )
         for site in site_list():
             started = time.perf_counter()
             try:
