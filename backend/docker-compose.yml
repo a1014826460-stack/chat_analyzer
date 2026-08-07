@@ -1,3 +1,4 @@
+name: startrace
 services:
   postgres:
     image: postgres:16-alpine
@@ -66,6 +67,12 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   postgres_data:

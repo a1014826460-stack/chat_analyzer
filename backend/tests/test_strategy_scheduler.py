@@ -190,6 +190,7 @@ def test_frequency_scheduler_algorithm_mode_skips_below_threshold_without_ai():
             assert (await session.scalars(select(BetOrder))).all() == []
             event = await session.scalar(select(StrategyEvent))
             assert event.event_type == "frequency_skip"
+            assert "频率未达阈值" in event.message
         await engine.dispose()
 
     asyncio.run(scenario())

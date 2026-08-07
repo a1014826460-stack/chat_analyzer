@@ -56,7 +56,7 @@
 | `server_api/settings.py` | 新增 `ai_decision_enabled: bool`，读 `AI_DECISION_ENABLED`，默认 `false` |
 | `.env` | 新增 `AI_DECISION_ENABLED=false` |
 | `server_api/worker.py` | `_run_cycle` 中：仅当 `settings.ai_decision_enabled` 为真时才构造 `ai_client`（保留现有 `load_ai_configuration` / `_shared_ai_client_from_settings` 构造代码） |
-| `server_api/workers/strategy_scheduler.py` | `ai_client is None` 分支改为算法直接下注；抽取下注逻辑（创建 `BetOrder`）为 AI 与算法共用路径 |
+| `server_api/workers/strategy_scheduler.py` | `ai_client is None` 分支改为算法直接下注；下注逻辑（创建 `BetOrder`）由 AI 与算法共同落入同一循环 |
 
 ### `strategy_scheduler.py` 决策逻辑（改后）
 

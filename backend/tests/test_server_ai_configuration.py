@@ -63,7 +63,7 @@ def test_shared_ai_client_reports_authentication_failure_clearly():
         raise AssertionError("expected auth failure")
 
 
-def test_frequency_scheduler_uses_unconfigured_message_when_ai_key_is_placeholder():
+def test_frequency_scheduler_places_algorithm_order_when_ai_key_is_placeholder():
     from server_api.db import AutoBetStrategy, DrawResult, StrategyEvent, create_engine, create_schema, create_session_factory
     from server_api.worker import _shared_ai_client_from_settings
     from server_api.workers.strategy_scheduler import schedule_frequency_orders
