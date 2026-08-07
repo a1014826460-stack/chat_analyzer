@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 from sqlalchemy import select
 
-from server_api.db import BetOrder, DrawResult, create_engine, create_session_factory
+from server_api.db import BetOrder, DrawResult, ServiceHeartbeat, create_engine, create_session_factory
 from server_api.settings import settings
 from server_api.services.redis_state import acquire_lock, release_lock
 from server_api.services.runtime_logs import RuntimeLogService
@@ -81,6 +81,18 @@ async def run_cycle(
             await release_lock(redis, lock_key)
 
 
+async def _record_heartbeat(session_factory) -> None:
+    async with session_factory() as session:
+        heartbeat = await session.get(ServiceHeartbeat, "worker")
+        if heartbeat is None:
+            heartbeat = ServiceHeartbeat(service_name="worker", status="healthy")
+            session.add(heartbeat)
+        else:
+            heartbeat.status = "healthy"
+            heartbeat.updated_at = __import__("datetime").datetime.utcnow()
+        await session.commit()
+
+
 def _is_placeholder_secret(value: str) -> bool:
     normalized = str(value or "").strip().lower()
     if not normalized:
@@ -112,9 +124,20 @@ def _shared_ai_client_from_settings(config=settings):
 
 
 async def _run_cycle(session_factory, fetch_records: Callable, sender_factory: Callable, history_count: int) -> None:
-    ai_client = _shared_ai_client_from_settings(settings)
     current_periods: dict[str, str] = {}
     async with session_factory() as session:
+        ai_client = None
+        if getattr(settings, "ai_decision_enabled", False):
+            from server_api.services.ai_settings import load_ai_configuration
+            from server_api.services.ai_client import SharedAiClient
+
+            saved_ai = await load_ai_configuration(session, encryption_secret=settings.credential_encryption_secret)
+            ai_client = (
+                SharedAiClient(provider=saved_ai.provider, base_url=saved_ai.base_url, model=saved_ai.model, api_key=saved_ai.api_key,
+                               timeout_seconds=settings.ai_timeout_seconds, max_retries=settings.ai_max_retries,
+                               retry_backoff_seconds=settings.ai_retry_backoff_seconds)
+                if saved_ai is not None else _shared_ai_client_from_settings(settings)
+            )
         for site in site_list():
             started = time.perf_counter()
             try:
@@ -232,6 +255,7 @@ async def run_forever(poll_seconds: float = 5.0) -> None:
     try:
         while True:
             await run_cycle(factory, redis=redis)
+            await _record_heartbeat(factory)
             await asyncio.sleep(poll_seconds)
     finally:
         await redis.aclose()

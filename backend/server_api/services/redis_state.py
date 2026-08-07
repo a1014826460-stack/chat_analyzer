@@ -56,6 +56,10 @@ class InMemoryRedis:
     async def exists(self, key: str) -> int:
         return int(self._get(key) is not None)
 
+    async def get(self, key: str) -> str | None:
+        value = self._get(key)
+        return value[0] if value is not None else None
+
     async def incr(self, key: str) -> int:
         value = self._get(key)
         count = int(value[0]) + 1 if value is not None else 1

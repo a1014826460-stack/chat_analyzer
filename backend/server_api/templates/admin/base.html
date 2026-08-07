@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StarTrace 管理后台</title><link rel="stylesheet" href="/static/admin.css"></head>
+<body>
+<aside class="sidebar"><div class="brand">StarTrace <small>ADMIN</small></div><nav>
+  <a href="/admin" class="{% if page == 'dashboard' %}active{% endif %}">总览</a>
+  <a href="/admin/users" class="{% if page == 'users' %}active{% endif %}">用户管理</a>
+  <a href="/admin/codes" class="{% if page == 'codes' %}active{% endif %}">激活码</a>
+  <a href="/admin/operations" class="{% if page == 'operations' %}active{% endif %}">策略与订单</a>
+  <a href="/admin/logs" class="{% if page == 'logs' %}active{% endif %}">运行日志</a>
+  <a href="/admin/settings" class="{% if page == 'settings' %}active{% endif %}">系统设置</a>
+</nav><button id="logout" class="logout">退出登录</button></aside>
+<main><header><div><h1>{% block title %}管理后台{% endblock %}</h1><p>管理员：{{ admin.username }}</p></div><span class="status">服务监控中</span></header>
+<section id="global-metrics" data-testid="global-metrics" class="metrics"><article>在线用户<strong data-metric="online_users">--</strong></article><article>今日请求<strong data-metric="api_requests">--</strong></article><article>异常<strong data-metric="errors">--</strong></article><article>API<strong data-metric="api_status">--</strong></article></section>
+{% block content %}{% endblock %}</main><script src="/static/admin.js"></script>
+</body></html>

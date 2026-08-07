@@ -6,8 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server_api.db import ActivationCode
-from server_api.services.auth import AuthorizationError, create_activation_code, issue_access_token, open_local_license_session, revoke_activation_code
+from server_api.services.auth import AuthorizationError, issue_access_token, open_local_license_session
 from server_api.dependencies import bearer
 from server_api.services.auth_guard import require_active_token
 from server_api.services.redis_state import allow_fixed_window, revoke_token
@@ -15,12 +14,6 @@ from server_api.services.runtime_logs import RuntimeLogService
 
 
 router = APIRouter()
-
-
-class ActivationCodeRequest(BaseModel):
-    activation_code: str = Field(min_length=1, max_length=512)
-    expires_in_seconds: int
-    max_devices: int = Field(default=1, ge=1, le=100)
 
 
 class SessionRequest(BaseModel):
@@ -40,22 +33,6 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 def require_admin(request: Request, x_admin_token: Annotated[str | None, Header()] = None) -> None:
     if x_admin_token != request.app.state.admin_bootstrap_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="管理员令牌无效")
-
-
-@router.post("/v1/admin/activation-codes", status_code=status.HTTP_201_CREATED)
-async def create_code(payload: ActivationCodeRequest, request: Request, session: Session, _: None = Depends(require_admin)):
-    try:
-        code = await create_activation_code(session, **payload.model_dump())
-    except AuthorizationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"id": code.id, "expires_at": code.expires_at.isoformat(), "max_devices": code.max_devices}
-
-
-@router.post("/v1/admin/activation-codes/{activation_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_code(activation_id: int, session: Session, _: None = Depends(require_admin)) -> Response:
-    if not await revoke_activation_code(session, activation_id):
-        raise HTTPException(status_code=404, detail="授权不存在")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/v1/auth/session")

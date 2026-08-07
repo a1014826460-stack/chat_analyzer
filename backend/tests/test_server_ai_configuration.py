@@ -106,8 +106,9 @@ def test_frequency_scheduler_uses_unconfigured_message_when_ai_key_is_placeholde
             )
             event = await session.scalar(select(StrategyEvent))
             assert event is not None
-            assert event.event_type == "ai_error"
-            assert "服务器 AI 未配置" in event.message
+            # 纯算法下注模式：AI 未配置时仍执行算法决策
+            assert event.event_type == "ai_execute"
+            assert "算法决策下注" in event.message
         await engine.dispose()
 
     asyncio.run(scenario())
