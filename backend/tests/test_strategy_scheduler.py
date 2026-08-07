@@ -105,7 +105,7 @@ def test_frequency_scheduler_is_idempotent_for_an_existing_period():
     asyncio.run(scenario())
 
 
-def test_frequency_scheduler_records_ai_error_without_server_ai_configuration():
+def test_frequency_scheduler_places_algorithm_orders_without_ai():
     from server_api.workers.strategy_scheduler import schedule_frequency_orders
 
     async def scenario() -> None:
@@ -125,11 +125,13 @@ def test_frequency_scheduler_records_ai_error_without_server_ai_configuration():
             ])
             await session.commit()
 
-            assert await schedule_frequency_orders(session, site="pc28", period="next-4") == 0
-            assert (await session.scalars(select(BetOrder))).all() == []
+            # 不传 ai_client：纯算法模式，频率达标直接下注
+            assert await schedule_frequency_orders(session, site="pc28", period="next-4") == 3
+            rows = (await session.scalars(select(BetOrder))).all()
+            assert {row.play_type for row in rows} == {"小单", "大双", "大单"}
             event = await session.scalar(select(StrategyEvent))
-            assert event.event_type == "ai_error"
-            assert "服务器 AI 未配置" in event.message
+            assert event.event_type == "ai_execute"
+            assert "算法决策下注" in event.message
         await engine.dispose()
 
     asyncio.run(scenario())
@@ -159,6 +161,35 @@ def test_frequency_scheduler_records_one_decision_event_per_user_period_and_type
             assert await schedule_frequency_orders(session, site="pc28", period="next-dup") == 0
             events = (await session.scalars(select(StrategyEvent))).all()
             assert [(event.event_type, event.period) for event in events] == [("frequency_skip", "next-dup")]
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_frequency_scheduler_algorithm_mode_skips_below_threshold_without_ai():
+    from server_api.workers.strategy_scheduler import schedule_frequency_orders
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            session.add(AutoBetStrategy(
+                user_id=12, enabled=True, site="pc28", target_groups_json='["group-a"]',
+                history_count=4, confidence_threshold=80, require_confirmation=False, bet_amount=3,
+            ))
+            session.add_all([
+                DrawResult(site="pc28", period="1", result="小单", total=13),
+                DrawResult(site="pc28", period="2", result="大双", total=14),
+                DrawResult(site="pc28", period="3", result="小双", total=12),
+                DrawResult(site="pc28", period="4", result="大单", total=15),
+            ])
+            await session.commit()
+
+            assert await schedule_frequency_orders(session, site="pc28", period="next-5") == 0
+            assert (await session.scalars(select(BetOrder))).all() == []
+            event = await session.scalar(select(StrategyEvent))
+            assert event.event_type == "frequency_skip"
         await engine.dispose()
 
     asyncio.run(scenario())
