@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [`betting-system-overview.md`](betting-system-overview.md) | 下注系统全景：策略、下注种类与功能清单（含已知问题）。 |
 | [`../README.md`](../README.md) | 项目目标、环境、安装、运行、测试、打包与目录说明。 |
 | [`bet-statistics-core-logic.md`](bet-statistics-core-logic.md) | 聊天消息解析与下注统计核心规则。 |
 | [`chat_analysis_mechanisms.md`](chat_analysis_mechanisms.md) | 聊天分析机制与数据流。 |
