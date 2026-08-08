@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated
 from datetime import datetime, timedelta
 
@@ -32,7 +33,21 @@ class BetRequest(BaseModel):
 
 
 def serialize(row: BetOrder) -> dict[str, object]:
-    return {"id": row.id, "site": row.site, "period": row.period, "group_id": row.group_id, "group_name": row.group_name, "play_type": row.play_type, "amount": row.amount, "status": row.status, "confirmation_deadline_at": row.confirmation_deadline_at.isoformat() if row.confirmation_deadline_at else None}
+    return {
+        "id": row.id,
+        "site": row.site,
+        "period": row.period,
+        "group_id": row.group_id,
+        "group_name": row.group_name,
+        "play_type": row.play_type,
+        "amount": row.amount,
+        "status": row.status,
+        "strategy_type": row.strategy_type,
+        "strategy_snapshot": json.loads(row.strategy_snapshot or "{}"),
+        "result": row.result,
+        "result_detail": row.result_detail,
+        "confirmation_deadline_at": row.confirmation_deadline_at.isoformat() if row.confirmation_deadline_at else None,
+    }
 
 
 async def audit(session: AsyncSession, user_id: int, action: str, order: BetOrder) -> None:
