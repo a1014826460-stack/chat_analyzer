@@ -109,6 +109,11 @@ class AutoBetStrategy(Base):
     confidence_threshold: Mapped[int] = mapped_column(Integer, default=45)
     require_confirmation: Mapped[bool] = mapped_column(Boolean, default=True)
     bet_amount: Mapped[float] = mapped_column(Float, default=10.0)
+    strategy_type: Mapped[str] = mapped_column(String(32), default="three_doors")
+    play_types_json: Mapped[str] = mapped_column(String, default="[]")
+    observation_window: Mapped[int] = mapped_column(Integer, default=10)
+    trigger_threshold: Mapped[int] = mapped_column(Integer, default=3)
+    martingale_sequence_json: Mapped[str] = mapped_column(String, default="[]")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

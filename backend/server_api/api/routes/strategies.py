@@ -29,6 +29,11 @@ class AutoBetStrategyRequest(BaseModel):
     confidence_threshold: int = Field(default=45, ge=0, le=100)
     require_confirmation: bool = True
     bet_amount: float = Field(default=10, gt=0)
+    strategy_type: str = Field(default="three_doors", pattern="^(three_doors|trend_following|flat|martingale)$")
+    play_types: list[str] = Field(default_factory=list, max_length=8)
+    observation_window: int = Field(default=10, ge=3, le=100)
+    trigger_threshold: int = Field(default=3, ge=1, le=20)
+    martingale_sequence: list[float] = Field(default_factory=list, max_length=20)
 
 
 def serialize(row: AutoBetStrategy | None) -> dict[str, object]:
@@ -43,6 +48,11 @@ def serialize(row: AutoBetStrategy | None) -> dict[str, object]:
         "confidence_threshold": row.confidence_threshold,
         "require_confirmation": row.require_confirmation,
         "bet_amount": row.bet_amount,
+        "strategy_type": row.strategy_type,
+        "play_types": json.loads(row.play_types_json or "[]"),
+        "observation_window": row.observation_window,
+        "trigger_threshold": row.trigger_threshold,
+        "martingale_sequence": json.loads(row.martingale_sequence_json or "[]"),
     }
 
 
@@ -57,6 +67,8 @@ async def put_auto_bet_strategy(payload: AutoBetStrategyRequest, session: Sessio
     values = payload.model_dump()
     target_groups = values.pop("target_groups")
     target_group_names = values.pop("target_group_names")
+    values["play_types_json"] = json.dumps(values.pop("play_types", []), ensure_ascii=False, separators=(",", ":"))
+    values["martingale_sequence_json"] = json.dumps(values.pop("martingale_sequence", []), ensure_ascii=False, separators=(",", ":"))
     values["target_groups_json"] = json.dumps(target_groups, ensure_ascii=False, separators=(",", ":"))
     values["target_group_names_json"] = json.dumps(
         {str(group_id): str(target_group_names.get(str(group_id), group_id)).strip() for group_id in target_groups},
