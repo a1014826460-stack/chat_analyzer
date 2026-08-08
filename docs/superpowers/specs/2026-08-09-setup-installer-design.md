@@ -95,5 +95,5 @@ cd /opt/startrace/backend && docker compose up --build --force-recreate -d --wai
 
 ## 兼容与回滚
 
-- 客户端旧版本（1.97.0/1.99.8）更新到 setup.exe 版：需确认 update_installer 对 setup.exe 的处理（旧版 exe 替换逻辑与新 setup 安装不冲突）。
-- 若 Inno Setup 不可用，保留 PyInstaller 裸 exe 产物作为回退（build.py 增加 `--no-setup` 开关）。
+- **旧版客户端放弃维护**：不处理旧版（1.97.0/1.99.8 裸 exe）升级到 setup.exe 的兼容路径；旧版用户手动下载 setup.exe 完成迁移。
+- 若 Inno Setup 不可用，`tools/build.py` 增加 `--no-setup` 开关保留 PyInstaller 裸 exe 产物作为回退。
