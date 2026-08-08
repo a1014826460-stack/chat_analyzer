@@ -194,3 +194,16 @@ def test_frequency_scheduler_algorithm_mode_skips_below_threshold_without_ai():
         await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_frequency_scheduler_trend_following_reverse_bet():
+    from server_api.workers.strategy_scheduler import _trend_following_plays
+
+    rows = [DrawResult(site="pc28", period=str(i), result="小单", total=13) for i in range(1, 6)]
+    assert _trend_following_plays("pc28", rows, window=5, threshold=3) == ["大"]
+
+    rows_break = [
+        DrawResult(site="pc28", period=str(i), result="小单" if i < 5 else "大单", total=13 if i < 5 else 15)
+        for i in range(1, 6)
+    ]
+    assert _trend_following_plays("pc28", rows_break, window=5, threshold=3) is None

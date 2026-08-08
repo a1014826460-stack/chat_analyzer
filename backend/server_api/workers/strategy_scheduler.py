@@ -14,6 +14,46 @@ from server_api.services.runtime_logs import RuntimeLogService, format_strategy_
 _DECISION_EVENT_TYPES = {"frequency_skip", "ai_error", "ai_skip", "ai_execute"}
 
 
+def _trend_following_plays(site: str, rows, window: int, threshold: int) -> list[str] | None:
+    """Return the reverse play when the latest run of same size reaches threshold."""
+    ordered = list(rows)[-max(1, window):]
+    if not ordered:
+        return None
+    tail_base = "大" if str(ordered[-1].result).startswith("大") else "小"
+    consecutive = 0
+    for row in reversed(ordered):
+        base = "大" if str(row.result).startswith("大") else "小"
+        if base == tail_base:
+            consecutive += 1
+        else:
+            break
+    if consecutive < max(1, threshold):
+        return None
+    return ["小"] if tail_base == "大" else ["大"]
+
+
+def _martingale_amount(sequence: list[float], consecutive_losses: int, default: float) -> float:
+    steps = [float(value) for value in sequence if float(value) > 0] or [float(default)]
+    return steps[min(max(consecutive_losses, 0), len(steps) - 1)]
+
+
+async def _consecutive_losses(session, *, user_id: int, site: str, play_type: str, limit: int = 10) -> int:
+    rows = (await session.scalars(
+        select(BetOrder).where(
+            BetOrder.user_id == user_id,
+            BetOrder.site == site,
+            BetOrder.play_type == play_type,
+        ).order_by(BetOrder.id.desc()).limit(limit)
+    )).all()
+    count = 0
+    for row in rows:
+        if row.result == "lose":
+            count += 1
+        else:
+            break
+    return count
+
+
 async def _add_decision_event_once(
     session: AsyncSession,
     *,
@@ -79,28 +119,65 @@ async def schedule_frequency_orders(
             str(group_name_map.get(str(group_id), "未命名群组")).strip() or "未命名群组"
             for group_id in json.loads(strategy.target_groups_json)
         ]
-        analysis = analyze(
-            site,
-            await history(session, site, strategy.history_count),
-            strategy.history_count,
-            strategy.confidence_threshold,
-        )
-        if not analysis["should_bet"]:
-            await _add_decision_event_once(
-                session,
-                user_id=strategy.user_id,
-                site=site,
-                period=period,
-                event_type="frequency_skip",
-                message=(
-                    f"频率未达阈值：三门 {','.join(analysis['selected_plays'])}，"
-                    f"最高 {analysis['highest_selected_probability']:.1f}% < 阈值 {strategy.confidence_threshold}%"
-                ),
-                group_names=group_names,
+        rows = await history(session, site, strategy.history_count)
+        plays: list[str] = []
+        reason: str = ""
+        if strategy.strategy_type == "three_doors":
+            analysis = analyze(site, rows, strategy.history_count, strategy.confidence_threshold)
+            if not analysis["should_bet"]:
+                await _add_decision_event_once(
+                    session,
+                    user_id=strategy.user_id,
+                    site=site,
+                    period=period,
+                    event_type="frequency_skip",
+                    message=(
+                        f"频率未达阈值：三门 {','.join(analysis['selected_plays'])}，"
+                        f"最高 {analysis['highest_selected_probability']:.1f}% < 阈值 {strategy.confidence_threshold}%"
+                    ),
+                    group_names=group_names,
+                )
+                continue
+            plays = list(analysis["selected_plays"])
+            reason = (
+                f"排除{analysis['excluded_play']}；压{'、'.join(plays)}，"
+                f"最高{analysis['highest_selected_probability']:.1f}%"
             )
-            continue
-        plays = list(analysis["selected_plays"])
-        if ai_client is not None:
+        elif strategy.strategy_type == "trend_following":
+            trend_plays = _trend_following_plays(site, rows, strategy.observation_window, strategy.trigger_threshold)
+            if trend_plays is None:
+                await _add_decision_event_once(
+                    session,
+                    user_id=strategy.user_id,
+                    site=site,
+                    period=period,
+                    event_type="frequency_skip",
+                    message=(
+                        f"趋势未触发：观察 {strategy.observation_window} 期，"
+                        f"连续 {strategy.trigger_threshold} 期同结果才反向下注"
+                    ),
+                    group_names=group_names,
+                )
+                continue
+            plays = trend_plays
+            reason = f"连续 {strategy.trigger_threshold} 期同向，反向押 {'、'.join(plays)}"
+        else:  # flat / martingale
+            plays = [str(play).strip() for play in json.loads(strategy.play_types_json or "[]") if str(play).strip()]
+            if not plays:
+                await _add_decision_event_once(
+                    session,
+                    user_id=strategy.user_id,
+                    site=site,
+                    period=period,
+                    event_type="frequency_skip",
+                    message="未配置押注玩法（play_types 为空）",
+                    group_names=group_names,
+                )
+                continue
+            reason = f"策略 {strategy.strategy_type}：押 {'、'.join(plays)}"
+        plays = list(dict.fromkeys(plays))
+
+        if ai_client is not None and strategy.strategy_type == "three_doors":
             try:
                 decision = ai_client.recommend_three_doors(
                     site=site,
@@ -142,7 +219,7 @@ async def schedule_frequency_orders(
                 group_names=group_names,
             )
         else:
-            # 纯算法模式：频率达标即下注，不依赖 AI。
+            # 纯算法模式或非三门策略：频率/条件满足即下注，不依赖 AI。
             await _add_decision_event_once(
                 session,
                 user_id=strategy.user_id,
@@ -150,8 +227,7 @@ async def schedule_frequency_orders(
                 period=period,
                 event_type="ai_execute",
                 message=(
-                    f"频率达标：三门 {','.join(plays)}；算法决策下注"
-                    f"（最高 {analysis['highest_selected_probability']:.1f}%，达到阈值 {strategy.confidence_threshold}%）"
+                    f"频率达标：{reason}；算法决策下注（{strategy.strategy_type}）"
                 ),
                 group_names=group_names,
             )
