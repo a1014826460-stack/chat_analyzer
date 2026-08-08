@@ -97,3 +97,12 @@ def test_settle_new_draws_keeps_users_and_sites_independent():
         await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_result_detail_mapping():
+    from server_api.services.bet_settlements import _result_detail
+
+    assert _result_detail("小单", "小单") == "exact_hit"
+    assert _result_detail("小", "小单") == "direction_hit"
+    assert _result_detail("单", "小单") == "direction_hit"
+    assert _result_detail("小单", "大单") == ""

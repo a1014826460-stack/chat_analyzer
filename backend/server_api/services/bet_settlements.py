@@ -10,6 +10,17 @@ from server_api.services.bet_statistics import DEFAULT_ODDS, _bet_wins
 from server_api.services.runtime_logs import RuntimeLogService, format_strategy_context
 
 
+def _result_detail(play_type: str, result: str) -> str:
+    """exact_hit when the play matches exactly; direction_hit when partially hit."""
+    play = str(play_type or "")
+    actual = str(result or "")
+    if play == actual:
+        return "exact_hit"
+    if _bet_wins(play_type, result):
+        return "direction_hit"
+    return ""
+
+
 async def settle_new_draws(session: AsyncSession) -> int:
     rows = (await session.execute(
         select(BetOrder, DrawResult)
@@ -41,6 +52,10 @@ async def settle_new_draws(session: AsyncSession) -> int:
         user_id, site, period = key
         draw = entries[0][1]
         orders = [entry[0] for entry in entries]
+        for order in orders:
+            wins = _bet_wins(order.play_type, draw.result)
+            order.result = "win" if wins else "lose"
+            order.result_detail = _result_detail(order.play_type, draw.result)
         staked = round(sum(float(order.amount) for order in orders), 2)
         payout = round(sum(
             float(order.amount) * DEFAULT_ODDS.get(order.play_type, 1.0)
