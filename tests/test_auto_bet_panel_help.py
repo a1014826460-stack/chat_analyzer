@@ -281,6 +281,8 @@ def test_ai_strategy_config_exposes_server_history_and_confirmation():
     assert config.ai_confidence_threshold == 70
     assert config.ai_accuracy_window == 35
     assert config.ai_require_confirmation is True
+    assert not panel._ai_config_button.isVisibleTo(panel)  # 非服务器模式隐藏
+    panel.set_server_mode(True, logged_in=True)
     assert panel._ai_config_button.isVisibleTo(panel)
     assert panel._mode_row_widget.isVisibleTo(panel)
     assert panel._play_row_widget.isVisibleTo(panel)
@@ -301,17 +303,19 @@ def test_ai_history_record_count_uses_site_supported_presets():
     assert [history_combo.itemData(index) for index in range(history_combo.count())] == [20, 50, 100]
 
 
-def test_ai_config_button_is_visible_for_every_ai_constrained_strategy():
+def test_ai_config_button_visible_only_in_server_mode():
     from PySide6.QtWidgets import QApplication
     from app.ui.auto_bet_panel import AutoBetPanel
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
 
+    # 非服务器模式：本地策略/AI 配置入口隐藏（统一服务端计算）。
     panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("trend_following"))
-    assert panel._ai_config_button.isVisibleTo(panel)
+    assert not panel._ai_config_button.isVisibleTo(panel)
 
-    panel._strategy_combo.setCurrentIndex(panel._strategy_combo.findData("flat"))
+    # 服务器模式：显示"策略配置"入口。
+    panel.set_server_mode(True, logged_in=True)
     assert panel._ai_config_button.isVisibleTo(panel)
 
 
@@ -705,6 +709,7 @@ def test_auto_bet_panel_does_not_emit_start_for_empty_groups_or_invalid_odds(mon
 
     app = QApplication.instance() or QApplication([])
     panel = AutoBetPanel()
+    panel.set_server_mode(True, logged_in=True)
     started = []
     messages = []
     panel.start_clicked.connect(lambda: started.append(True))

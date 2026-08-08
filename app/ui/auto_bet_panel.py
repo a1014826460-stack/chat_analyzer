@@ -86,6 +86,7 @@ def _format_order_event(item: dict) -> str:
 SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
 STAT_CARD_STYLE = "background: #f7f9fb; border: 1px solid #dbe3ea; border-radius: 6px; padding: 6px 8px;"
 BET_STRATEGY_OPTIONS = [
+    ("\u4e09\u95e8\u9891\u7387", "three_doors"),
     ("\u8d8b\u52bf\u53cd\u6253", "trend_following"),
     ("\u56fa\u5b9a\u500d\u6295", "martingale"),
     ("\u5e73\u63a8", "flat"),
@@ -134,7 +135,7 @@ class AiConfigDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("策略配置")
         self.setModal(True)
-        self.resize(500, 380)
+        self.resize(560, 460)
         layout = QVBoxLayout(self)
 
         history_row = QHBoxLayout()
@@ -456,7 +457,7 @@ class AutoBetPanel(CollapsibleSection):
         status_color = "#198754" if should_bet else "#c0392b"
         period = str(field("period", "") or "-")
         analyzed_at = field("analyzed_at", None)
-        updated_at = analyzed_at.strftime("%H:%M:%S") if isinstance(analyzed_at, datetime) else str(field("updated_at", "-") or "-")
+        updated_at = _beijing_time(analyzed_at).strftime("%H:%M:%S") if isinstance(analyzed_at, datetime) else str(field("updated_at", "-") or "-")
         site = field("site", "-") or "-"
         requested = field("requested_history_count", field("history_count", 0))
         sample = field("sample_count", 0)
@@ -492,6 +493,13 @@ class AutoBetPanel(CollapsibleSection):
                 status=status,
             )
         )
+        # 动态调整高度，使"站点/目标期/更新时间"等长文本完整展示。
+        label = self._frequency_analysis_label
+        label.adjustSize()
+        if label.width() > 0:
+            needed = label.heightForWidth(label.width())
+            if needed > label.minimumHeight():
+                label.setMinimumHeight(needed)
         if hasattr(self, "_frequency_stat_labels"):
             values = [
                 ("站点 / 目标期", f"{site} / {period}", "#2f5f85"),
@@ -985,6 +993,7 @@ class AutoBetPanel(CollapsibleSection):
         self._frequency_analysis_label = QLabel("暂无可用历史概率分析")
         self._frequency_analysis_label.setVisible(False)
         self._frequency_analysis_label.setWordWrap(True)
+        self._frequency_analysis_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._frequency_analysis_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         frequency_layout.addWidget(self._frequency_analysis_label)
         layout.addWidget(self._frequency_analysis_box)

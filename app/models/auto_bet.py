@@ -91,7 +91,7 @@ class DrawResultProvider(Protocol):
 @dataclass
 class StrategyConfig:
     """Persistable strategy configuration, saved via SettingsService under key 'auto_bet'."""
-    strategy_type: str = "trend_following"
+    strategy_type: str = "three_doors"
     enabled: bool = False
     site: str = "pc28"
     target_groups: list[str] = field(default_factory=list)
@@ -249,10 +249,10 @@ def _ensure_ai_history_count(value: object) -> int:
 
 
 def _ensure_strategy_type(value: object) -> str:
-    strategy_type = str(value or "trend_following").strip()
+    strategy_type = str(value or "three_doors").strip()
     if strategy_type == "ai":
         return "flat"
-    return strategy_type if strategy_type in {"flat", "martingale", "trend_following"} else "trend_following"
+    return strategy_type if strategy_type in {"flat", "martingale", "trend_following", "three_doors"} else "three_doors"
 
 
 def _ensure_non_negative_float(value: object) -> float:

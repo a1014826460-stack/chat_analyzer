@@ -1590,6 +1590,11 @@ class MainWindowDataMixin:
                         "confidence_threshold": config.ai_confidence_threshold,
                         "require_confirmation": config.ai_require_confirmation,
                         "bet_amount": config.bet_amount,
+                        "strategy_type": config.strategy_type,
+                        "play_types": list(config.play_types),
+                        "observation_window": config.observation_window,
+                        "trigger_threshold": config.trigger_threshold,
+                        "martingale_sequence": list(config.martingale_sequence),
                     })
 
     def _on_auto_bet_start(self) -> None:
@@ -1610,6 +1615,11 @@ class MainWindowDataMixin:
                 "confidence_threshold": config.ai_confidence_threshold,
                 "require_confirmation": config.ai_require_confirmation,
                 "bet_amount": config.bet_amount,
+                "strategy_type": config.strategy_type,
+                "play_types": list(config.play_types),
+                "observation_window": config.observation_window,
+                "trigger_threshold": config.trigger_threshold,
+                "martingale_sequence": list(config.martingale_sequence),
             })
             panel.set_running(False)
         timer = getattr(self, "_auto_bet_timer", None)
