@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QDateTime, Qt, Signal
@@ -43,6 +43,46 @@ from app.ui.collapsible_section import CollapsibleSection
 logger = logging.getLogger(__name__)
 
 PLAY_TYPE_OPTIONS = ["大", "小", "单", "双", "大单", "小单", "大双", "小双"]
+
+
+def _auto_bet_available(*, server_mode_enabled: bool, logged_in: bool) -> bool:
+    """Auto-betting is only available in server mode with an active session."""
+    return bool(server_mode_enabled and logged_in)
+
+
+def _strategy_payload(*, strategy_type, play_types, observation_window, trigger_threshold, martingale_sequence, **base) -> dict:
+    return {
+        "strategy_type": str(strategy_type),
+        "play_types": [str(play) for play in play_types],
+        "observation_window": int(observation_window),
+        "trigger_threshold": int(trigger_threshold),
+        "martingale_sequence": [float(value) for value in martingale_sequence],
+        **base,
+    }
+
+
+def _beijing_time(utc_dt):
+    """Convert server UTC datetime to Beijing time (UTC+8), naive in both sides."""
+    if utc_dt is None:
+        return None
+    if utc_dt.tzinfo is not None:
+        utc_dt = utc_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return utc_dt + timedelta(hours=8)
+
+
+def _format_order_event(item: dict) -> str:
+    strategy = str(item.get("strategy_type", "") or "-")
+    snapshot = item.get("strategy_snapshot")
+    detail = ""
+    if isinstance(snapshot, dict):
+        selected = snapshot.get("selected_plays")
+        if selected:
+            detail = f" 选中:{'、'.join(str(play) for play in selected)}"
+    result = str(item.get("result", "") or "pending")
+    result_text = {"win": "中", "lose": "不中", "pending": "待定", "failed": "发送失败", "expired": "过期"}.get(result, result)
+    result_detail = str(item.get("result_detail", "") or "")
+    detail_suffix = f"({result_detail})" if result_detail else ""
+    return f"{item.get('period', '')} {item.get('play_type', '')}@{item.get('amount', 0)} [{strategy}]{detail} → {result_text}{detail_suffix}"
 SITE_OPTIONS = ["pc28", "macao", "australia", "norway"]
 STAT_CARD_STYLE = "background: #f7f9fb; border: 1px solid #dbe3ea; border-radius: 6px; padding: 6px 8px;"
 BET_STRATEGY_OPTIONS = [
@@ -214,6 +254,7 @@ class AutoBetPanel(CollapsibleSection):
         self._active_site = self._config.site
         self._group_names: dict[str, str] = {}
         self._running = False
+        self._server_logged_in = False
         self._ai_config_dialog = AiConfigDialog(self)
         self._build_ui()
 
@@ -1121,6 +1162,12 @@ class AutoBetPanel(CollapsibleSection):
         self._set_target_group_checks(False)
 
     def _on_start(self) -> None:
+        if not _auto_bet_available(
+            server_mode_enabled=bool(getattr(self, "_server_mode", False)),
+            logged_in=bool(getattr(self, "_server_logged_in", False)),
+        ):
+            QMessageBox.warning(self, "无法启动自动下注", "自动下注需先进入服务器模式并完成登录")
+            return
         validation_errors = self.get_config().start_validation_errors(
             require_ai_credentials=not getattr(self, "_server_mode", False),
         )
@@ -1130,9 +1177,10 @@ class AutoBetPanel(CollapsibleSection):
         self.set_running(True)
         self.start_clicked.emit()
 
-    def set_server_mode(self, enabled: bool) -> None:
+    def set_server_mode(self, enabled: bool, *, logged_in: bool = True) -> None:
         """Use the server AI configuration instead of a client API key."""
         self._server_mode = bool(enabled)
+        self._server_logged_in = bool(logged_in)
         self._sync_strategy_visibility()
 
     def _on_stop(self) -> None:
@@ -1149,7 +1197,8 @@ class AutoBetPanel(CollapsibleSection):
         self._martingale_peak_box.setVisible(is_martingale)
         server_mode = bool(getattr(self, "_server_mode", False))
         self._ai_config_dialog.set_server_mode(server_mode)
-        self._ai_config_button.setVisible(True)
+        # 本地策略/AI 配置已停用：仅服务器模式下显示"策略配置"入口。
+        self._ai_config_button.setVisible(server_mode)
         self._ai_config_button.setText("策略配置" if server_mode else "AI 配置")
         self._ai_config_button.setToolTip(
             "配置历史期数、置信度、每期确认、止盈止损等策略参数" if server_mode

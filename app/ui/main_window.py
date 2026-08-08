@@ -252,7 +252,7 @@ class MainWindow(
         )
         panel = getattr(self, "auto_bet_panel", None)
         if panel is not None and hasattr(panel, "set_server_mode"):
-            panel.set_server_mode(True)
+            panel.set_server_mode(True, logged_in=bool(status.connected))
         if hasattr(self, "_set_status"):
             self._set_status(status.message, "info" if status.connected else "warning")
 
