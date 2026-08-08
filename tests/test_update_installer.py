@@ -27,20 +27,20 @@ def test_prepare_windows_update_script_contains_wait_replace_and_restart(tmp_pat
     assert "del \"%~f0\"" in content
 
 
-def test_schedule_update_install_dry_run_returns_script_without_launching(tmp_path: Path) -> None:
+def test_schedule_update_install_dry_run_returns_staged_setup_without_launching(tmp_path: Path) -> None:
     from app.services.update_installer import schedule_update_install
 
     current_exe = tmp_path / "StarTrace.exe"
-    staged_exe = tmp_path / "StarTrace-1.98.0.exe"
+    staged_exe = tmp_path / "StarTrace-Setup-2.0.1.exe"
     current_exe.write_bytes(b"old")
     staged_exe.write_bytes(b"new")
 
-    script_path = schedule_update_install(
+    result = schedule_update_install(
         current_exe=current_exe,
         staged_exe=staged_exe,
         pid=1234,
         dry_run=True,
     )
 
-    assert script_path.exists()
-    assert script_path.suffix == ".cmd"
+    assert result == staged_exe
+    assert result.suffix == ".exe"

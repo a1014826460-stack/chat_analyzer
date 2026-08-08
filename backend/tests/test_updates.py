@@ -61,3 +61,25 @@ def test_updates_manifest_rejects_missing_signed_artifact_metadata(tmp_path):
         )
 
     assert response.status_code == 503
+
+
+def test_download_page_returns_html_with_setup_link(tmp_path):
+    release_dir = tmp_path / "releases"
+    release_dir.mkdir()
+    (release_dir / "latest.json").write_text(
+        '{"version":"2.0.1","url":"http://127.0.0.1:8080/v1/updates/files/StarTrace-Setup-2.0.1.exe",'
+        f'"size":1,"sha256":"{"0" * 64}","signature":"sig"}}',
+        encoding="utf-8",
+    )
+    signer = LicenseSigner()
+    app = create_app(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}",
+        license_public_key_pem=signer.public_key_pem,
+        initialize_schema=True,
+        update_release_dir=str(release_dir),
+    )
+    with TestClient(app) as client:
+        resp = client.get("/download")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+        assert "StarTrace-Setup-2.0.1.exe" in resp.text

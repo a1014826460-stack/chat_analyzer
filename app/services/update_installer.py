@@ -47,18 +47,13 @@ def schedule_update_install(
     pid: int | None = None,
     dry_run: bool = False,
 ) -> Path:
-    pid = os.getpid() if pid is None else pid
-    script_path = Path(tempfile.gettempdir()) / "StarTraceUpdates" / "install-update.cmd"
-    prepare_windows_update_script(
-        current_exe=current_exe,
-        staged_exe=staged_exe,
-        script_path=script_path,
-        pid=pid,
-    )
-    if not dry_run:
-        subprocess.Popen(
-            ["cmd", "/c", str(script_path)],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            close_fds=True,
-        )
-    return script_path
+    """Launch the downloaded setup.exe installer (setup-installer mode).
+
+    The bare-exe swap is no longer used: releases are packaged as setup.exe
+    and the installer drives the replacement during the setup wizard.
+    """
+    del current_exe, pid
+    if dry_run:
+        return Path(str(staged_exe))
+    subprocess.Popen([str(staged_exe)], shell=True)
+    return Path(str(staged_exe))

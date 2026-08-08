@@ -7,7 +7,7 @@ from typing import Annotated
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from server_api.dependencies import current_user_id
 
@@ -55,6 +55,30 @@ def _load_manifest(request: Request) -> dict:
 @router.get("/v1/updates/manifest")
 async def update_manifest(request: Request, _: UserId):
     return _load_manifest(request)
+
+
+@router.get("/download", response_class=HTMLResponse)
+async def download_page(request: Request):
+    """StarTrace 下载中心：展示最新版本与 setup.exe 下载链接（纯 IP 访问）。"""
+    try:
+        manifest = _load_manifest(request)
+    except HTTPException:
+        manifest = {}
+    version = str(manifest.get("version", "未知"))
+    notes = str(manifest.get("notes", "")).strip()
+    file_name = str(Path(urlparse(str(manifest.get("url", ""))).path).name or "StarTrace-Setup.exe")
+    download_url = f"/v1/updates/files/{file_name}"
+    note_html = f"<p>{notes}</p>" if notes else ""
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>StarTrace 下载中心</title>
+<style>body{{font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.6}}
+a{{color:#2f5f85}}</style></head><body>
+<h1>StarTrace 下载中心</h1>
+<p>最新版本：<b>{version}</b></p>
+{note_html}
+<p><a href="{download_url}">下载 {file_name}（安装程序）</a></p>
+<p>下载后运行安装向导完成安装。</p>
+</body></html>"""
 
 
 @router.get("/v1/updates/files/{file_name}")

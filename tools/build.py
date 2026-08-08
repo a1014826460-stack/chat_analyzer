@@ -27,6 +27,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Remove previous PyInstaller work directories before building.",
     )
+    parser.add_argument(
+        "--no-setup",
+        action="store_true",
+        help="Skip Inno Setup packaging (bare exe only).",
+    )
     return parser.parse_args()
 
 
@@ -157,16 +162,47 @@ def _restore_build_config(original: str) -> None:
     config_path.write_text(original, encoding="utf-8")
 
 
+_INNO_ISCC = r"C:\Users\Administrator\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+
+
+def _build_setup_installer(version: str, *, admin: bool, args) -> None:
+    """Compile the PyInstaller artifact into a setup.exe with Inno Setup."""
+    if getattr(args, "no_setup", False) or not Path(_INNO_ISCC).is_file():
+        print("  Skipping setup.exe (ISCC unavailable or --no-setup)")
+        return
+    setup_dir = ROOT / "tools" / "installer"
+    iss_path = setup_dir / "star_trace.iss"
+    dist_dir = ROOT / "dist"
+    artifact = dist_dir / (f"StarTrace-Admin-{version}.exe" if admin else f"StarTrace-{version}.exe")
+    output_name = f"StarTrace-Admin-Setup-{version}.exe" if admin else f"StarTrace-Setup-{version}.exe"
+    define = {
+        "MyAppName": f"StarTrace {'(Admin)' if admin else ''}",
+        "MyAppVersion": version,
+        "MyAppExe": artifact.name,
+        "MyAppOutput": output_name,
+        "MyAppAdmin": "true" if admin else "false",
+    }
+    cmd = [_INNO_ISCC, str(iss_path)]
+    for key, value in define.items():
+        cmd.append(f"/D{key}={value}")
+    print(f"  Running ISCC: {' '.join(cmd)}")
+    subprocess.check_call(cmd, cwd=str(setup_dir))
+    print(f"  Produced {dist_dir / output_name}")
+
+
 def main() -> int:
     args = _parse_args()
     config_path = ROOT / "app" / "build_config.py"
     original_config = config_path.read_text("utf-8")
     _ensure_license_keys(admin=args.admin)
     _embed_release_metadata()
+    version = os.environ.get("STARTRACE_VERSION", build_config.APP_VERSION).strip()
     command = _build_command(admin=args.admin, clean=args.clean)
     print("Running:", " ".join(command))
     try:
         completed = subprocess.run(command, cwd=ROOT)
+        if completed.returncode == 0:
+            _build_setup_installer(version, admin=args.admin, args=args)
     finally:
         _restore_build_config(original_config)
         print("  Restored build_config.py")
