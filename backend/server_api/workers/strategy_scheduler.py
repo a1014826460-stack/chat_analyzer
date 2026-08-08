@@ -243,6 +243,14 @@ async def schedule_frequency_orders(
                 if exists is not None:
                     continue
                 deadline = datetime.utcnow() + timedelta(seconds=30) if strategy.require_confirmation else None
+                order_amount = (
+                    _martingale_amount(
+                        json.loads(strategy.martingale_sequence_json or "[]"),
+                        await _consecutive_losses(session, user_id=strategy.user_id, site=site, play_type=play_type),
+                        strategy.bet_amount,
+                    )
+                    if strategy.strategy_type == "martingale" else strategy.bet_amount
+                )
                 session.add(BetOrder(
                     user_id=strategy.user_id,
                     site=site,
@@ -250,10 +258,19 @@ async def schedule_frequency_orders(
                     group_id=group_id,
                     group_name=str(group_name_map.get(str(group_id), "未命名群组")).strip() or "未命名群组",
                     play_type=play_type,
-                    amount=strategy.bet_amount,
+                    amount=order_amount,
                     status="pending_confirmation" if strategy.require_confirmation else "confirmed",
                     confirmation_deadline_at=deadline,
                     betting_deadline_at=betting_deadline_at,
+                    strategy_type=strategy.strategy_type,
+                    strategy_snapshot=json.dumps({
+                        "history_count": strategy.history_count,
+                        "confidence_threshold": strategy.confidence_threshold,
+                        "strategy_type": strategy.strategy_type,
+                        "selected_plays": plays,
+                        "reason": reason,
+                    }, ensure_ascii=False, separators=(",", ":")),
+                    result="pending",
                 ))
                 created += 1
     await session.commit()

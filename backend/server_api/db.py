@@ -83,6 +83,10 @@ class BetOrder(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending_confirmation")
     confirmation_deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     betting_deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    strategy_type: Mapped[str] = mapped_column(String(32), default="three_doors")
+    strategy_snapshot: Mapped[str] = mapped_column(String, default="{}")
+    result: Mapped[str] = mapped_column(String(16), default="pending")
+    result_detail: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

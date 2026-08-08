@@ -207,3 +207,36 @@ def test_frequency_scheduler_trend_following_reverse_bet():
         for i in range(1, 6)
     ]
     assert _trend_following_plays("pc28", rows_break, window=5, threshold=3) is None
+
+
+def test_frequency_scheduler_writes_strategy_snapshot():
+    from server_api.workers.strategy_scheduler import schedule_frequency_orders
+
+    async def scenario() -> None:
+        engine = create_engine("sqlite+aiosqlite:///:memory:")
+        await create_schema(engine)
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            session.add(AutoBetStrategy(
+                user_id=20, enabled=True, site="pc28", target_groups_json='["group-a"]',
+                history_count=4, confidence_threshold=50, require_confirmation=False,
+                bet_amount=3, strategy_type="three_doors",
+            ))
+            session.add_all([
+                DrawResult(site="pc28", period="1", result="小单", total=13),
+                DrawResult(site="pc28", period="2", result="大双", total=14),
+                DrawResult(site="pc28", period="3", result="大双", total=14),
+                DrawResult(site="pc28", period="4", result="大单", total=15),
+            ])
+            await session.commit()
+            assert await schedule_frequency_orders(session, site="pc28", period="next-snap") == 3
+            order = await session.scalar(select(BetOrder))
+            assert order.strategy_type == "three_doors"
+            import json
+            snapshot = json.loads(order.strategy_snapshot)
+            assert snapshot["history_count"] == 4
+            assert snapshot["confidence_threshold"] == 50
+            assert order.result == "pending"
+        await engine.dispose()
+
+    asyncio.run(scenario())
