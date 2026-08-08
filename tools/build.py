@@ -174,9 +174,10 @@ def _build_setup_installer(version: str, *, admin: bool, args) -> None:
     iss_path = setup_dir / "star_trace.iss"
     dist_dir = ROOT / "dist"
     artifact = dist_dir / (f"StarTrace-Admin-{version}.exe" if admin else f"StarTrace-{version}.exe")
-    output_name = f"StarTrace-Admin-Setup-{version}.exe" if admin else f"StarTrace-Setup-{version}.exe"
+    # Inno Setup appends ".exe" to OutputBaseFilename automatically.
+    output_name = f"StarTrace-Admin-Setup-{version}" if admin else f"StarTrace-Setup-{version}"
     define = {
-        "MyAppName": f"StarTrace {'(Admin)' if admin else ''}",
+        "MyAppName": f"StarTrace {'(Admin)' if admin else ''}".strip(),
         "MyAppVersion": version,
         "MyAppExe": artifact.name,
         "MyAppOutput": output_name,
@@ -187,7 +188,7 @@ def _build_setup_installer(version: str, *, admin: bool, args) -> None:
         cmd.append(f"/D{key}={value}")
     print(f"  Running ISCC: {' '.join(cmd)}")
     subprocess.check_call(cmd, cwd=str(setup_dir))
-    print(f"  Produced {dist_dir / output_name}")
+    print(f"  Produced {dist_dir / (output_name + '.exe')}")
 
 
 def main() -> int:

@@ -1,9 +1,19 @@
 ; StarTrace Inno Setup script — parameterized by ISCC /D defines from tools/build.py
+#ifndef MyAppName
 #define MyAppName "StarTrace"
+#endif
+#ifndef MyAppVersion
 #define MyAppVersion "0.0.0"
+#endif
+#ifndef MyAppExe
 #define MyAppExe "StarTrace.exe"
+#endif
+#ifndef MyAppOutput
 #define MyAppOutput "StarTrace-Setup-0.0.0.exe"
+#endif
+#ifndef MyAppAdmin
 #define MyAppAdmin "false"
+#endif
 
 [Setup]
 AppId={{6E0D5C4A-2B2E-4F5A-8C3D-1A2B3C4D5E6F}
@@ -20,9 +30,6 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-
-[Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
